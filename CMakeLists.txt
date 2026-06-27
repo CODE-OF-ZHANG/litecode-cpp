@@ -8,6 +8,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # ─── Build output ───
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
+# ─── Tests (off by default; flip on with -DLITECODE_BUILD_TESTS=ON) ───
+option(LITECODE_BUILD_TESTS "Build unit / integration tests (gtest)" OFF)
+
 # ─── Local dependency paths (Windows) ───
 # Override with -DMYSQL_CONNECTOR_DIR=... -DOPENSSL_ROOT_DIR=...
 set(MYSQL_CONNECTOR_DIR "D:/GitHub_CODE/mysql-connector-c++-9.7.0-winx64"
@@ -96,4 +99,48 @@ target_link_libraries(litecode PRIVATE
 # ─── Build type default ───
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
+endif()
+
+# ─── Tests ───────────────────────────────────────────────────────────────────
+# Lookup order: local third_party/ → system gtest (vcpkg/apt/brew) → FetchContent.
+# Local source keeps the build reproducible offline.
+if(LITECODE_BUILD_TESTS)
+    enable_testing()
+
+    set(_gt_local "${CMAKE_SOURCE_DIR}/third_party/googletest-1.15.2")
+    set(_gt_used_local FALSE)
+
+    if(USE_LOCAL_DEPS AND EXISTS "${_gt_local}/CMakeLists.txt")
+        # Build gtest from the local checkout. Same pattern as
+        # nlohmann/json / zlib / httplib above.
+        set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+        set(BUILD_GMOCK   OFF CACHE BOOL "" FORCE)
+        set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+        add_subdirectory(${_gt_local} ${CMAKE_BINARY_DIR}/_gtest_build)
+        set(_gt_used_local TRUE)
+    else()
+        find_package(GTest QUIET)
+        if(NOT GTest_FOUND)
+            include(FetchContent)
+            FetchContent_Declare(
+                googletest
+                GIT_REPOSITORY https://github.com/google/googletest.git
+                GIT_TAG        v1.15.2
+            )
+            set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+            set(BUILD_GMOCK   OFF CACHE BOOL "" FORCE)
+            set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+            FetchContent_MakeAvailable(googletest)
+        endif()
+    endif()
+
+    add_subdirectory(tests)
+
+    if(_gt_used_local)
+        message(STATUS "Tests: using local googletest at ${_gt_local}")
+    elseif(GTest_FOUND)
+        message(STATUS "Tests: using system gtest ${GTest_VERSION}")
+    else()
+        message(STATUS "Tests: using FetchContent googletest v1.15.2")
+    endif()
 endif()

@@ -337,6 +337,10 @@ inline AppConfig load_config(const std::string& env_file_path = ".env",
         throw ConfigError("DB_USER must be set");
     if (cfg.database.database.empty())
         throw ConfigError("DB_NAME must be set");
+    // NOTE: the three empty-checks above are defense-in-depth. Because
+    // getenv_opt() treats empty env values as "missing" and falls back to
+    // the struct defaults (which are non-empty), these checks currently
+    // only fire if a future change clears the struct defaults.
     if (cfg.database.pool_min_size < 1)
         throw ConfigError("DB_POOL_MIN must be >= 1");
     if (cfg.database.pool_max_size < cfg.database.pool_min_size)
@@ -521,6 +525,12 @@ inline AppConfig load_config(const std::string& env_file_path = ".env",
 
 // ────────────────────────────────────────────────────────────────────────────
 //  Section: process-wide singleton accessor
+//
+//  Thread-safe init under a single mutex; the slot itself is a function-
+//  local static std::unique_ptr so destruction is well-defined at program
+//  exit. We deliberately do NOT use std::call_once because once_flag
+//  cannot be reset, which would make the singleton un-testable (and
+//  would leave a dangling pointer after reset_config_for_testing()).
 // ────────────────────────────────────────────────────────────────────────────
 
 namespace detail {
@@ -528,41 +538,47 @@ inline std::unique_ptr<AppConfig>& config_slot() {
     static std::unique_ptr<AppConfig> slot;
     return slot;
 }
-inline std::once_flag& config_init_flag() {
-    static std::once_flag flag;
-    return flag;
+inline std::mutex& config_mutex() {
+    static std::mutex m;
+    return m;
 }
 } // namespace detail
 
 // Eagerly initialize the process-wide config. Call once from main().
-// Subsequent calls are no-ops, so it is safe to call defensively.
+// Subsequent calls with the same arguments are no-ops; calls with
+// different arguments are ignored (the first init wins). To re-read
+// env after the first init, call reset_config_for_testing() first
+// (tests only).
 inline const AppConfig& init_config(const std::string& env_file_path = ".env",
                                     bool override_env = false) {
-    std::call_once(detail::config_init_flag(), [&] {
-        detail::config_slot() = std::make_unique<AppConfig>(
-            load_config(env_file_path, override_env));
-    });
-    return *detail::config_slot();
+    std::lock_guard<std::mutex> g(detail::config_mutex());
+    auto& slot = detail::config_slot();
+    if (!slot) {
+        slot = std::make_unique<AppConfig>(load_config(env_file_path, override_env));
+    }
+    return *slot;
 }
 
 // Returns the process-wide config, initializing it lazily with defaults
 // if init_config() was never called. Use init_config() in main() so that
 // configuration errors are caught at startup rather than at first use.
 inline const AppConfig& config() {
+    // Fast path — already initialized, no lock needed.
     auto& slot = detail::config_slot();
+    if (slot) return *slot;
+
+    std::lock_guard<std::mutex> g(detail::config_mutex());
     if (!slot) {
-        std::call_once(detail::config_init_flag(), [&] {
-            slot = std::make_unique<AppConfig>(load_config());
-        });
+        slot = std::make_unique<AppConfig>(load_config());
     }
     return *slot;
 }
 
-// Resets the singleton — only intended for tests.
+// Resets the singleton — only intended for tests. After this call the
+// next init_config() / config() will re-read the environment from scratch.
 inline void reset_config_for_testing() {
+    std::lock_guard<std::mutex> g(detail::config_mutex());
     detail::config_slot().reset();
-    // std::once_flag cannot be reset portably; tests must restart the process
-    // (or call init_config() once before exercising reset) to re-trigger load.
 }
 
 // ────────────────────────────────────────────────────────────────────────────
