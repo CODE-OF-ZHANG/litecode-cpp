@@ -4,6 +4,7 @@
 #include <string>
 
 #include "config.h"
+#include "logger.h"
 
 #if defined(_WIN32)
 inline void setenv_local(const char* k, const char* v) { _putenv_s(k, v); }
@@ -81,6 +82,29 @@ int main() {
     std::cout << "LiteCode-CPP starting..." << std::endl;
 
     if (int rc = run_config_smoke(); rc != 0) return rc;
+
+    // ── Logger smoke test ──────────────────────────────────────────────────
+    // Boot the process-wide logger from the loaded config and emit a few
+    // lines so a human eyeballing `docker logs litecode-web` sees the new
+    // structured format. JSON goes to stdout, optionally to a file under
+    // LOG_FILE (see .env.example).
+    {
+        const auto& cfg = litecode::config();
+        litecode::init_logger(cfg.logging);
+        LOG_INFO ("boot complete",  {{"host",  cfg.server.host},
+                                    {"port",  std::to_string(cfg.server.port)},
+                                    {"log_level", cfg.logging.level}});
+        {
+            // Per-thread request_id stamp — pretend we're inside a request handler.
+            litecode::RequestIdScope rid("boot-smoke-001");
+            LOG_INFO ("logger smoke", {{"stage", "ready"}});
+        }
+        // Outside the scope: request_id is gone, but the next line is still
+        // logged with whatever was there before (or nothing).
+        LOG_DEBUG("debug suppressed at INFO level");
+        LOG_WARN ("fallback: JWT secret came from insecure defaults",
+                  {{"recommendation", "set JWT_SECRET in production"}});
+    }
 
     // Verify bcrypt works
     std::string hash = litecode::password_hash("test123");
