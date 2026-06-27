@@ -1,0 +1,38 @@
+# Build outputs
+build/
+bin/
+*.exe
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.pdb
+*.ilk
+*.d
+
+# CMake generated
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+CMakeSettings.json
+_deps/
+
+# IDE
+.vs/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project
+.claude/
+logs/
+docs/
+.superpowers/
+third_party/
