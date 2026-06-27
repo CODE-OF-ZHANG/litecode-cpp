@@ -831,7 +831,8 @@ litecode-cpp/
 │       ├── V002__add_audit_logs.sql
 │       ├── V003__add_judge_type.sql
 │       ├── V004__add_soft_delete.sql
-│       └── V005__add_indexes.sql
+│       ├── V005__add_indexes.sql
+│       └── V006__add_ole_se_status.sql  # 补 V005 遗漏：status ENUM 增 ole/se
 ├── scripts/
 │   ├── init_db.sh             # 数据库初始化入口
 │   ├── create_admin.sql
