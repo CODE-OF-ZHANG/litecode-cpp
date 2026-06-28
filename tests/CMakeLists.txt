@@ -20,6 +20,7 @@ add_executable(test_error_handler    unit/test_error_handler.cpp)
 add_executable(test_jwt_utils        unit/test_jwt_utils.cpp)
 add_executable(test_password_hash    unit/test_password_hash.cpp)
 add_executable(test_auth_middleware  unit/test_auth_middleware.cpp)
+add_executable(test_rate_limit       unit/test_rate_limit.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -90,6 +91,23 @@ target_link_libraries(test_auth_middleware PRIVATE
 target_include_directories(test_auth_middleware PRIVATE
     ${CMAKE_SOURCE_DIR}/src)
 
+# rate_limit.h (Phase 2 ★) — in-memory token-bucket middleware. Pulls in
+# server.h (for ApiException + send_error + the E2E HttpServer) and
+# auth_middleware.h (for extract_bearer_token, used by try_extract_jwt_subject
+# to key on user_id without verifying the signature). jwt-cpp is in the
+# link set because auth_middleware.h transitively includes jwt_utils.h,
+# which references the jwt-cpp traits header (even though rate_limit itself
+# never verifies signatures — it does best-effort base64 decode only).
+target_link_libraries(test_rate_limit PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    jwt-cpp::jwt-cpp
+    OpenSSL::SSL
+    OpenSSL::Crypto)
+target_include_directories(test_rate_limit PRIVATE
+    ${CMAKE_SOURCE_DIR}/src)
+
 # connection_pool.h pulls in mysqlx/xdevapi.h + config.h, so the test
 # binary needs mysql::concpp + OpenSSL on top of gtest_main.
 target_link_libraries(test_connection_pool PRIVATE
@@ -127,3 +145,4 @@ add_test(NAME error_handler     COMMAND test_error_handler)
 add_test(NAME jwt_utils         COMMAND test_jwt_utils)
 add_test(NAME password_hash     COMMAND test_password_hash)
 add_test(NAME auth_middleware   COMMAND test_auth_middleware)
+add_test(NAME rate_limit        COMMAND test_rate_limit)
