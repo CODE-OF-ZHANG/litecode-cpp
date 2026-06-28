@@ -13,8 +13,10 @@ add_executable(test_config_singleton unit/test_config_singleton.cpp)
 add_executable(test_logger           unit/test_logger.cpp)
 add_executable(test_connection_pool  unit/test_connection_pool.cpp)
 add_executable(test_server           unit/test_server.cpp)
+add_executable(test_uuid             unit/test_uuid.cpp)
+add_executable(test_request_id       unit/test_request_id.cpp)
 
-foreach(_tgt test_config test_config_singleton test_logger test_server)
+foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
     target_include_directories(${_tgt} PRIVATE ${CMAKE_SOURCE_DIR}/src)
 endforeach()
@@ -27,6 +29,16 @@ target_link_libraries(test_server PRIVATE
     GTest::gtest_main
     httplib::httplib
     nlohmann_json::nlohmann_json
+    OpenSSL::SSL
+    OpenSSL::Crypto)
+target_include_directories(test_server PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+# request_id.h's apply_request_id_header() takes httplib::Response&;
+# so this binary also needs the httplib include path even though it
+# doesn't bind a real socket.
+target_link_libraries(test_request_id PRIVATE
+    GTest::gtest_main
+    httplib::httplib
     OpenSSL::SSL
     OpenSSL::Crypto)
 
@@ -46,3 +58,5 @@ add_test(NAME config_singleton  COMMAND test_config_singleton)
 add_test(NAME logger            COMMAND test_logger)
 add_test(NAME connection_pool   COMMAND test_connection_pool)
 add_test(NAME server            COMMAND test_server)
+add_test(NAME uuid              COMMAND test_uuid)
+add_test(NAME request_id        COMMAND test_request_id)

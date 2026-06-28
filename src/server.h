@@ -55,7 +55,6 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -67,8 +66,10 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
-#include "config.h"   // ServerConfig / CorsConfig
-#include "logger.h"   // RequestIdScope / LOG_*
+#include "config.h"                          // ServerConfig / CorsConfig
+#include "logger.h"                          // RequestIdScope / LOG_*
+#include "middleware/request_id.h"           // apply_request_id_header / request_id_header_name
+#include "utils/uuid.h"                      // generate_uuid_v4 (via request_id.h)
 
 namespace litecode {
 
@@ -205,71 +206,6 @@ inline std::optional<nlohmann::json> parse_json_body(const httplib::Request& req
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-//  UUID v4 — used for X-Request-Id when the client didn't send one.
-//
-//  We deliberately don't pull in a uuid library: cpp-httplib + OpenSSL
-//  are already linked, and the server only needs hex-with-dashes.
-// ────────────────────────────────────────────────────────────────────────────
-
-namespace detail {
-
-// One-time entropy seed. We mix steady_clock with the address of the
-// thread-local object so two processes started in the same nanosecond
-// don't generate the same id sequence.
-inline std::mt19937_64& uuid_rng() {
-    static thread_local std::mt19937_64 rng = []{
-        std::mt19937_64::result_type seed =
-            static_cast<std::mt19937_64::result_type>(
-                std::chrono::steady_clock::now().time_since_epoch().count());
-        // xor with a pointer to add per-process variability
-        seed ^= reinterpret_cast<std::uintptr_t>(&seed);
-        return std::mt19937_64(seed);
-    }();
-    return rng;
-}
-
-} // namespace detail
-
-inline std::string generate_uuid_v4() {
-    // Pull 128 bits of randomness into a 16-byte buffer.
-    std::uniform_int_distribution<std::uint64_t> dist64;
-    std::uint64_t hi = dist64(detail::uuid_rng());
-    std::uint64_t lo = dist64(detail::uuid_rng());
-
-    unsigned char b[16];
-    for (int i = 0; i < 8; ++i) b[i]     = static_cast<unsigned char>(hi >> (8 * i));
-    for (int i = 0; i < 8; ++i) b[8 + i] = static_cast<unsigned char>(lo >> (8 * i));
-
-    // RFC 4122 v4: version + variant bits.
-    b[6] = static_cast<unsigned char>((b[6] & 0x0F) | 0x40);
-    b[8] = static_cast<unsigned char>((b[8] & 0x3F) | 0x80);
-
-    char out[37];
-    std::snprintf(out, sizeof(out),
-                  "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-                  b[0], b[1], b[2], b[3],  b[4], b[5],  b[6], b[7],
-                  b[8], b[9],  b[10], b[11], b[12], b[13], b[14], b[15]);
-    return std::string(out, 36);
-}
-
-// Validate that an inbound X-Request-Id looks safe (length + alphabet)
-// before reflecting it. We refuse to echo anything that could be used to
-// inject headers (CRLF) or pollute log greps.
-inline bool is_valid_request_id(std::string_view id) {
-    if (id.empty() || id.size() > 128) return false;
-    for (char c : id) {
-        const unsigned char u = static_cast<unsigned char>(c);
-        const bool ok =
-            (u >= '0' && u <= '9') ||
-            (u >= 'a' && u <= 'z') ||
-            (u >= 'A' && u <= 'Z') ||
-            u == '-' || u == '_' || u == '.';
-        if (!ok) return false;
-    }
-    return true;
-}
-
-// ────────────────────────────────────────────────────────────────────────────
 //  CORS helpers (SPEC §5.7)
 //
 //  We allow configured origins explicitly. The preflight response caches
@@ -311,9 +247,9 @@ public:
         res.set_header("Access-Control-Allow-Methods",
                        "GET, POST, PUT, PATCH, DELETE, OPTIONS");
         res.set_header("Access-Control-Allow-Headers",
-                       "Content-Type, Authorization, X-Request-Id");
+                       std::string("Content-Type, Authorization, ") + std::string(request_id_header_name()));
         res.set_header("Access-Control-Expose-Headers",
-                       "X-Request-Id");
+                       std::string(request_id_header_name()));
         res.set_header("Access-Control-Max-Age", "86400");
     }
 
@@ -591,11 +527,11 @@ private:
         server_->set_pre_routing_handler(
             [this](const httplib::Request& req, httplib::Response& res)
                 -> httplib::Server::HandlerResponse {
-                std::string rid = req.get_header_value("X-Request-Id");
-                if (rid.empty() || !is_valid_request_id(rid)) {
-                    rid = generate_uuid_v4();
-                }
-                res.set_header("X-Request-Id", rid);
+                // request_id.h owns the resolution policy (echo valid /
+                // generate UUID v4 fallback) — keep the policy in one
+                // place so test_request_id + test_server agree.
+                const std::string rid = apply_request_id_header(
+                    req.get_header_value("X-Request-Id"), res);
 
                 const std::string origin = req.get_header_value("Origin");
                 cors_.apply(res, origin);
