@@ -17,6 +17,7 @@ add_executable(test_uuid             unit/test_uuid.cpp)
 add_executable(test_request_id       unit/test_request_id.cpp)
 add_executable(test_health           unit/test_health.cpp)
 add_executable(test_error_handler    unit/test_error_handler.cpp)
+add_executable(test_jwt_utils        unit/test_jwt_utils.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -56,6 +57,15 @@ target_link_libraries(test_error_handler PRIVATE
     OpenSSL::SSL
     OpenSSL::Crypto)
 
+# jwt_utils.h (Phase 2 ★) uses jwt-cpp + OpenSSL HMAC + picojson.
+# No MySQL / httplib dependencies — it's a pure crypto helper.
+target_link_libraries(test_jwt_utils PRIVATE
+    GTest::gtest_main
+    jwt-cpp::jwt-cpp
+    OpenSSL::SSL
+    OpenSSL::Crypto)
+target_include_directories(test_jwt_utils PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
 # connection_pool.h pulls in mysqlx/xdevapi.h + config.h, so the test
 # binary needs mysql::concpp + OpenSSL on top of gtest_main.
 target_link_libraries(test_connection_pool PRIVATE
@@ -90,3 +100,4 @@ add_test(NAME uuid              COMMAND test_uuid)
 add_test(NAME request_id        COMMAND test_request_id)
 add_test(NAME health            COMMAND test_health)
 add_test(NAME error_handler     COMMAND test_error_handler)
+add_test(NAME jwt_utils         COMMAND test_jwt_utils)
