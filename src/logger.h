@@ -74,7 +74,17 @@ namespace litecode {
 
 // ────────────────────────────────────────────────────────────────────────────
 //  Section: LogLevel
+//
+//  Windows headers (winsock2.h via <httplib.h> in server.h) define
+//    #define ERROR 0
+//  which would clobber our `LogLevel::ERROR` enumerator. Push/pop it so
+//  our enum is always parseable regardless of include order.
 // ────────────────────────────────────────────────────────────────────────────
+
+#ifdef ERROR
+#  pragma push_macro("ERROR")
+#  undef ERROR
+#endif
 
 enum class LogLevel : int {
     TRACE = 0,
@@ -83,6 +93,10 @@ enum class LogLevel : int {
     WARN  = 3,
     ERROR = 4,
 };
+
+#ifdef ERROR
+#  pragma pop_macro("ERROR")
+#endif
 
 // Parse the env string ("TRACE"/"DEBUG"/.../ lowercase OK). Returns
 // std::nullopt on invalid input — the caller is responsible for defaulting.
