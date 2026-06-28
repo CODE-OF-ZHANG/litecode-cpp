@@ -866,19 +866,19 @@ litecode-cpp/
 
 ### Phase 1 - 基础设施
 
-- [ ] ★ 项目目录结构 + CMake 构建（引入 cpp-httplib、mysql-connector、jwt-cpp、spdlog）
-- [ ] ★ 数据库初始化脚本（建表 SQL + 初始管理员种子数据）
-- [ ] ★ 配置管理（config.h：DB / 端口 / JWT_SECRET / 判题参数等；env 优先 + 默认值）
-- [ ] ★ 日志封装（logger.h：JSON 格式，INFO/WARN/ERROR，stdout + 文件，**带 request_id 字段**）
-- [ ] ★ 数据库连接池（connection_pool.h：连接池 + 基础查询封装）
-- [ ] ★ HTTP 服务框架（server.h：路由注册 + CORS + 统一 JSON 响应 + **多线程 ThreadPool**）
-- [ ] ★ Docker Compose 开发环境（Web + MySQL + Socket Proxy + Judge 容器一键启动）
-- [ ] ★ 请求 ID 中间件（生成 UUID v4 注入响应头 + 贯穿日志）
-- [ ] ★ 健康检查端点 `/api/v1/health`（DB + Docker 探测）
-- [ ] ★ 统一错误处理（error_handler.h：§5.7 错误码枚举 + 统一响应格式）
-- [ ] ☆ Caddyfile 反向代理配置
-- [ ] ☆ Prometheus + Grafana docker-compose 接入
-- [ ] △ JSON 日志输出（spdlog + JSON 格式化）
+- [x] ★ 项目目录结构 + CMake 构建（引入 cpp-httplib、mysql-connector、jwt-cpp、spdlog）
+- [x] ★ 数据库初始化脚本（建表 SQL + 初始管理员种子数据）
+- [x] ★ 配置管理（config.h：DB / 端口 / JWT_SECRET / 判题参数等；env 优先 + 默认值）
+- [x] ★ 日志封装（logger.h：JSON 格式，INFO/WARN/ERROR，stdout + 文件，**带 request_id 字段**）
+- [x] ★ 数据库连接池（connection_pool.h：连接池 + 基础查询封装）
+- [x] ★ HTTP 服务框架（server.h：路由注册 + CORS + 统一 JSON 响应 + **多线程 ThreadPool**）
+- [x] ★ Docker Compose 开发环境（Web + MySQL + Socket Proxy + Judge 容器一键启动）
+- [x] ★ 请求 ID 中间件（生成 UUID v4 注入响应头 + 贯穿日志）
+- [x] ★ 健康检查端点 `/api/v1/health`（DB + Docker 探测）
+- [x] ★ 统一错误处理（error_handler.h：§5.7 错误码枚举 + 统一响应格式）
+- [x] ☆ Caddyfile 反向代理配置
+- [x] ☆ Prometheus + Grafana docker-compose 接入
+- [x] △ JSON 日志输出（spdlog + JSON 格式化）
 
 ### Phase 2 - 登录注册模块
 

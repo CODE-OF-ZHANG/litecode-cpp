@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "logger.h"
+#include "routes/system_routes.h"   // Phase 1 ★ /api/v1/health
 
 #if defined(_WIN32)
 inline void setenv_local(const char* k, const char* v) { _putenv_s(k, v); }
@@ -83,6 +84,12 @@ int main() {
 
     if (int rc = run_config_smoke(); rc != 0) return rc;
 
+    // Anchor the process-start time used by the /api/v1/health
+    // `uptime_seconds` field. Idempotent; the smoke-build path doesn't
+    // bind a real HTTP port, but tests + a future production main()
+    // both rely on it being set early.
+    litecode::mark_process_start_time();
+
     // ── Logger smoke test ──────────────────────────────────────────────────
     // Boot the process-wide logger from the loaded config and emit a few
     // lines so a human eyeballing `docker logs litecode-web` sees the new
@@ -127,6 +134,33 @@ int main() {
 
     // Verify OpenSSL version
     std::cout << "OpenSSL version: " << OpenSSL_version_num() << std::endl;
+
+    // ── /api/v1/health smoke (Phase 1 ★) ──────────────────────────────────
+    // Build a HealthService the way main() will at boot, run it, and
+    // print the payload. This catches linker breakage + shape regressions
+    // on every smoke build even though we don't bind a real port here.
+    {
+        litecode::HealthService health;
+        health.register_probe("db",         litecode::make_db_probe(nullptr));
+        health.register_probe("uptime",     litecode::make_uptime_probe());
+        health.register_probe("queue_size", litecode::make_queue_size_probe());
+        health.register_probe("warm_pool",  litecode::make_warm_pool_probe());
+        health.register_probe("docker",     litecode::make_docker_probe_placeholder());
+
+        int status = 200;
+        const nlohmann::json body = health.build_response(&status);
+        std::cout << "health smoke: status=" << status
+                  << " body=" << body.dump() << std::endl;
+        // Without a DB pool the overall status must be 503 so the
+        // docker-compose healthcheck would fail loudly — Phase 1 ships
+        // the endpoint contract before the DB wiring is done.
+        if (status != 503) {
+            std::cerr << "[health] FAIL: expected 503 with null pool, got "
+                      << status << std::endl;
+            return 1;
+        }
+        std::cout << "[health] PASS" << std::endl;
+    }
 
     std::cout << "All dependency checks passed." << std::endl;
     return 0;

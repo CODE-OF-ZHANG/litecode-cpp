@@ -7,7 +7,10 @@
 //   provides everything Phase 1 promises:
 //     - Routing registration with a typed JSON body parser
 //     - CORS preflight + headers driven by CorsConfig
-//     - Unified JSON response helpers (success / error envelope)
+//     - Unified JSON response helpers (success / error envelope) —
+//       re-exported from src/routes/error_handler.h, the SPEC §5.7
+//       single source of truth. Handlers should keep `#include
+//       "server.h"` and the existing call sites stay unchanged.
 //     - Multi-threaded request handling via httplib::ThreadPool
 //       (size pulled from ServerConfig::thread_pool_size)
 //     - Request-ID middleware (echo or generate UUID v4 →
@@ -15,6 +18,9 @@
 //     - Per-request structured access logging via litecode::logger()
 //     - Static file serving via set_mount_point() (used by Phase 5 web/)
 //     - Pre-routing hook for future rate-limit / auth middleware
+//     - 404 / 500 catch-all that uses error_handler.h's envelope
+//       builder so unrouted requests and unhandled exceptions both
+//       come back in the unified format.
 //
 // The wrapper is deliberately header-only: every other Phase 1 module is
 // a single header, and adding a server.cpp + a separate library target
@@ -69,12 +75,19 @@
 #include "config.h"                          // ServerConfig / CorsConfig
 #include "logger.h"                          // RequestIdScope / LOG_*
 #include "middleware/request_id.h"           // apply_request_id_header / request_id_header_name
+#include "routes/error_handler.h"            // ErrorCode / send_error / make_error_envelope / ApiException
 #include "utils/uuid.h"                      // generate_uuid_v4 (via request_id.h)
 
 namespace litecode {
 
 // ────────────────────────────────────────────────────────────────────────────
 //  Exceptions
+//
+//  HttpServerError is the framework-internal exception (e.g. thrown from
+//  the constructor when set_mount_point() fails). The user-facing error
+//  model — unified envelope, SPEC §5.7 codes — lives in
+//  routes/error_handler.h and is re-exported below via the include at
+//  the top of this file.
 // ────────────────────────────────────────────────────────────────────────────
 
 class HttpServerError : public std::runtime_error {
@@ -83,127 +96,22 @@ public:
 };
 
 // ────────────────────────────────────────────────────────────────────────────
-//  Error code catalog (SPEC §5.7)
+//  Re-export of the unified error envelope (SPEC §5.7)
 //
-//  Every JSON error body uses one of these. Centralized so callers can't
-//  drift and tests can pin them down.
+//  The catalog and helpers live in routes/error_handler.h. Including
+//  server.h pulls them into litecode:: automatically, so existing
+//  call sites like `litecode::send_error(res, 400, ErrorCode::INVALID_INPUT,
+//  "...")` keep compiling without churn. The two re-exports below add
+//  documentation breadcrumbs that pin this contract to the file callers
+//  are most likely to read.
 // ────────────────────────────────────────────────────────────────────────────
 
-enum class ErrorCode {
-    INVALID_INPUT,
-    UNAUTHORIZED,
-    FORBIDDEN,
-    NOT_FOUND,
-    RATE_LIMITED,
-    CONFLICT,
-    INTERNAL_ERROR,
-    SERVICE_UNAVAILABLE,
-};
+// make_error_envelope — see routes/error_handler.h. Pulled in via
+// `#include "routes/error_handler.h"` above; do NOT redefine here.
+// (No-op alias left as a comment so future readers know where to look.)
 
-inline std::string_view error_code_name(ErrorCode c) {
-    switch (c) {
-        case ErrorCode::INVALID_INPUT:      return "INVALID_INPUT";
-        case ErrorCode::UNAUTHORIZED:       return "UNAUTHORIZED";
-        case ErrorCode::FORBIDDEN:          return "FORBIDDEN";
-        case ErrorCode::NOT_FOUND:          return "NOT_FOUND";
-        case ErrorCode::RATE_LIMITED:       return "RATE_LIMITED";
-        case ErrorCode::CONFLICT:           return "CONFLICT";
-        case ErrorCode::INTERNAL_ERROR:     return "INTERNAL_ERROR";
-        case ErrorCode::SERVICE_UNAVAILABLE:return "SERVICE_UNAVAILABLE";
-    }
-    return "INTERNAL_ERROR";
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-//  JSON helpers — make the response envelope one line in every handler
-// ────────────────────────────────────────────────────────────────────────────
-
-namespace detail {
-
-// Serialize an nlohmann::json object/array into a compact string.
-// We use .dump() (not .dump(2)) because the API is consumed by JS; the
-// frontend reformats when it needs to. Smaller payloads = fewer bytes
-// over the wire = better P95.
-inline std::string to_json_string(const nlohmann::json& v) {
-    return v.dump();
-}
-
-} // namespace detail
-
-// Build the SPEC §5.7 unified error envelope:
-//   {"code":"...", "message":"...", "details":{...}, "request_id":"..."}
-inline nlohmann::json make_error_envelope(ErrorCode code,
-                                          std::string_view message,
-                                          const nlohmann::json& details = nullptr) {
-    nlohmann::json j = {
-        {"code",    std::string(error_code_name(code))},
-        {"message", std::string(message)},
-    };
-    if (!details.is_null()) j["details"] = details;
-    if (current_request_id_present()) {
-        j["request_id"] = current_request_id();
-    }
-    return j;
-}
-
-// Response extension: thin sugar on top of httplib::Response so every
-// handler in the codebase writes responses the same way.
-//
-// We use free functions instead of a custom Response subclass because
-// cpp-httplib passes `Response&` by reference and adding a wrapper would
-// force every existing handler to dereference. Free functions keep the
-// existing `void handler(const Request&, Response&)` signature.
-inline void send_json(httplib::Response& res,
-                      int status,
-                      const nlohmann::json& body) {
-    res.status = status;
-    res.set_content(detail::to_json_string(body), "application/json; charset=utf-8");
-}
-
-inline void send_success(httplib::Response& res,
-                         const nlohmann::json& data = {}) {
-    nlohmann::json body = {{"data", data}};
-    if (current_request_id_present()) body["request_id"] = current_request_id();
-    send_json(res, 200, body);
-}
-
-inline void send_created(httplib::Response& res,
-                         const nlohmann::json& data = {}) {
-    nlohmann::json body = {{"data", data}};
-    if (current_request_id_present()) body["request_id"] = current_request_id();
-    send_json(res, 201, body);
-}
-
-inline void send_no_content(httplib::Response& res) {
-    res.status = 204;
-}
-
-inline void send_error(httplib::Response& res,
-                       int status,
-                       ErrorCode code,
-                       std::string_view message,
-                       const nlohmann::json& details = nullptr) {
-    send_json(res, status, make_error_envelope(code, message, details));
-}
-
-// Parse a JSON request body. Returns nullopt + sends 400 on failure so
-// handlers can do:
-//   auto j = parse_json_body(req, res);
-//   if (!j) return;  // response already sent
-inline std::optional<nlohmann::json> parse_json_body(const httplib::Request& req,
-                                                     httplib::Response& res) {
-    if (req.body.empty()) {
-        send_error(res, 400, ErrorCode::INVALID_INPUT, "Request body is empty");
-        return std::nullopt;
-    }
-    try {
-        return nlohmann::json::parse(req.body);
-    } catch (const std::exception& e) {
-        send_error(res, 400, ErrorCode::INVALID_INPUT,
-                   std::string("Invalid JSON body: ") + e.what());
-        return std::nullopt;
-    }
-}
+// send_error / send_success / send_created / send_no_content /
+// parse_json_body — also from routes/error_handler.h. Do NOT redefine.
 
 // ────────────────────────────────────────────────────────────────────────────
 //  CORS helpers (SPEC §5.7)
@@ -489,23 +397,40 @@ private:
     // Wrap a plain Handler so the per-request RequestIdScope is active
     // for the full duration of the handler call. We pull the id from
     // the X-Request-Id response header (set by the pre-routing hook).
+    //
+    // ApiException is caught here and converted into the unified
+    // envelope via respond(). Any other exception is intentionally
+    // left to propagate to cpp-httplib — the set_error_handler below
+    // turns it into a 500 in our format. Catching std::exception
+    // here would swallow programmer errors and obscure stack traces.
     Handler wrap(Handler h) const {
         return [inner = std::move(h)](const httplib::Request& req,
                                       httplib::Response&       res) {
             const std::string rid = res.get_header_value("X-Request-Id");
             litecode::RequestIdScope scope(rid);
-            inner(req, res);
+            try {
+                inner(req, res);
+            } catch (const ApiException& e) {
+                e.respond(res);
+            }
         };
     }
 
-    // Same idea for the Handled/Unhandled variant.
+    // Same idea for the Handled/Unhandled variant. Returning the
+    // inner function's return value is safe — only ApiException (which
+    // already wrote the body) takes the catch branch.
     HandlerResp wrap_resp(HandlerResp h) const {
         return [inner = std::move(h)](const httplib::Request& req,
                                       httplib::Response&       res)
                   -> httplib::Server::HandlerResponse {
             const std::string rid = res.get_header_value("X-Request-Id");
             litecode::RequestIdScope scope(rid);
-            return inner(req, res);
+            try {
+                return inner(req, res);
+            } catch (const ApiException& e) {
+                e.respond(res);
+                return httplib::Server::HandlerResponse::Handled;
+            }
         };
     }
 
@@ -560,6 +485,12 @@ private:
         // status >= 400 — not just for unrouted requests — so we must
         // skip the override when the route handler has already set a
         // body (e.g. send_error() inside a handler).
+        //
+        // The status → ErrorCode / message mapping now lives in
+        // routes/error_handler.h (default_error_for_status +
+        // default_message_for_status), so this block stays one line
+        // of policy: "did the handler already emit our envelope? if
+        // not, fall back to the default for this status."
         server_->set_error_handler(
             [this](const httplib::Request& req, httplib::Response& res)
                 -> httplib::Server::HandlerResponse {
@@ -572,20 +503,12 @@ private:
                     return httplib::Server::HandlerResponse::Unhandled;
                 }
 
-                ErrorCode code = ErrorCode::INTERNAL_ERROR;
-                std::string_view msg = "Internal Server Error";
-                int status = res.status;
-
-                if      (status == 400) { code = ErrorCode::INVALID_INPUT;        msg = "Bad Request"; }
-                else if (status == 401) { code = ErrorCode::UNAUTHORIZED;         msg = "Unauthorized"; }
-                else if (status == 403) { code = ErrorCode::FORBIDDEN;            msg = "Forbidden"; }
-                else if (status == 404) { code = ErrorCode::NOT_FOUND;            msg = "Not Found"; }
-                else if (status == 409) { code = ErrorCode::CONFLICT;             msg = "Conflict"; }
-                else if (status == 429) { code = ErrorCode::RATE_LIMITED;         msg = "Too Many Requests"; }
-                else if (status == 503) { code = ErrorCode::SERVICE_UNAVAILABLE;  msg = "Service Unavailable"; }
+                const int status = res.status;
+                const ErrorCode code = default_error_for_status(status);
+                const std::string_view msg = default_message_for_status(status);
 
                 nlohmann::json env = make_error_envelope(code, msg);
-                res.set_content(detail::to_json_string(env),
+                res.set_content(env.dump(),
                                 "application/json; charset=utf-8");
                 return httplib::Server::HandlerResponse::Handled;
             });
