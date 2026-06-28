@@ -1,0 +1,287 @@
+# =============================================================
+# LiteCode-CPP — Docker Compose 开发环境
+# =============================================================
+# SPEC §11 Phase 1 / §15.5 / Phase 7
+# -------------------------------------------------------------
+# 一键启动：  docker compose up -d
+# 销毁重建：  docker compose down -v
+# 仅启基础：  docker compose up -d mysql docker-proxy web
+# 启用监控：  docker compose --profile monitoring up -d
+# 启用反向代理： docker compose --profile proxy up -d
+# -------------------------------------------------------------
+# 服务拓扑：
+#   ┌────────┐    ┌──────────────┐    ┌─────────────┐
+#   │  web   │───▶│ docker-proxy │───▶│ Docker Host │
+#   └────┬───┘    └──────────────┘    │ (判题容器)  │
+#        │                            └─────────────┘
+#        ▼
+#   ┌────────┐
+#   │ mysql  │
+#   └────────┘
+# =============================================================
+
+name: litecode
+
+# ───── 公共环境变量 ──────────────────────────────────────────
+# 所有变量从项目根目录的 .env 文件读取（.env.example 是模板）。
+# 实际部署时请 `cp .env.example .env` 并修改 JWT_SECRET / 密码。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"     # SPEC §16.6：单文件 10MB
+    max-file: "3"       # 保留 3 个轮转文件
+
+services:
+
+  # ───── 1. MySQL 8.0 ────────────────────────────────────────
+  # SPEC §4.x / §10：UTF8MB4，支持 UNIQUE NULLS NOT DISTINCT（≥ 8.0.19）
+  mysql:
+    image: mysql:8.0.40
+    container_name: litecode-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass_change_me}
+      MYSQL_DATABASE:      ${DB_NAME:-litecode}
+      MYSQL_USER:          ${DB_USER:-litecode}
+      MYSQL_PASSWORD:      ${DB_PASSWORD:-changeme}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=caching_sha2_password
+      - --max_connections=200
+      # SPEC v1.2：保留 90 天前失败提交清理所需的窗口
+      - --binlog_expire_logs_seconds=604800
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # 首次启动时由 docker-entrypoint-initdb.d 自动按文件名字母序执行：
+      #   V001__init.sql → V006__add_ole_se_status.sql → V099__create_admin.sql
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+    networks:
+      - litecode-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootpass_change_me}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    logging: *default-logging
+    # 资源限制（MySQL 默认会吃满内存，给个上限）
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+
+  # ───── 2. Docker Socket 代理 ────────────────────────────────
+  # SPEC §3.1 / §15.5：白名单 5 子命令
+  #   - POST /containers/create
+  #   - POST /containers/{id}/start
+  #   - POST /containers/{id}/exec
+  #   - POST /containers/{id}/kill
+  #   - DELETE /containers/{id}
+  # Web 通过 DOCKER_SOCKET_URL=tcp://docker-proxy:2375 访问
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:0.1
+    container_name: litecode-docker-proxy
+    restart: unless-stopped
+    environment:
+      # 5 个白名单子命令（精确控制）
+      CONTAINERS: 1              # 启用容器相关子命令
+      POST: 0                    # 默认仅 GET（容器操作需要 POST）
+      IMAGES: 0                  # 禁止镜像管理
+      NETWORKS: 0                # 禁止网络管理
+      VOLUMES: 0                 # 禁止卷管理
+      EVENTS: 0                  # 禁止事件订阅
+      EXEC: 1                    # 允许容器 exec（判题时在容器内运行程序需要）
+      PING: 1                    # 健康检查需要
+      INFO: 1                    # /info 端点
+      VERSION: 1                 # /version 端点
+      # 由 tecnativa 镜像的 entrypoint 脚本读取上述变量构建白名单
+      LOG_LEVEL: info
+    volumes:
+      # 只读挂载 socket（关键！SPEC §15.5）
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - litecode-net
+    # 端口只暴露给本网络，外部不开放
+    expose:
+      - "2375"
+    # 代理本身是 Go 单文件静态二进制，资源占用很低
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    logging: *default-logging
+
+  # ───── 3. 判题镜像（构建目标）───────────────────────────────
+  # SPEC §7.2：判题仅作为镜像使用，web 每次提交动态 docker run。
+  # 此服务只在 web 启动前构建一次（build 完成后立即退出）。
+  # 注意：必须放在默认 profile 中，否则 web 的 depends_on 引用不到。
+  judge:
+    image: litecode-judge:latest
+    build:
+      context: ./judge
+      dockerfile: Dockerfile
+    container_name: litecode-judge-build
+    # 构建完成后立即退出（不常驻）
+    command: ["true"]
+    # 不加入业务网络（纯构建步骤）
+    networks: !reset []
+    logging: *default-logging
+
+  # ───── 4. Web 服务（C++ HTTP 服务器）─────────────────────
+  # SPEC §11 Phase 1：多线程 HTTP 服务
+  # 连接：
+  #   - DB_HOST=mysql          （同网络别名）
+  #   - DOCKER_SOCKET_URL=tcp://docker-proxy:2375
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # 如未来需要切换 base 镜像，可在此覆盖
+        BUILDKIT_INLINE_CACHE: 1
+    image: litecode-web:latest
+    container_name: litecode-web
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      docker-proxy:
+        condition: service_started
+      judge:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      # 覆盖 .env 中的 DB_HOST（容器内用网络别名而非 127.0.0.1）
+      DB_HOST: mysql
+      DB_PORT: 3306                       # 直连 MySQL 协议（非 X Protocol）
+      DB_USER: ${DB_USER:-litecode}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_NAME: ${DB_NAME:-litecode}
+      DB_POOL_MIN: 4
+      DB_POOL_MAX: 16
+      # 通过 socket 代理访问 Docker
+      DOCKER_SOCKET_URL: tcp://docker-proxy:2375
+      JUDGE_IMAGE: litecode-judge:latest
+      # 日志：JSON 到 stdout，由 docker log driver 接管
+      LOG_FORMAT: json
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # 健康检查监听
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8080
+      SERVER_THREAD_POOL_SIZE: ${SERVER_THREAD_POOL_SIZE:-8}
+      # 时区
+      TZ: Asia/Shanghai
+    volumes:
+      # 日志目录（容器写、宿主机可观察）
+      - ./logs:/app/logs
+      # 题库数据（管理员导入/读取 JSON）
+      - ./problems:/app/problems:ro
+      # 前端静态资源（开发时可热更新；生产应固化进镜像）
+      - ./web:/app/web:ro
+    networks:
+      - litecode-net
+    ports:
+      # 仅暴露给反向代理或本地；生产由 Caddy 接管 80/443
+      - "${WEB_BIND:-127.0.0.1}:8080:8080"
+    # SPEC §15.5：Web 容器资源硬限制
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 512M
+        reservations:
+          cpus: "0.5"
+          memory: 128M
+    # 非 root + 不提权（镜像内 USER litecode + Docker 默认 seccomp）
+    security_opt:
+      - no-new-privileges:true
+    # 健康检查在镜像 HEALTHCHECK 中已定义，此处可省略
+    logging: *default-logging
+
+  # ───── 5. Caddy 反向代理（可选，profile=proxy 启用）───────
+  # SPEC §11 Phase 1 / Phase 7：本地 HTTP-only；生产可改 HTTPS
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: litecode-caddy
+    restart: unless-stopped
+    profiles: ["proxy"]
+    depends_on:
+      web:
+        condition: service_healthy
+    ports:
+      - "${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - litecode-net
+    logging: *default-logging
+
+  # ───── 6. Prometheus（可选，profile=monitoring 启用）───────
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    container_name: litecode-prometheus
+    restart: unless-stopped
+    profiles: ["monitoring"]
+    depends_on:
+      - web
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    networks:
+      - litecode-net
+    logging: *default-logging
+
+  # ───── 7. Grafana（可选，profile=monitoring 启用）─────────
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: litecode-grafana
+    restart: unless-stopped
+    profiles: ["monitoring"]
+    depends_on:
+      - prometheus
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin_change_me}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - grafana-data:/var/lib/grafana
+    networks:
+      - litecode-net
+    logging: *default-logging
+
+# ───── 网络 ──────────────────────────────────────────────────
+# 单一自定义网络；容器间通过服务名互通
+networks:
+  litecode-net:
+    driver: bridge
+    name: litecode-net
+
+# ───── 命名卷 ────────────────────────────────────────────────
+volumes:
+  mysql-data:
+    name: litecode-mysql-data
+  caddy-data:
+    name: litecode-caddy-data
+  caddy-config:
+    name: litecode-caddy-config
+  prometheus-data:
+    name: litecode-prometheus-data
+  grafana-data:
+    name: litecode-grafana-data

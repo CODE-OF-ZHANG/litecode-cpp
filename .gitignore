@@ -36,3 +36,7 @@ logs/
 docs/
 .superpowers/
 third_party/
+# Local secrets (SPEC §15.7)
+.env
+.env.*
+!.env.example

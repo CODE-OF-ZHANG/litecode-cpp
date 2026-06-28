@@ -1,0 +1,66 @@
+# =============================================================
+# LiteCode-CPP — Prometheus 抓取配置
+# =============================================================
+# SPEC §16.2：监控 LiteCode Web 服务的 /api/v1/metrics
+# 同时收集宿主机 Docker 指标（cAdvisor 可选，见注释）
+# =============================================================
+
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: litecode-monitor
+    env: dev                       # 生产改为 production
+
+# ───── 告警规则（SPEC §16.4）─────────────────────────────
+# 完整告警规则放 alerting/ 目录，这里先预留文件路径
+# rule_files:
+#   - "alerts/*.yml"
+
+# ───── 告警管理器 ──────────────────────────────────────
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ['alertmanager:9093']
+
+# ───── 抓取目标 ─────────────────────────────────────────
+scrape_configs:
+  # 1. LiteCode Web 服务（核心）
+  - job_name: litecode-web
+    metrics_path: /api/v1/metrics
+    scheme: http
+    static_configs:
+      - targets:
+          - 'litecode-web:8080'
+        labels:
+          service: web
+          tier: application
+
+  # 2. Prometheus 自身指标
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # 3. cAdvisor（Docker 容器指标，可选）
+  #    需要单独启动 cAdvisor 服务，docker-compose 中可加：
+  #    cadvisor:
+  #      image: gcr.io/cadvisor/cadvisor:v0.49.1
+  #      volumes:
+  #        - /:/rootfs:ro
+  #        - /var/run:/var/run:ro
+  #        - /sys:/sys:ro
+  #        - /var/lib/docker/:/var/lib/docker:ro
+  #      ports: ["8080:8080"]
+  #    取消下方注释启用：
+  # - job_name: cadvisor
+  #   static_configs:
+  #     - targets: ['cadvisor:8080']
+  #       labels:
+  #         service: cadvisor
+
+  # 4. Node exporter（宿主机指标，可选）
+  # - job_name: node
+  #   static_configs:
+  #     - targets: ['node-exporter:9100']
+  #       labels:
+  #         service: host

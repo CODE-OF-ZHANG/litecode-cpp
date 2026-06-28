@@ -74,6 +74,11 @@ endif()
 
 # ─── find_package: local prebuilt dependencies ───
 find_package(OpenSSL REQUIRED)
+
+# mysql-connector-c++ (Oracle X DevAPI) — 包名 `mysql-concpp`
+# 这是 Oracle 9.x 在 Debian/Ubuntu APT 仓库里使用的命名（config 文件 mysql-concpp-config.cmake）。
+# HINTS 优先查 ${MYSQL_CONNECTOR_DIR}（Windows dev 安装路径），Linux Docker
+# 由 apt 安装的 libmysqlcppconn-dev 自动注册到 /usr/lib/x86_64-linux-gnu/cmake/mysql-concpp/。
 find_package(mysql-concpp CONFIG REQUIRED
     HINTS ${MYSQL_CONNECTOR_DIR})
 

@@ -1,0 +1,25 @@
+# =============================================================
+# LiteCode-CPP — Grafana 数据源（自动配置）
+# =============================================================
+# SPEC §16.3：Grafana 启动时自动加载 Prometheus 数据源
+# 路径：/etc/grafana/provisioning/datasources/datasources.yml
+# =============================================================
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    # Prometheus 服务在 litecode-net 内的别名
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s
+      httpMethod: POST
+    # 基本认证（如 Prometheus 启用 basic auth 时启用）
+    # basicAuth: false
+    # basicAuthUser: ""
+    # secureJsonData:
+    #   basicAuthPassword: ""
