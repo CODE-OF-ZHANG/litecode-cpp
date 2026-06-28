@@ -885,8 +885,8 @@ litecode-cpp/
 - [x] ★ JWT 工具（jwt_utils.h：HS256 签发 + 验证 + 提取 user_id/role；secret 从 env 读且 ≥ 32 字节）
 - [x] ★ 密码哈希（password_hash.h：bcrypt cost=12，header-only + 内联；`hash_password` / `verify_password` / `extract_cost_factor` / `needs_rehash`；失败抛 `PasswordError` 三级异常，verify 路径 `noexcept`；tests/unit/test_password_hash.cpp 33 用例全通过 ~6.3s）
 - [x] ★ 密码强度校验（后端 `validate_password_strength` / `require_password_strength`：8 ≤ len ≤ 72（含 bcrypt `$2b$` 72 字节硬上限）+ 字母 + 数字；前端实现见 web/js/app.js 时复用同策略，避免前后端规则漂移）
-- [ ] ★ JWT 认证中间件（拦截请求，提取用户信息）
-- [ ] ★ 管理员权限中间件（校验 role=admin，非管理员返回 403）
+- [x] ★ JWT 认证中间件（auth_middleware.h + admin_middleware.h：header-only 内联；`extract_bearer_token`（OWS/大小写/CRLF 注入防护）+ `require_authentication`（401 统一信封，验签失败/过期/错 issuer/错 kind 全归一为 "invalid or expired token" 防探测）+ `require_role`（403）+ `require_admin`（401→403 链式校验）；tests/unit/test_auth_middleware.cpp 32 用例覆盖 token 解析、过期/篡改/换 issuer/换 kind、role 校验、E2E HttpServer 往返，全通过 ~0.27s）
+- [x] ★ 管理员权限中间件（admin_middleware.h：`require_admin` 链式 `require_authentication` + `require_role("admin")`，未登录 401、登录但非 admin 403）
 - [ ] ★ 限流中间件（按 IP+用户，令牌桶，§5.1 各端点配额）
 - [ ] ★ Refresh Token 机制（签发 + 刷新 + 黑名单）
 - [ ] ★ 用户注册 API（POST /api/v1/auth/register，限流 5/分/IP）
