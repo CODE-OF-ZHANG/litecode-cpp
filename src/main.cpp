@@ -113,10 +113,12 @@ int main() {
                   {{"recommendation", "set JWT_SECRET in production"}});
     }
 
-    // Verify bcrypt works
-    std::string hash = litecode::password_hash("test123");
-    bool ok = litecode::password_verify("test123", hash);
-    std::cout << "bcrypt test: " << (ok ? "PASS" : "FAIL") << std::endl;
+    // Verify bcrypt works (Phase 2 ★ password_hash.h smoke test)
+    std::string hash = litecode::hash_password("test123Aa");
+    bool ok = litecode::verify_password("test123Aa", hash);
+    std::cout << "bcrypt test: " << (ok ? "PASS" : "FAIL")
+              << " (cost=" << litecode::kBcryptCostFactor << ")"
+              << std::endl;
 
     // Verify jwt-cpp works
     auto token = jwt::create()

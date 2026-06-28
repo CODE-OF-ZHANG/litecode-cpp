@@ -82,15 +82,23 @@ find_package(OpenSSL REQUIRED)
 find_package(mysql-concpp CONFIG REQUIRED
     HINTS ${MYSQL_CONNECTOR_DIR})
 
-# ─── Main executable ───
-add_executable(litecode
-    src/main.cpp
+# ─── bcrypt C library (Phase 2 ★ password_hash.h's backend) ───
+# Sourced from OpenBSD's bcrypt; wrapped in src/auth/bcrypt/litecode_bcrypt.h
+# (renamed to dodge Windows SDK's <bcrypt.h> collision). Built as a small
+# STATIC lib so both the main executable and the test_password_hash binary
+# can link it without duplicating the .c file list in two places.
+add_library(litecode_bcrypt STATIC
     src/auth/bcrypt/bcrypt.c
     src/auth/bcrypt/blf.c)
+target_include_directories(litecode_bcrypt PUBLIC
+    ${CMAKE_SOURCE_DIR}/src/auth/bcrypt)
+
+# ─── Main executable ───
+add_executable(litecode
+    src/main.cpp)
 
 target_include_directories(litecode PRIVATE
-    ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/src/auth/bcrypt)
+    ${CMAKE_SOURCE_DIR}/src)
 
 target_link_libraries(litecode PRIVATE
     httplib::httplib
@@ -99,7 +107,8 @@ target_link_libraries(litecode PRIVATE
     ZLIB::ZLIB
     OpenSSL::SSL
     OpenSSL::Crypto
-    mysql::concpp)
+    mysql::concpp
+    litecode_bcrypt)
 
 # ─── Build type default ───
 if(NOT CMAKE_BUILD_TYPE)
