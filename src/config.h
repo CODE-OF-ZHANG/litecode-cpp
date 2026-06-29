@@ -130,12 +130,13 @@ struct CorsConfig {
 };
 
 struct RateLimitConfig {
-    // SPEC §5.1 / §15.2 quotas
-    int auth_register_per_minute_per_ip = 5;
-    int auth_login_per_minute_per_ip = 10;
-    int submission_per_minute_per_user = 30;
-    int admin_write_per_minute = 30;
-    int bulk_import_per_hour = 5;
+    // SPEC §5.1 / §5.2 / §15.2 quotas
+    int auth_register_per_minute_per_ip    = 5;
+    int auth_login_per_minute_per_ip       = 10;
+    int problems_public_per_minute_per_ip  = 60;   // GET /api/v1/problems, /api/v1/problems/:slug
+    int submission_per_minute_per_user     = 30;
+    int admin_write_per_minute             = 30;
+    int bulk_import_per_hour               = 5;
 };
 
 struct AdminBootstrapConfig {

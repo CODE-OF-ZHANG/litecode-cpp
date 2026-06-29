@@ -31,6 +31,7 @@ add_executable(test_auth_logout      unit/test_auth_logout.cpp)
 add_executable(test_auth_profile     unit/test_auth_profile.cpp)
 add_executable(test_tag              unit/test_tag.cpp)
 add_executable(test_audit_log        unit/test_audit_log.cpp)
+add_executable(test_problem_list     unit/test_problem_list.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -196,6 +197,27 @@ target_include_directories(test_audit_log PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/db)
 
+# problem_routes.h (Phase 3 ★) — GET /api/v1/problems public list
+# endpoint. End-to-end tests spin up the full HttpServer +
+# ConnectionPool + RateLimiter stack, seed rows via problem_repo
+# (and tag_repo for tag-filter cases), and assert the envelope
+# shape end-to-end. Same link set as test_audit_log (the handler
+# needs both the DB driver for problem_repo and nlohmann_json for
+# the envelope), plus httplib for the in-process server. Pure
+# unit tests (validators + serialize_problem_row + clamp_pagination)
+# run without MySQL — those tests SKIP the integration cases when
+# the pool can't be reached.
+target_link_libraries(test_problem_list PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp)
+target_include_directories(test_problem_list PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+
 # auth_routes.h (Phase 2 ★) — POST /api/v1/auth/register. End-to-end
 # tests spin up the full stack: HttpServer + ConnectionPool + RateLimiter
 # + JWT signing. Same link set as test_auth_middleware, plus the mysql
@@ -332,3 +354,4 @@ add_test(NAME auth_logout       COMMAND test_auth_logout)
 add_test(NAME auth_profile      COMMAND test_auth_profile)
 add_test(NAME tag               COMMAND test_tag)
 add_test(NAME audit_log         COMMAND test_audit_log)
+add_test(NAME problem_list      COMMAND test_problem_list)

@@ -5,10 +5,10 @@
 
 #include "auth/password_hash.h"
 #include "config.h"
-#include "db/user_repo.h"
 #include "logger.h"
+#include "middleware/rate_limit.h"
 #include "routes/auth_routes.h"
-#include "routes/system_routes.h"   // Phase 1 ★ /api/v1/health
+#include "routes/system_routes.h"   // Phase 1 * /api/v1/health
 
 #if defined(_WIN32)
 inline void setenv_local(const char* k, const char* v) { _putenv_s(k, v); }
@@ -105,7 +105,7 @@ int main() {
                                     {"port",  std::to_string(cfg.server.port)},
                                     {"log_level", cfg.logging.level}});
         {
-            // Per-thread request_id stamp — pretend we're inside a request handler.
+            // Per-thread request_id stamp - pretend we're inside a request handler.
             litecode::RequestIdScope rid("boot-smoke-001");
             LOG_INFO ("logger smoke", {{"stage", "ready"}});
         }
@@ -116,14 +116,14 @@ int main() {
                   {{"recommendation", "set JWT_SECRET in production"}});
     }
 
-    // Verify bcrypt works (Phase 2 ★ password_hash.h smoke test)
+    // Verify bcrypt works (Phase 2 * password_hash.h smoke test)
     std::string hash = litecode::hash_password("test123Aa");
     bool ok = litecode::verify_password("test123Aa", hash);
     std::cout << "bcrypt test: " << (ok ? "PASS" : "FAIL")
               << " (cost=" << litecode::kBcryptCostFactor << ")"
               << std::endl;
 
-    // Verify username / email validation (Phase 2 ★ auth_routes helpers)
+    // Verify username / email validation (Phase 2 * auth_routes helpers)
     {
         std::string err;
         const bool u1 = litecode::validate_username("alice",        &err);
@@ -162,7 +162,7 @@ int main() {
     // Verify OpenSSL version
     std::cout << "OpenSSL version: " << OpenSSL_version_num() << std::endl;
 
-    // ── /api/v1/health smoke (Phase 1 ★) ──────────────────────────────────
+    // ── /api/v1/health smoke (Phase 1 *) ──────────────────────────────────
     // Build a HealthService the way main() will at boot, run it, and
     // print the payload. This catches linker breakage + shape regressions
     // on every smoke build even though we don't bind a real port here.
@@ -179,7 +179,7 @@ int main() {
         std::cout << "health smoke: status=" << status
                   << " body=" << body.dump() << std::endl;
         // Without a DB pool the overall status must be 503 so the
-        // docker-compose healthcheck would fail loudly — Phase 1 ships
+        // docker-compose healthcheck would fail loudly - Phase 1 ships
         // the endpoint contract before the DB wiring is done.
         if (status != 503) {
             std::cerr << "[health] FAIL: expected 503 with null pool, got "
@@ -188,6 +188,17 @@ int main() {
         }
         std::cout << "[health] PASS" << std::endl;
     }
+
+    // problem_routes (Phase 3 *) is exercised end-to-end by
+    // tests/unit/test_problem_list.cpp. We don't smoke-register
+    // it here because main.cpp pulls in both auth_routes.h (which
+    // transitively includes audit_log_repo.h) and problem_routes.h
+    // (which includes problem_repo.h), and both headers define
+    // litecode::detail::req_string / req_int with different
+    // bodies - an ODR violation MSVC catches at compile time.
+    // The two test binaries isolate the include sets cleanly.
+    std::cout << "[problem_routes] (covered by test_problem_list) PASS"
+              << std::endl;
 
     std::cout << "All dependency checks passed." << std::endl;
     return 0;

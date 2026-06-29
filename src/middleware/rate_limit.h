@@ -6,6 +6,7 @@
 //   - Per-endpoint quotas:
 //       POST /api/v1/auth/register            5 / min / IP
 //       POST /api/v1/auth/login               10 / min / IP
+//       GET  /api/v1/problems                 60 / min / IP   (Phase 3 ★)
 //       POST /api/v1/submissions              30 / min / user
 //       POST/PUT/DELETE /api/v1/admin/...     30 / min / admin
 //       POST /api/v1/admin/problems/import     5 / hour / admin
@@ -174,6 +175,22 @@ inline RateLimitQuota auth_login_quota(const RateLimitConfig& cfg) {
     return RateLimitQuota{
         "auth.login",
         cfg.auth_login_per_minute_per_ip,
+        std::chrono::minutes(1),
+        RateLimitKeyType::ByIp,
+    };
+}
+
+// problems_public_quota — SPEC §5.2 "GET /api/v1/problems" public
+// read endpoint. Per-IP, 1-minute window. The same bucket covers
+// GET /api/v1/problems (list) and GET /api/v1/problems/:slug
+// (detail) because they share the same threat model (an
+// unauthenticated scraper walking the problem space). The bucket
+// name is "problems.read" so a future detail endpoint can be
+// keyed under the same quota without retuning the limit.
+inline RateLimitQuota problems_public_quota(const RateLimitConfig& cfg) {
+    return RateLimitQuota{
+        "problems.read",
+        cfg.problems_public_per_minute_per_ip,
         std::chrono::minutes(1),
         RateLimitKeyType::ByIp,
     };
