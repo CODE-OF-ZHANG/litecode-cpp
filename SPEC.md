@@ -1,7 +1,7 @@
 # LiteCode-CPP — 产品规格说明书 (SPEC)
 
 > **版本**: v1.2 (MVP+)  
-> **日期**: 2026-06-27  
+> **日期**: 2026-06-29  
 > **定位**: 个人学习型 OJ（Online Judge），以 C++ Web 开发为学习目标  
 > **项目名**: LiteCode-CPP  
 > **变更记录**: 详见 [§0 变更日志](#0-变更日志)
@@ -19,6 +19,7 @@
 | v1.2.2 | 2026-06-29 | Phase 3 开篇：实现 `problem_repo.h`（CRUD + 软删除 + 软删过滤查询，含 slug/title/difficulty/time/memory 校验、tag_id 筛选、limit/offset 分页钳制、`include_deleted` 切换）；tests/unit/test_problem.cpp 33 用例（15 纯单测 + 18 MySQL 集成测试，集成测试在 ping 失败时自动 SKIP）全通过 |
 | v1.2.3 | 2026-06-29 | Phase 3 续：实现 `tag_repo.h`（`tags` + `problem_tags` M:N，含 name 长度/空白/控制字符校验、trim、CRUD、`delete_by_id` FK 级联、`list` / `list_with_count` 软删过滤、`attach`（INSERT IGNORE 幂等）/ `detach` / `clear` / `replace`（START TRANSACTION 原子替换 + 去重 + INSERT IGNORE 兜底）/ `list_tags_for_problem` / `list_problems_for_tag`（live-only 默认）/ `count_*`、批量 `find_or_create_many`（一次多行 INSERT IGNORE + IN-clause SELECT 保持调用方顺序，支持中文名 "数组"/"哈希表"））；tests/unit/test_tag.cpp 30 用例（8 纯单测 + 22 MySQL 集成测试，集成测试在 ping 失败时自动 SKIP）全通过 |
 | v1.2.4 | 2026-06-29 | Phase 3 收尾：实现 `audit_log_repo.h`（Phase 2 仅含 `record_login_failure` 写入；现扩展完整 Phase 3 公共 API：`AuditRow` / `AuditEntry` / `AuditListFilter` / `AuditListResult` / `AuditLogRepoError` / `AuditLogNotFoundError`；`validate_action` / `validate_target_type` / `validate_target_id` / `validate_ip` / `validate_datetime` / `clamp_list_filter`；`record`（strict，throw）/ `record_best_effort`（LOG_WARN swallow）/ `record_login_failure`（Phase 2 兼容签名）/ `find_by_id` / `list`（admin_id × action × target_type × target_id × since × until 过滤 + 分页钳制 + ORDER BY created_at DESC, id DESC）/ `count`；kAction* 常量覆盖 problem.create/update/delete/restore/bulk_import、user.role_change/user.password_change、auth.login_failure；payload 走 `CAST(payload AS CHAR)` 修 mysql-connector 9.x JSON 列读不回的 bug；`build_where_clause` 共用 WHERE 拼装 + 链式 bind 避免 per-pred-count dispatch）；tests/unit/test_audit_log.cpp 28 用例（15 纯单测 + 13 MySQL 集成测试，集成测试在 ping 失败时自动 SKIP）全通过 ~14s；Phase 2 test_auth_login（26 用例）/ Phase 3 test_problem（33）/ test_tag（39）回归全过 |
+| v1.2.5 | 2026-06-29 | Phase 3 数据库迁移收尾：补 `db/migrations/V008__add_finished_at.sql`（SPEC §4.4 `submissions.finished_at` + `idx_submissions_finished`，幂等：ADD COLUMN / CREATE INDEX 双重 information_schema guard + `INSERT IGNORE`）；加固 V007 幂等性（注释说 idempotent 但原 SQL 不是，改为 information_schema guard 包裹 DROP INDEX / ADD CONSTRAINT + `INSERT IGNORE`），使 `scripts/init_db.sh` 与 `docker-entrypoint-initdb.d` 两套入口均安全可重入；本地 MySQL 8.0.41 全量端到端验证：fresh DB → V001-V099 顺序 apply → re-run init_db.sh 全部 skip → 单独重跑 V007/V008 无错误；表/列/索引对照 SPEC §4 + §4.5 全项核对通过 |
 
 ### v1.2 主要变更摘要
 
@@ -905,7 +906,7 @@ litecode-cpp/
 - [x] ★ 题目数据模型（problem_repo.h：CRUD + 软删除 + 软删过滤查询）
 - [x] ★ 标签数据模型（tag_repo.h：标签 + 题目-标签关联）
 - [x] ★ 审计日志数据模型（audit_log_repo.h）
-- [ ] ★ 数据库迁移脚本（V001-V005，按 §10 目录落地）
+- [x] ★ 数据库迁移脚本（V001-V008 + V099，按 §10 目录落地；V007/V008 幂等加固；本地 MySQL 8.0.41 端到端验证全表/列/索引对照 SPEC §4 + §4.5 通过；详见 v1.2.5）
 - [ ] ★ 题目列表 API（GET /api/v1/problems，分页 + 难度/标签筛选 + 软删过滤）
 - [ ] ★ 题目详情 API（GET /api/v1/problems/:slug，含示例 + 标签）
 - [ ] ★ 标签列表 API（GET /api/v1/tags）
