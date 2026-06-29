@@ -14,7 +14,8 @@
 |------|------|----------|
 | v1.0 | 2026-06-20 | 初稿，核心功能定义 |
 | v1.1 | 2026-06-25 | MVP 规格：tags 拆表、管理员模块、批量导入、20+ 验收用例 |
-| **v1.2** | **2026-06-27** | **本次大版本**（基于代码审查的安全/性能/可维护性整改，详见下方） |
+| v1.2 | 2026-06-27 | 大版本（基于代码审查的安全/性能/可维护性整改） |
+| v1.2.1 | 2026-06-29 | Phase 2 收尾：补全 `GET /api/v1/auth/profile`（含 19 用例集成测试）；修复 mysql-connector 9.x `created_at` / `last_login` DATETIME 列被读成 packed binary 的潜在 bug（user_repo SELECT 加 `DATE_FORMAT`） |
 
 ### v1.2 主要变更摘要
 
@@ -893,7 +894,7 @@ litecode-cpp/
 - [x] ★ 用户登录 API（POST /api/v1/auth/login，限流 10/分/IP；header-only + inline；`login_handler` + `LoginFailureTracker`（per-username count, kAuditLogEvery=5）+ `detail::parse_login_request`；bcrypt verify `noexcept`；anti-enumeration：用户不存在 vs 密码错误 → 同 401 envelope；5 次连续失败 → `audit_log_repo::record_login_failure` 写 audit_logs；成功 → 重置计数 + `user_repo::update_last_login`；tests/unit/test_auth_login.cpp 29 用例全通过 ~14s）
 - [x] ★ Refresh API（POST /api/v1/auth/refresh；header-only + inline；`refresh_handler` + `RefreshRequest` / `detail::parse_refresh_request`；无 rate limit（SPEC §5.1）；`verify` → `user_repo::find_by_id` → `rotate_token_pair`（自动 blacklist check + revoke old + sign new）；anti-enumeration：bad sig/expired/revoked/wrong kind/deleted user → 同 401 envelope；新 access token 携带最新 username/role；tests/unit/test_auth_refresh.cpp 25 用例全通过 ~6.9s）
 - [x] ★ Logout API（POST /api/v1/auth/logout；header-only + inline；`logout_handler` + `LogoutRequest` / `detail::parse_logout_request`；需 Bearer 鉴权（`require_authentication` 401），无 rate limit（SPEC §5.1）；body `{refresh_token}` → `revoke_refresh_token`（best-effort，never throws，TTL=剩余有效期，max_ttl_seconds cap）；theft defense：access token 的 claims.user_id 作为 `expected_user_id`，refresh sub 失配时 refused（log WARN），bob session 不受影响；anti-enumeration：malformed/expired/wrong-kind/access-as-refresh → 同 200 + `{logged_out:true, revoked:false}`；幂等（store.revoke 重写 TTL）；tests/unit/test_auth_logout.cpp 28 用例全通过 ~11s）
-- [ ] ★ 用户信息 API（GET /api/v1/auth/profile）
+- [x] ★ 用户信息 API（GET /api/v1/auth/profile；header-only + inline；`profile_handler`；需 Bearer 鉴权（`require_authentication` 401）；claims.user_id → `user_repo::find_by_id`（用户被删 → 401 "user not found"）；no rate limit（SPEC §5.1）；响应 `{user: {id, username, role, email|null, avatar|null, created_at, last_login|null}}` —— 不暴露 `password_hash`（防 stolen access token 跨服务复用）/ `last_login_ip`（session metadata）；DB DATE_FORMAT 修正 mysql-connector 9.x 把 DATETIME 读成 packed binary 的坑（user_repo::find_by_id/find_by_username 同步修）；anti-enumeration：所有 401 envelope 走 `require_authentication` 统一墙；tests/unit/test_auth_profile.cpp 19 用例全通过 ~8.7s）
 - [x] ☆ 失败登录审计（连续 5 次失败写 audit_logs，详见 login_handler + LoginFailureTracker）
 
 ### Phase 3 - 题目模块

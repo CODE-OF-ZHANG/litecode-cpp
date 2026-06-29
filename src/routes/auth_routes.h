@@ -27,9 +27,12 @@
 //     password_hash.h / user_repo.h). Tests link this header directly
 //     and instantiate the route set with a real ConnectionPool + a
 //     dummy rate limiter (or a stub pool that throws on demand).
-//   - Phase 2 ★ ships **register** + **login** + **refresh** + **logout**.
-//     Profile still returns 501 — it's the follow-up Phase 2 work
-//     and its stub keeps the route table stable.
+//   - Phase 2 ★ ships **register** + **login** + **refresh** + **logout** +
+//     **profile**. The last is the SPEC §5.1 "已登录" GET that returns
+//     the current user's row from the `users` table (id / username /
+//     role / email / avatar / created_at / last_login) — the "who am I"
+//     companion to /auth/login used by the front-end's profile page +
+//     nav-bar hydration on every page load.
 //   - Every handler follows the same shape:
 //       1) consume_rate_limit() — bucket + 429 envelope on deny
 //       2) parse_json_body() — 400 envelope on bad JSON
@@ -1084,6 +1087,128 @@ inline void logout_handler(httplib::Response&                 res,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+//  GET /api/v1/auth/profile   — Phase 2 ★  (SPEC §5.1, A3)
+//
+//  Wire flow:
+//    1. require_authentication()    — 401 envelope on missing / bad /
+//                                       expired Bearer access token
+//                                       (SPEC §5.1: "已登录")
+//    2. user_repo::find_by_id()     — 401 if the user was deleted
+//                                       between token issuance and
+//                                       this request; the JWT is still
+//                                       signature-valid but the row is
+//                                       gone, so the session is
+//                                       effectively dead.
+//    3. send_success()              — 200 + {user: {...}}
+//
+//  Response shape — the `user` block carries the same fields as the
+//  login / register / refresh `user` blocks (id / username / role /
+//  email) plus three extras the front-end's profile page can render
+//  without a second request:
+//      avatar      — null when the user has no avatar
+//      created_at  — string "YYYY-MM-DD HH:MM:SS"
+//      last_login  — null when the user has never logged in
+//  We deliberately do NOT expose:
+//      password_hash — would let a stolen access token trivially
+//                      bypass re-auth on any other service that
+//                      shares the same bcrypt cost factor
+//      last_login_ip — session metadata, not profile display; also
+//                      unnecessary surface for an attacker who has
+//                      already hijacked a Bearer token
+//  No rate limit (SPEC §5.1: profile row has `-` in the rate-limit
+//  column). It's hit on every page load by every logged-in user, so
+//  the per-IP bucket is reserved for register / login / submission
+//  endpoints where flooding matters.
+// ────────────────────────────────────────────────────────────────────────────
+
+inline void profile_handler(httplib::Response&      res,
+                            const httplib::Request& req,
+                            ConnectionPool&         pool,
+                            const JwtConfig&        jwt_cfg) {
+    // 1) Authentication gate. require_authentication throws
+    //    ApiException(401, UNAUTHORIZED) on every failure mode (no
+    //    header / wrong scheme / empty / malformed / bad sig / expired
+    //    / wrong issuer / wrong kind) — server.h's per-request wrap
+    //    turns it into the unified envelope.
+    const Claims claims = require_authentication(req, jwt_cfg);
+
+    // 2) sub is a decimal string of the user's id (same shape we emit
+    //    in sign_access / sign_refresh). Anything else is a tampered
+    //    token; require_authentication already rejected those with a
+    //    signature failure, so reaching this line with a non-numeric
+    //    sub is unreachable in practice — but a defensive parse keeps
+    //    std::stoi exceptions from escaping the handler.
+    int user_id = 0;
+    try {
+        user_id = std::stoi(claims.user_id);
+    } catch (const std::exception&) {
+        LOG_WARN("profile: malformed sub claim",
+                 {{"sub", claims.user_id}});
+        send_error(res, 401, ErrorCode::UNAUTHORIZED,
+                   "invalid or expired token");
+        return;
+    }
+    if (user_id <= 0) {
+        LOG_WARN("profile: non-positive sub claim",
+                 {{"sub", claims.user_id}});
+        send_error(res, 401, ErrorCode::UNAUTHORIZED,
+                   "invalid or expired token");
+        return;
+    }
+
+    // 3) Look up the user. nullopt ⇒ the user was deleted (or never
+    //    existed — same outcome). Anti-enumeration: the JWT carries
+    //    the user_id, so an attacker hitting /profile already knows
+    //    who they're probing. The 401 envelope surfaces the missing
+    //    row to the front-end so it can clear local state and bounce
+    //    the user to /login.
+    std::optional<UserRow> row;
+    try {
+        row = user_repo::find_by_id(pool, user_id);
+    } catch (const std::exception& e) {
+        LOG_ERROR("profile: find_by_id threw",
+                  {{"user_id", claims.user_id},
+                   {"type",    typeid(e).name()},
+                   {"reason",  e.what()}});
+        send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                   std::string("internal error: ") + e.what());
+        return;
+    }
+    if (!row) {
+        LOG_WARN("profile: user not found",
+                 {{"user_id", claims.user_id}});
+        send_error(res, 401, ErrorCode::UNAUTHORIZED,
+                   "user not found");
+        return;
+    }
+
+    LOG_INFO("auth: profile",
+             {{"user_id",  std::to_string(row->id)},
+              {"username", row->username},
+              {"role",     row->role}});
+
+    // 4) Emit the user block. Optional columns are lifted into a
+    //    JSON null when the DB column is NULL — never an empty string,
+    //    so the front-end can branch on `user.email === null` cleanly.
+    nlohmann::json user_block = {
+        {"id",         row->id},
+        {"username",   row->username},
+        {"role",       row->role},
+        {"email",      row->email
+                          ? nlohmann::json(*row->email)
+                          : nlohmann::json(nullptr)},
+        {"avatar",     row->avatar
+                          ? nlohmann::json(*row->avatar)
+                          : nlohmann::json(nullptr)},
+        {"created_at", row->created_at},
+        {"last_login", row->last_login
+                          ? nlohmann::json(*row->last_login)
+                          : nlohmann::json(nullptr)},
+    };
+    send_success(res, {{"user", user_block}});
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 //  Route registration
 //
 //  Returns HttpServer& so callers can chain.
@@ -1185,12 +1310,12 @@ inline HttpServer& register_auth_routes(HttpServer&        server,
             }
         });
 
-    // The remaining auth endpoints (logout / profile) are reserved
-    // for the follow-up Phase 2 work. We register a 501 placeholder
-    // for each so the route table is stable and the front-end's
-    // integration can be staged endpoint by endpoint. The placeholder
-    // returns a SPEC §5.7 envelope so callers always get the same
-    // shape they expect from the eventual implementations.
+    // The remaining auth endpoints (profile) are reserved for the
+    // follow-up Phase 2 work. We register a 501 placeholder so the
+    // route table is stable and the front-end's integration can be
+    // staged endpoint by endpoint. The placeholder returns a SPEC
+    // §5.7 envelope so callers always get the same shape they expect
+    // from the eventual implementation.
     auto not_implemented = [](const httplib::Request&,
                               httplib::Response& res) {
         send_error(res, 501, ErrorCode::SERVICE_UNAVAILABLE,
@@ -1270,7 +1395,39 @@ inline HttpServer& register_auth_routes(HttpServer&        server,
             }
         });
 
-    server.get ("/api/v1/auth/profile", not_implemented);
+    // GET /api/v1/auth/profile — Phase 2 ★  (SPEC §5.1)
+    //
+    // No rate limit (SPEC §5.1). The endpoint is hit on every page
+    // load by every logged-in user; the per-IP bucket is reserved for
+    // register / login / submission endpoints where flooding matters.
+    //
+    // The Bearer access token gates the endpoint (SPEC §5.1: "已登录").
+    // `store` is NOT captured — profile doesn't touch the refresh-
+    // token blacklist (revoking a session is /auth/logout's job).
+    // `limiter` / `tracker` / `rate_cfg` are NOT captured — profile
+    // has no rate-limit budget. We capture `pool` BY REFERENCE (owned
+    // by main() / test fixture) and `jwt_cfg` BY VALUE (defends
+    // against a temporary JwtConfig going out of scope).
+    server.get("/api/v1/auth/profile",
+        [&pool, jwt_cfg]
+        (const httplib::Request& req, httplib::Response& res) {
+            try {
+                profile_handler(res, req, pool, jwt_cfg);
+            } catch (const ApiException&) {
+                // Already an envelope — let server.h wrap() emit it.
+                throw;
+            } catch (const std::exception& e) {
+                LOG_ERROR("profile: handler threw",
+                          {{"type",   typeid(e).name()},
+                           {"reason", e.what()}});
+                if (res.body.empty()) {
+                    send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                               std::string("internal error: ") + e.what());
+                } else {
+                    throw;
+                }
+            }
+        });
 
     return server;
 }

@@ -834,15 +834,6 @@ TEST_F(AuthLoginLiveFixture, SuccessAfterFailuresStopsAuditRowGrowth) {
 //  Placeholder routes (logout / profile) — still 501
 //  (refresh moved to its own suite: test_auth_refresh.cpp)
 // ────────────────────────────────────────────────────────────────────────────
-
-TEST_F(AuthLoginLiveFixture, ProfileReturnsNotImplemented) {
-    StdoutSilencer silencer;
-    auto r = handle.client->Get("/api/v1/auth/profile");
-    ASSERT_TRUE(r);
-    EXPECT_EQ(r->status, 501);
-}
-
-// ────────────────────────────────────────────────────────────────────────────
 //  Pure-unit tests (no MySQL, no server) — exercise LoginFailureTracker +
 //  parse_login_request directly. Catches regressions even on a box
 //  without MySQL.

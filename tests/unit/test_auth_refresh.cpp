@@ -719,13 +719,6 @@ TEST_F(AuthRefreshLiveFixture, LoginStillWorks) {
     EXPECT_EQ(r->status, 200);
 }
 
-TEST_F(AuthRefreshLiveFixture, ProfileReturnsNotImplemented) {
-    StdoutSilencer silencer;
-    auto r = handle.client->Get("/api/v1/auth/profile");
-    ASSERT_TRUE(r);
-    EXPECT_EQ(r->status, 501);
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 //  Pure-unit tests of parse_refresh_request (no MySQL, no server).
 //  Catches regressions even on a box without MySQL.

@@ -384,24 +384,38 @@ inline bool email_exists(ConnectionPool& pool, std::string_view email) {
 
 // find_by_username — load a full row (login + profile use this).
 // Returns std::nullopt when no such user exists.
+//
+// Note on the DATE_FORMAT casts: mysql-connector-c++ 9.x returns
+// DATETIME columns as a 5–8-byte packed binary when read via
+// get<std::string>() — NOT a formatted string like "2026-06-29
+// 09:48:04". To get a stable wire-shape across the driver, server,
+// and timezone, we cast to CHAR in the SELECT itself. The format
+// pattern matches MySQL's default ISO-8601 rendering so the field
+// round-trips as text everywhere (audit_logs, JSON, logs). NULL
+// columns stay NULL — opt_string() still reports them as std::nullopt.
 inline std::optional<UserRow> find_by_username(ConnectionPool& pool,
                                                std::string_view username) {
     auto conn = pool.acquire();
     const auto row = conn.fetch_one(
         "SELECT id, username, password_hash, role, email, avatar, "
-        "       created_at, last_login, last_login_ip "
+        "       DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at, "
+        "       DATE_FORMAT(last_login,  '%Y-%m-%d %H:%i:%s') AS last_login, "
+        "       last_login_ip "
         "FROM users WHERE username = ? LIMIT 1",
         std::string(username));
     if (!row) return std::nullopt;
     return detail::row_to_user(*row);
 }
 
-// find_by_id — same as above but keyed by primary key.
+// find_by_id — same as above but keyed by primary key. See the
+// DATE_FORMAT rationale on find_by_username.
 inline std::optional<UserRow> find_by_id(ConnectionPool& pool, int id) {
     auto conn = pool.acquire();
     const auto row = conn.fetch_one(
         "SELECT id, username, password_hash, role, email, avatar, "
-        "       created_at, last_login, last_login_ip "
+        "       DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at, "
+        "       DATE_FORMAT(last_login,  '%Y-%m-%d %H:%i:%s') AS last_login, "
+        "       last_login_ip "
         "FROM users WHERE id = ? LIMIT 1",
         id);
     if (!row) return std::nullopt;

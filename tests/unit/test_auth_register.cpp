@@ -639,13 +639,6 @@ TEST_F(AuthLiveFixture, RateLimitTriggersAtSixthRequest) {
 // Phase 2 ★ — see SPEC §5.1, §15.1. They are real handlers, not
 // placeholders.
 
-TEST_F(AuthLiveFixture, ProfileReturnsNotImplemented) {
-    StdoutSilencer silencer;
-    auto r = handle.client->Get("/api/v1/auth/profile");
-    ASSERT_TRUE(r);
-    EXPECT_EQ(r->status, 501);
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 //  Pure validation tests (no MySQL, no server) — pinned via the public
 //  validate_username / validate_email helpers in user_repo.h.
