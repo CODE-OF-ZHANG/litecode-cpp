@@ -4,7 +4,9 @@
 //
 // SPEC §5.1 / §11 Phase 2 / §15.1 / A1, A2, A3, A22 acceptance:
 //   - POST /api/v1/auth/register     — public, 5/min/IP, returns 201 + tokens
-//   - POST /api/v1/auth/login        — public, 10/min/IP, returns 200 + tokens (Phase 2 ★, next)
+//   - POST /api/v1/auth/login        — public, 10/min/IP, returns 200 + tokens
+//                                       + per-username failure audit
+//                                       (every 5th attempt → audit_logs)
 //   - POST /api/v1/auth/refresh      — public (valid refresh), no rate limit
 //   - POST /api/v1/auth/logout       — auth required
 //   - GET  /api/v1/auth/profile      — auth required
@@ -15,10 +17,9 @@
 //     password_hash.h / user_repo.h). Tests link this header directly
 //     and instantiate the route set with a real ConnectionPool + a
 //     dummy rate limiter (or a stub pool that throws on demand).
-//   - This file ships the **register** endpoint in Phase 2 ★. The
-//     login / refresh / logout / profile handlers are stubs (501) so
-//     the route table is stable; they get implemented as the follow-up
-//     Phase 2 work.
+//   - Phase 2 ★ ships **register** + **login**. Refresh / logout /
+//     profile still return 501 — they're the follow-up Phase 2 work
+//     and their stubs keep the route table stable.
 //   - Every handler follows the same shape:
 //       1) consume_rate_limit() — bucket + 429 envelope on deny
 //       2) parse_json_body() — 400 envelope on bad JSON
@@ -31,33 +32,45 @@
 //   - The pool is passed by reference so the route handler can be
 //     wired against a fresh ConnectionPool in tests without the
 //     process-wide singleton. main() wires the production pool.
+//   - login_handler additionally takes a `LoginFailureTracker&` for
+//     the per-username failure counter that drives the audit row
+//     every kAuditLogEvery attempts (SPEC §15.1). The tracker lives
+//     outside the request thread and is shared by all logins, the
+//     way `RateLimiter` is.
 //
 // Usage (production, from main.cpp):
 //
-//   litecode::HttpServer server(cfg.server, cfg.cors);
-//   litecode::ConnectionPool pool(litecode::PoolConfig::from_database_config(cfg.database));
-//   litecode::RateLimiter limiter;
-//   litecode::register_auth_routes(server, pool, limiter);
+//   litecode::HttpServer       server(cfg.server, cfg.cors);
+//   litecode::ConnectionPool   pool(litecode::PoolConfig::from_database_config(cfg.database));
+//   litecode::RateLimiter      limiter;
+//   litecode::LoginFailureTracker tracker;
+//   litecode::register_auth_routes(server, pool, limiter, tracker,
+//                                  cfg.jwt, cfg.rate_limit);
 //   server.listen_blocking();
 //
 // Usage (test, from gtest):
 //
-//   litecode::HttpServer server(dev_server(), dev_cors());
-//   litecode::RateLimiter limiter;
-//   litecode::ConnectionPool pool(test_db_config());
-//   litecode::register_auth_routes(server, pool, limiter);
+//   litecode::HttpServer       server(dev_server(), dev_cors());
+//   litecode::RateLimiter      limiter;
+//   litecode::LoginFailureTracker tracker;
+//   litecode::ConnectionPool   pool(test_db_config());
+//   litecode::register_auth_routes(server, pool, limiter, tracker,
+//                                  dev_jwt(), lax_rate_limit());
 //   auto h = start_server(&server);
-//   auto r = h.client->Post("/api/v1/auth/register",
+//   auto r = h.client->Post("/api/v1/auth/login",
 //       R"({"username":"alice","password":"hunter22"})", "application/json");
 
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 
 #include <httplib.h>
@@ -67,6 +80,7 @@
 #include "../auth/password_hash.h"       // hash_password / PasswordPolicyError
 #include "../auth/refresh_token.h"       // issue_token_pair / TokenPair
 #include "../config.h"                   // AppConfig / JwtConfig / RateLimitConfig
+#include "../db/audit_log_repo.h"        // audit_log_repo::record_login_failure
 #include "../db/connection_pool.h"       // ConnectionPool
 #include "../db/user_repo.h"             // user_repo::create_user / find_by_username
 #include "../logger.h"                   // LOG_INFO / LOG_WARN
@@ -174,6 +188,76 @@ parse_register_request(const nlohmann::json& j,
         }
         out.email = std::move(email);
     }
+
+    return out;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  LoginRequest — smaller surface than RegisterRequest (no email, no
+//  strength rule: an existing password can be weaker than the strength
+//  policy because it was created under an earlier policy revision).
+//  We DO still validate username shape — a malformed username is never
+//  going to match a stored row, and surfacing 400 before DB hit closes
+//  off a class of probing attacks.
+// ────────────────────────────────────────────────────────────────────────────
+
+struct LoginRequest {
+    std::string username;
+    std::string password;
+};
+
+// parse_login_request — extract a LoginRequest from JSON. Returns
+// std::nullopt and writes a 400 envelope when the body is malformed.
+//
+// Differences from parse_register_request():
+//   - email is NOT supported (server-side login is by username only;
+//     the front-end's "forgot password" flow uses a separate path).
+//   - password strength is NOT enforced (login must verify what was
+//     stored, not what we'd re-allow today).
+//   - Both fields are required and must be strings. Empty `password`
+//     is rejected with a 400 because bcrypt_checkpass on an empty key
+//     against an existing hash would still do ~250ms of work for no
+//     useful purpose.
+inline std::optional<LoginRequest>
+parse_login_request(const nlohmann::json& j,
+                    httplib::Response&    res) {
+    LoginRequest out;
+
+    // username (required, string, shape-validated)
+    if (!j.contains("username") || !j["username"].is_string()) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   "missing or non-string `username`",
+                   {{"field", "username"}});
+        return std::nullopt;
+    }
+    out.username = j["username"].get<std::string>();
+
+    std::string username_err;
+    if (!validate_username(out.username, &username_err)) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT, username_err,
+                   {{"field", "username"}});
+        return std::nullopt;
+    }
+
+    // password (required, string, may be empty — empty is rejected as
+    // 400 so we don't waste a bcrypt round on a blank key).
+    if (!j.contains("password") || !j["password"].is_string()) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   "missing or non-string `password`",
+                   {{"field", "password"}});
+        return std::nullopt;
+    }
+    out.password = j["password"].get<std::string>();
+    if (out.password.empty()) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   "`password` must not be empty",
+                   {{"field", "password"}});
+        return std::nullopt;
+    }
+    // login does NOT apply the kMaxPasswordLength cap from
+    // password_hash.h — historic bcrypt hashes were 72-byte-truncated
+    // anyway, so an over-long candidate still feeds through the same
+    // truncation and answers the right way.
 
     return out;
 }
@@ -307,6 +391,271 @@ inline void register_handler(httplib::Response&     res,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+//  Login-failure tracker
+//
+//  In-memory, per-username failure counter used by /api/v1/auth/login
+//  to satisfy SPEC §15.1 ("失败登录 5 次 → 写 audit_logs"):
+//
+//    - record_failure() bumps the counter for `username` and returns
+//      the new count. The caller then writes to audit_logs when the
+//      count crosses the kAuditLogEvery threshold (5, 10, 15, ...).
+//    - reset() is called after a successful login so a legitimate
+//      user who fat-fingered their password twice isn't penalized
+//      forever.
+//    - `max_entries` caps the map at 100k distinct usernames — defense
+//      against an attacker poking with random usernames to grow RSS.
+//      When the cap is hit, the entry with the highest count (most
+//      evidence of misbehavior) is dropped.
+//
+//  Thread safety: a single mutex guards the map. record_failure() and
+//  reset() are O(1) amortized.
+//
+//  Tests reset the process-wide tracker between cases so state from
+//  a prior test doesn't bleed in.
+// ────────────────────────────────────────────────────────────────────────────
+
+class LoginFailureTracker {
+public:
+    static constexpr int kAuditLogEvery = 5;   // threshold for audit_logs
+    explicit LoginFailureTracker(std::size_t max_entries = 100000)
+        : max_entries_(max_entries) {}
+
+    struct Outcome {
+        int  count = 0;                          // new failure count for username
+        bool should_audit = false;               // true iff this attempt crossed a multiple of kAuditLogEvery
+    };
+
+    Outcome record_failure(std::string_view username) {
+        Outcome out;
+        if (username.empty()) {
+            return out;
+        }
+        std::lock_guard<std::mutex> g(mu_);
+
+        // Opportunistic cap enforcement: if we're at the cap, drop the
+        // entry with the largest count (it's the most evidence we'd be
+        // throwing away — fresh attackers with random usernames are
+        // cheap to re-track, but a long-banned user losing their
+        // counter is fine because a fresh failure re-creates it).
+        if (max_entries_ > 0 && failures_.size() >= max_entries_) {
+            auto victim = failures_.begin();
+            for (auto it = failures_.begin(); it != failures_.end(); ++it) {
+                if (it->second.count > victim->second.count) victim = it;
+            }
+            failures_.erase(victim);
+        }
+
+        auto& entry = failures_[std::string(username)];
+        ++entry.count;
+        out.count        = entry.count;
+        out.should_audit = (entry.count > 0)
+                        && (entry.count % kAuditLogEvery == 0);
+
+        // We deliberately do NOT decay / expire entries by wall clock
+        // here. SPEC §15.1 mentions "15 分钟内" as a lockout window
+        // (Phase 6 ★), but counter decay is a separate concern from
+        // the audit-log trigger — Phase 6 will introduce its own
+        // lockout state machine. Keeping this tracker pure-count keeps
+        // the Phase 2 surface small.
+        return out;
+    }
+
+    void reset(std::string_view username) {
+        if (username.empty()) return;
+        std::lock_guard<std::mutex> g(mu_);
+        failures_.erase(std::string(username));
+    }
+
+    int count(std::string_view username) const {
+        std::lock_guard<std::mutex> g(mu_);
+        const auto it = failures_.find(std::string(username));
+        return (it == failures_.end()) ? 0 : it->second.count;
+    }
+
+    void clear() {
+        std::lock_guard<std::mutex> g(mu_);
+        failures_.clear();
+    }
+
+    std::size_t size() const {
+        std::lock_guard<std::mutex> g(mu_);
+        return failures_.size();
+    }
+
+    std::size_t max_entries() const { return max_entries_; }
+
+private:
+    struct Entry {
+        int count = 0;
+    };
+
+    mutable std::mutex                       mu_;
+    std::unordered_map<std::string, Entry>   failures_;
+    std::size_t                              max_entries_;
+};
+
+// ────────────────────────────────────────────────────────────────────────────
+//  POST /api/v1/auth/login   — Phase 2 ★  (SPEC §5.1, §15.1, §16.4, A2)
+//
+//  Wire flow:
+//    1. consume_rate_limit()           — 10/min/IP; 429 envelope on deny
+//    2. parse_json_body()              — 400 INVALID_INPUT on bad JSON
+//    3. detail::parse_login_request()  — 400 on missing fields / bad
+//                                        username shape
+//    4. user_repo::find_by_username()  — 401 if no such user
+//    5. verify_password()              — 401 if mismatch
+//    6. audit_log (every 5th failure)  — fire-and-forget row insert
+//    7. tracker.reset()                — successful login clears the
+//                                        counter for this username
+//    8. user_repo::update_last_login() — best-effort last_login stamp
+//    9. issue_token_pair()             — access (2h) + refresh (7d)
+//   10. send_success()                 — 200 + {user, tokens, ...}
+//
+//  Anti-enumeration (SPEC §15.1): the 401 message is identical for
+//  "no such user" and "wrong password" — "invalid username or
+//  password". The route handler returns 401 in either case via a
+//  single throw so the wire body is byte-for-byte the same.
+//
+//  Failure-audit (SPEC §15.1): each failed login bumps an in-memory
+//  counter keyed by username. At every kAuditLogEvery (5) crossings
+//  we INSERT a row into audit_logs with action="auth.login_failure".
+//  Counts are per-username so a brute-force probe targeting one
+//  account is captured cleanly without polluting other accounts' logs.
+//
+//  Why we DON'T do rate-limit-by-username here: SPEC §5.1 only
+//  budgets login at 10/min/IP. The per-username counter is for
+//  audit, not throttling — Phase 6 will introduce a separate
+//  "lockout" state machine if SPEC §6.6 marks it as required.
+// ────────────────────────────────────────────────────────────────────────────
+
+inline void login_handler(httplib::Response&                 res,
+                          const httplib::Request&            req,
+                          ConnectionPool&                    pool,
+                          const JwtConfig&                   jwt_cfg,
+                          LoginFailureTracker&               tracker,
+                          std::string_view                   client_ip) {
+    auto j = parse_json_body(req, res);
+    if (!j) return;                                  // 400 already on the wire
+
+    auto parsed = detail::parse_login_request(*j, res);
+    if (!parsed) return;                             // 400 already on the wire
+
+    // Helper for the unified 401 path. Both "no such user" and "wrong
+    // password" end up here — same envelope, same message, no leak.
+    auto deny_login = [&](const std::string& username_for_audit) {
+        // Bump the per-username counter; audit when it crosses
+        // a multiple of kAuditLogEvery. username_for_audit may be
+        // empty when the request had a missing username but we still
+        // got past validation (it won't — parse_login_request rejects
+        // missing username). Kept as a parameter so the audit row
+        // stays attributable when the user really did supply a username
+        // but the row doesn't exist in the DB.
+        const auto outcome = tracker.record_failure(username_for_audit);
+        if (outcome.should_audit) {
+            try {
+                audit_log_repo::record_login_failure(
+                    pool, username_for_audit, client_ip, outcome.count);
+            } catch (...) {
+                // record_login_failure is already best-effort; this
+                // catch is paranoia against a future change that
+                // flips it to throwing.
+            }
+        }
+        LOG_WARN("auth: login failed",
+                 {{"username",                  username_for_audit},
+                  {"consecutive_failures",      std::to_string(outcome.count)},
+                  {"should_audit",              outcome.should_audit ? "true" : "false"}});
+        send_error(res, 401, ErrorCode::UNAUTHORIZED,
+                   "invalid username or password");
+    };
+
+    // 4) Find the user. The repo returns nullopt for both "no row"
+    //    and "DB error" — but the latter throws, which we catch.
+    std::optional<UserRow> row;
+    try {
+        row = user_repo::find_by_username(pool, parsed->username);
+    } catch (const std::exception& e) {
+        LOG_ERROR("login: find_by_username threw",
+                  {{"username", parsed->username},
+                   {"type",     typeid(e).name()},
+                   {"reason",   e.what()}});
+        send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                   std::string("internal error: ") + e.what());
+        return;
+    }
+    if (!row) {
+        // Anti-enumeration: count the failure for tracking but
+        // produce the same 401 envelope a wrong password would.
+        deny_login(parsed->username);
+        return;
+    }
+
+    // 5) Verify the password. verify_password is noexcept + returns
+    //    bool. A malformed / NULL hash in the DB still answers "false"
+    //    (not 500) so a stale row can't crash the request thread.
+    if (!verify_password(parsed->password, row->password_hash)) {
+        deny_login(row->username);
+        return;
+    }
+
+    // 7) Successful login — clear the counter so a one-off typo
+    //    doesn't chain into an audit row on the user's next try.
+    tracker.reset(row->username);
+
+    // 8) Best-effort last_login stamp. The repo swallows DB errors
+    //    and logs WARN — the user is authenticated regardless.
+    user_repo::update_last_login(pool, row->id, client_ip);
+
+    // 9) Mint tokens. role is the row's role — accounts whose role
+    //    was changed since token issuance will get a fresh role on
+    //    their next login (Phase 6 adds an admin-side invalidation
+    //    hook that revokes outstanding tokens at role-change time).
+    TokenPair tokens;
+    try {
+        tokens = issue_token_pair(
+            jwt_cfg.secret,
+            jwt_cfg.issuer,
+            std::to_string(row->id),
+            row->username,
+            row->role,
+            jwt_cfg.access_ttl_seconds,
+            jwt_cfg.refresh_ttl_seconds);
+    } catch (const std::exception& e) {
+        // Password verified but token issuance blew up. Same shape
+        // as the analogous register path: don't pretend we succeeded
+        // because we didn't. Log loudly so operators investigate.
+        LOG_ERROR("login: token issuance failed",
+                  {{"user_id",  std::to_string(row->id)},
+                   {"username", row->username},
+                   {"type",     typeid(e).name()},
+                   {"reason",   e.what()}});
+        send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                   std::string("session could not be issued: ") + e.what());
+        return;
+    }
+
+    LOG_INFO("auth: login",
+             {{"user_id",  std::to_string(row->id)},
+              {"username", row->username},
+              {"role",     row->role}});
+
+    send_success(res, {
+        {"user", {
+            {"id",       row->id},
+            {"username", row->username},
+            {"role",     row->role},
+            {"email",    row->email ? nlohmann::json(*row->email)
+                                    : nlohmann::json(nullptr)},
+        }},
+        {"access_token",  tokens.access_token},
+        {"refresh_token", tokens.refresh_token},
+        {"token_type",    "Bearer"},
+        {"expires_in",    tokens.access_expires_in_seconds(
+                              std::chrono::system_clock::now())},
+    });
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 //  Route registration
 //
 //  Returns HttpServer& so callers can chain.
@@ -316,16 +665,20 @@ inline void register_handler(httplib::Response&     res,
 //    litecode::HttpServer server(cfg.server, cfg.cors);
 //    litecode::ConnectionPool pool(litecode::PoolConfig::from_database_config(cfg.database));
 //    litecode::RateLimiter limiter;
-//    litecode::register_auth_routes(server, pool, limiter, cfg.jwt, cfg.rate_limit);
+//    litecode::LoginFailureTracker tracker;
+//    litecode::register_auth_routes(server, pool, limiter, tracker,
+//                                   cfg.jwt, cfg.rate_limit);
 //    server.listen_blocking();
 //
-//  Tests pass an in-process server + a freshly-constructed pool + the
-//  process-wide rate limiter.
+//  Tests pass an in-process server + a freshly-constructed pool +
+//  a fresh tracker (so failure counts don't bleed between cases) +
+//  the process-wide rate limiter.
 // ────────────────────────────────────────────────────────────────────────────
 
 inline HttpServer& register_auth_routes(HttpServer&        server,
                                         ConnectionPool&    pool,
                                         RateLimiter&       limiter,
+                                        LoginFailureTracker& tracker,
                                         const JwtConfig&   jwt_cfg,
                                         const RateLimitConfig& rate_cfg) {
     // POST /api/v1/auth/register — 5/min/IP (SPEC §5.1)
@@ -337,8 +690,8 @@ inline HttpServer& register_auth_routes(HttpServer&        server,
     // references once the temporary was destroyed. Capturing by value
     // costs ~30 bytes per lambda and is the safe default.
     //
-    // pool / limiter are still captured by reference — they're owned
-    // by the caller (main() / test fixture) and outlive the server.
+    // pool / limiter / tracker are still captured by reference — they're
+    // owned by the caller (main() / test fixture) and outlive the server.
     server.post("/api/v1/auth/register",
         [&pool, &limiter, jwt_cfg, rate_cfg]
         (const httplib::Request& req, httplib::Response& res) {
@@ -369,8 +722,40 @@ inline HttpServer& register_auth_routes(HttpServer&        server,
             }
         });
 
-    // The other auth endpoints (login / refresh / logout / profile)
-    // are reserved for the follow-up Phase 2 work. We register a 501
+    // POST /api/v1/auth/login — 10/min/IP (SPEC §5.1, Phase 2 ★)
+    //
+    // The IP passed to audit_log_repo::record_login_failure comes
+    // from extract_client_ip (in rate_limit.h) — same source the per-IP
+    // bucket uses, so the audit row's `ip` column matches the bucket
+    // key. Keeping both on the same definition prevents the audit
+    // table from showing a different "where" than the rate limiter
+    // saw.
+    server.post("/api/v1/auth/login",
+        [&pool, &limiter, &tracker, jwt_cfg, rate_cfg]
+        (const httplib::Request& req, httplib::Response& res) {
+            try {
+                consume_rate_limit(res, req, limiter,
+                                   auth_login_quota(rate_cfg));
+                const std::string ip =
+                    extract_client_ip(req);
+                login_handler(res, req, pool, jwt_cfg, tracker, ip);
+            } catch (const ApiException&) {
+                throw;                                  // unified envelope
+            } catch (const std::exception& e) {
+                LOG_ERROR("login: handler threw",
+                          {{"type",   typeid(e).name()},
+                           {"reason", e.what()}});
+                if (res.body.empty()) {
+                    send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                               std::string("internal error: ") + e.what());
+                } else {
+                    throw;
+                }
+            }
+        });
+
+    // The remaining auth endpoints (refresh / logout / profile) are
+    // reserved for the follow-up Phase 2 work. We register a 501
     // placeholder for each so the route table is stable and the
     // front-end's integration can be staged endpoint by endpoint.
     // The placeholder returns a SPEC §5.7 envelope so callers always
@@ -382,7 +767,6 @@ inline HttpServer& register_auth_routes(HttpServer&        server,
                    "(see SPEC §11 Phase 2)");
     };
 
-    server.post("/api/v1/auth/login",   not_implemented);
     server.post("/api/v1/auth/refresh", not_implemented);
     server.post("/api/v1/auth/logout",  not_implemented);
     server.get ("/api/v1/auth/profile", not_implemented);
