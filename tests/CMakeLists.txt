@@ -23,6 +23,7 @@ add_executable(test_auth_middleware  unit/test_auth_middleware.cpp)
 add_executable(test_rate_limit       unit/test_rate_limit.cpp)
 add_executable(test_refresh_token    unit/test_refresh_token.cpp)
 add_executable(test_user_repo        unit/test_user_repo.cpp)
+add_executable(test_problem          unit/test_problem.cpp)
 add_executable(test_auth_register    unit/test_auth_register.cpp)
 add_executable(test_auth_login       unit/test_auth_login.cpp)
 add_executable(test_auth_refresh     unit/test_auth_refresh.cpp)
@@ -143,6 +144,21 @@ target_link_libraries(test_user_repo PRIVATE
     mysql::concpp
     litecode_bcrypt)
 target_include_directories(test_user_repo PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+
+# problem_repo.h (Phase 3 ★) — INSERT / SELECT / UPDATE / soft_delete
+# on `problems`. Pulls in connection_pool.h (mysqlx::Session) +
+# logger.h (LOG_WARN best-effort). The unit tests are pure C++ (no
+# SQL, no bcrypt); the integration tests are gated on MySQL
+# availability and are skipped when ping() fails. Same link set as
+# test_connection_pool.
+target_link_libraries(test_problem PRIVATE
+    GTest::gtest_main
+    mysql::concpp
+    OpenSSL::SSL
+    OpenSSL::Crypto)
+target_include_directories(test_problem PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/db)
 
@@ -274,6 +290,7 @@ add_test(NAME auth_middleware   COMMAND test_auth_middleware)
 add_test(NAME rate_limit        COMMAND test_rate_limit)
 add_test(NAME refresh_token     COMMAND test_refresh_token)
 add_test(NAME user_repo         COMMAND test_user_repo)
+add_test(NAME problem           COMMAND test_problem)
 add_test(NAME auth_register     COMMAND test_auth_register)
 add_test(NAME auth_login        COMMAND test_auth_login)
 add_test(NAME auth_refresh      COMMAND test_auth_refresh)
