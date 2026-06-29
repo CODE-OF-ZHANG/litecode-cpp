@@ -30,6 +30,7 @@ add_executable(test_auth_refresh     unit/test_auth_refresh.cpp)
 add_executable(test_auth_logout      unit/test_auth_logout.cpp)
 add_executable(test_auth_profile     unit/test_auth_profile.cpp)
 add_executable(test_tag              unit/test_tag.cpp)
+add_executable(test_audit_log        unit/test_audit_log.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -178,6 +179,23 @@ target_include_directories(test_tag PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/db)
 
+# audit_log_repo.h (Phase 3 ★) — record() / record_best_effort /
+# record_login_failure writers + find_by_id / list / count readers
+# on `audit_logs`. The unit tests are pure C++ (validators +
+# exception hierarchy + constants); the integration tests create
+# throwaway admin users (so admin_id has a valid FK target) and
+# insert / query / cleanup rows. Same link set as test_problem +
+# nlohmann_json (payload round-trips as JSON text).
+target_link_libraries(test_audit_log PRIVATE
+    GTest::gtest_main
+    mysql::concpp
+    nlohmann_json::nlohmann_json
+    OpenSSL::SSL
+    OpenSSL::Crypto)
+target_include_directories(test_audit_log PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+
 # auth_routes.h (Phase 2 ★) — POST /api/v1/auth/register. End-to-end
 # tests spin up the full stack: HttpServer + ConnectionPool + RateLimiter
 # + JWT signing. Same link set as test_auth_middleware, plus the mysql
@@ -313,3 +331,4 @@ add_test(NAME auth_refresh      COMMAND test_auth_refresh)
 add_test(NAME auth_logout       COMMAND test_auth_logout)
 add_test(NAME auth_profile      COMMAND test_auth_profile)
 add_test(NAME tag               COMMAND test_tag)
+add_test(NAME audit_log         COMMAND test_audit_log)

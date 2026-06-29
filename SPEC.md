@@ -18,6 +18,7 @@
 | v1.2.1 | 2026-06-29 | Phase 2 收尾：补全 `GET /api/v1/auth/profile`（含 19 用例集成测试）；修复 mysql-connector 9.x `created_at` / `last_login` DATETIME 列被读成 packed binary 的潜在 bug（user_repo SELECT 加 `DATE_FORMAT`） |
 | v1.2.2 | 2026-06-29 | Phase 3 开篇：实现 `problem_repo.h`（CRUD + 软删除 + 软删过滤查询，含 slug/title/difficulty/time/memory 校验、tag_id 筛选、limit/offset 分页钳制、`include_deleted` 切换）；tests/unit/test_problem.cpp 33 用例（15 纯单测 + 18 MySQL 集成测试，集成测试在 ping 失败时自动 SKIP）全通过 |
 | v1.2.3 | 2026-06-29 | Phase 3 续：实现 `tag_repo.h`（`tags` + `problem_tags` M:N，含 name 长度/空白/控制字符校验、trim、CRUD、`delete_by_id` FK 级联、`list` / `list_with_count` 软删过滤、`attach`（INSERT IGNORE 幂等）/ `detach` / `clear` / `replace`（START TRANSACTION 原子替换 + 去重 + INSERT IGNORE 兜底）/ `list_tags_for_problem` / `list_problems_for_tag`（live-only 默认）/ `count_*`、批量 `find_or_create_many`（一次多行 INSERT IGNORE + IN-clause SELECT 保持调用方顺序，支持中文名 "数组"/"哈希表"））；tests/unit/test_tag.cpp 30 用例（8 纯单测 + 22 MySQL 集成测试，集成测试在 ping 失败时自动 SKIP）全通过 |
+| v1.2.4 | 2026-06-29 | Phase 3 收尾：实现 `audit_log_repo.h`（Phase 2 仅含 `record_login_failure` 写入；现扩展完整 Phase 3 公共 API：`AuditRow` / `AuditEntry` / `AuditListFilter` / `AuditListResult` / `AuditLogRepoError` / `AuditLogNotFoundError`；`validate_action` / `validate_target_type` / `validate_target_id` / `validate_ip` / `validate_datetime` / `clamp_list_filter`；`record`（strict，throw）/ `record_best_effort`（LOG_WARN swallow）/ `record_login_failure`（Phase 2 兼容签名）/ `find_by_id` / `list`（admin_id × action × target_type × target_id × since × until 过滤 + 分页钳制 + ORDER BY created_at DESC, id DESC）/ `count`；kAction* 常量覆盖 problem.create/update/delete/restore/bulk_import、user.role_change/user.password_change、auth.login_failure；payload 走 `CAST(payload AS CHAR)` 修 mysql-connector 9.x JSON 列读不回的 bug；`build_where_clause` 共用 WHERE 拼装 + 链式 bind 避免 per-pred-count dispatch）；tests/unit/test_audit_log.cpp 28 用例（15 纯单测 + 13 MySQL 集成测试，集成测试在 ping 失败时自动 SKIP）全通过 ~14s；Phase 2 test_auth_login（26 用例）/ Phase 3 test_problem（33）/ test_tag（39）回归全过 |
 
 ### v1.2 主要变更摘要
 
@@ -903,7 +904,7 @@ litecode-cpp/
 
 - [x] ★ 题目数据模型（problem_repo.h：CRUD + 软删除 + 软删过滤查询）
 - [x] ★ 标签数据模型（tag_repo.h：标签 + 题目-标签关联）
-- [ ] ★ 审计日志数据模型（audit_log_repo.h）
+- [x] ★ 审计日志数据模型（audit_log_repo.h）
 - [ ] ★ 数据库迁移脚本（V001-V005，按 §10 目录落地）
 - [ ] ★ 题目列表 API（GET /api/v1/problems，分页 + 难度/标签筛选 + 软删过滤）
 - [ ] ★ 题目详情 API（GET /api/v1/problems/:slug，含示例 + 标签）
