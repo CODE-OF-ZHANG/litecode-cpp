@@ -32,6 +32,7 @@ add_executable(test_auth_profile     unit/test_auth_profile.cpp)
 add_executable(test_tag              unit/test_tag.cpp)
 add_executable(test_audit_log        unit/test_audit_log.cpp)
 add_executable(test_problem_list     unit/test_problem_list.cpp)
+add_executable(test_problem_detail    unit/test_problem_detail.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -218,6 +219,25 @@ target_include_directories(test_problem_list PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/db)
 
+# problem_routes.h (Phase 3 ★ follow-up) — GET /api/v1/problems/:slug
+# public detail endpoint (SPEC §5.2, A5). End-to-end tests spin up
+# the full HttpServer + ConnectionPool + RateLimiter stack, seed a
+# problem via problem_repo, attach tags via tag_repo, and insert
+# is_sample=TRUE rows into test_cases directly (no public
+# test_case_repo write API yet). The pure-unit tests (validators
+# + extract_slug_from_path + serialize_problem_detail) run without
+# MySQL. Same link set as test_problem_list.
+target_link_libraries(test_problem_detail PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp)
+target_include_directories(test_problem_detail PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+
 # auth_routes.h (Phase 2 ★) — POST /api/v1/auth/register. End-to-end
 # tests spin up the full stack: HttpServer + ConnectionPool + RateLimiter
 # + JWT signing. Same link set as test_auth_middleware, plus the mysql
@@ -355,3 +375,4 @@ add_test(NAME auth_profile      COMMAND test_auth_profile)
 add_test(NAME tag               COMMAND test_tag)
 add_test(NAME audit_log         COMMAND test_audit_log)
 add_test(NAME problem_list      COMMAND test_problem_list)
+add_test(NAME problem_detail     COMMAND test_problem_detail)

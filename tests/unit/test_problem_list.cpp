@@ -537,13 +537,22 @@ protected:
 //  501 placeholders on routes that ship later
 // ────────────────────────────────────────────────────────────────────────────
 
-TEST_F(ProblemListLiveFixture, DetailEndpointReturns501Placeholder) {
+TEST_F(ProblemListLiveFixture, DetailEndpointReturns404ForUnknownSlug) {
+    // v1.2.6 shipped the detail endpoint as a 501 placeholder; v1.2.7
+    // replaced it with the real handler. From the LIST endpoint's
+    // perspective the detail URL now returns 404 for an unknown slug
+    // (NOT_FOUND) instead of 501. The full detail-handler behavior
+    // (200 happy path / 400 bad slug / 404 soft-deleted / 429
+    // rate-limit) is covered in tests/unit/test_problem_detail.cpp;
+    // this case is here to keep the LIST-side smoke test honest.
     StdoutSilencer silencer;
     const auto r = do_get(handle, "/api/v1/problems/two-sum");
     ASSERT_TRUE(r.ok);
-    EXPECT_EQ(r.status, 501);
+    // No problem with this slug exists in the test DB; the response
+    // is a clean 404 NOT_FOUND, not a 501.
+    EXPECT_EQ(r.status, 404);
     const auto body = nlohmann::json::parse(r.body);
-    EXPECT_EQ(body["code"], "SERVICE_UNAVAILABLE");
+    EXPECT_EQ(body["code"], "NOT_FOUND");
 }
 
 TEST_F(ProblemListLiveFixture, TagsEndpointReturns501Placeholder) {

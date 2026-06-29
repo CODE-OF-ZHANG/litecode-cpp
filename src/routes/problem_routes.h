@@ -2,25 +2,28 @@
 //
 // LiteCode-CPP - problem routes (Phase 3 *)
 //
-// SPEC §5.2 / §11 Phase 3 / §15.2 / A4 acceptance:
+// SPEC §5.2 / §11 Phase 3 / §15.2 / A4, A5 acceptance:
 //   - GET /api/v1/problems - public, 60/min/IP
 //       paginated, difficulty / tag-id filtering, soft-deleted rows
 //       hidden by default (SPEC §4.2 "前台列表自动过滤 is_deleted=FALSE")
-//   - GET /api/v1/problems/:slug - public, 60/min/IP  (future: problem
-//       detail; SPEC §5.2 - wired here as a 501 placeholder so the
-//       route table is stable and the front-end can stage its fetch
-//       path endpoint-by-endpoint)
+//   - GET /api/v1/problems/:slug - public, 60/min/IP
+//       problem detail: description (full Markdown body) + tags
+//       (from tag_repo) + sample test cases (from test_case_repo).
+//       Soft-deleted rows are NEVER returned (SPEC §4.2). The front
+//       end runs the description through DOMPurify (SPEC §6.3 + A32);
+//       the API delivers the raw Markdown so the front-end can
+//       own the sanitization policy.
 //   - GET /api/v1/tags - public, no rate limit (future: tag list)
 //   - POST /api/v1/admin/problems       (🔒 admin, future)
 //   - PUT  /api/v1/admin/problems/:slug (🔒 admin, future)
 //   - DELETE /api/v1/admin/problems/:slug (🔒 admin, future)
 //   - POST /api/v1/admin/problems/import  (🔒 admin, future)
 //
-// Phase 3 * ships the LIST endpoint only. The rest of the file lays
-// down the same `parse_*_request()` / handler / `register_*_routes()`
-// shape that Phase 2 auth_routes.h established so the follow-up
-// Phase 3 work (detail / admin CRUD / bulk import) can land as
-// well-scoped additive commits.
+// Phase 3 * ships the LIST + DETAIL endpoints. The remaining routes
+// (tag list + admin CRUD + bulk import) lay down the same
+// `parse_*_request()` / handler / `register_*_routes()` shape that
+// Phase 2 auth_routes.h established so the follow-up Phase 3 work
+// can land as well-scoped additive commits.
 //
 // Design notes:
 //   - Header-only + inline: matches every other Phase 1/2/3 module
@@ -48,8 +51,9 @@
 //       * `tags` would be a per-row JOIN against problem_tags for
 //         the whole page. Phase 3 keeps the list endpoint on a flat
 //         projection (SPEC §5.2 "题目列表页，支持按难度/标签筛选" -
-//         filtering yes, surfacing no). The detail endpoint will
-//         surface tags via tag_repo::list_tags_for_problem().
+//         filtering yes, surfacing no). The detail endpoint surfaces
+//         tags via tag_repo::list_tags_for_problem() and samples
+//         via test_case_repo::list_samples_for_problem().
 //   - All validation messages funnel into the SPEC §5.7 unified
 //     envelope via send_error(). The handler itself never writes a
 //     raw body.
@@ -89,7 +93,9 @@
 
 #include "../config.h"                          // RateLimitConfig
 #include "../db/connection_pool.h"              // ConnectionPool
-#include "../db/problem_repo.h"                 // problem_repo::list / ProblemListFilter / ProblemListResult
+#include "../db/problem_repo.h"                 // problem_repo::list / find_by_slug / ProblemListFilter / ProblemListResult
+#include "../db/tag_repo.h"                     // tag_repo::list_tags_for_problem / TagRow
+#include "../db/test_case_repo.h"               // test_case_repo::list_samples_for_problem / SampleCaseRow
 #include "../logger.h"                          // LOG_INFO / LOG_WARN
 #include "../middleware/rate_limit.h"           // consume_rate_limit / problems_public_quota
 #include "../server.h"                          // HttpServer / send_error / send_success / ErrorCode
@@ -328,6 +334,57 @@ inline bool parse_list_query(const httplib::Request&      req,
     return true;
 }
 
+// parse_slug_param - validate the slug that comes out of the URL
+// path for GET /api/v1/problems/:slug. Returns the slug (unchanged
+// — the route layer passes it straight to problem_repo::find_by_slug)
+// on success, or std::nullopt on any shape failure.
+//
+// The validation rules mirror problem_repo::validate_slug():
+//   - 1..100 chars (kMinSlugLength..kMaxSlugLength)
+//   - lowercase ASCII letters / digits / '-' only
+//   - must not start or end with '-'
+//
+// We deliberately don't accept +'d URL-decoded bytes that the
+// slug would never legitimately have come from, even though
+// cpp-httplib's `get_param_value` would happily decode them. The
+// route layer strips the path prefix and calls this helper with
+// the remaining bytes; an out-of-shape value is a 400 INVALID_INPUT
+// envelope, never a 500.
+inline std::optional<std::string> parse_slug_param(std::string_view raw) {
+    if (raw.empty()) return std::nullopt;
+    std::string err;
+    const std::string s(raw);  // problem_repo::validate_slug takes string_view
+    if (!litecode::validate_slug(s, &err)) {
+        return std::nullopt;
+    }
+    return s;
+}
+
+// extract_slug_from_path - strip the GET /api/v1/problems/ prefix
+// from req.path and hand the remainder to parse_slug_param. The
+// route registration uses a regex pattern (R"(/api/v1/problems/
+// ([^/]+))") so the only thing this function has to do is the
+// same prefix-strip the regex would otherwise give us via
+// httplib::Server's `Matches` argument. We deliberately don't
+// pull Matches out because that would force the route to drop
+// down to a 3-arg handler signature; path-string parsing is
+// cheap, explicit, and free of regex-capture surprises.
+//
+// Returns std::nullopt when:
+//   - the path doesn't carry the expected prefix (shouldn't
+//     happen because the regex pattern guarantees it, but we
+//     defend in depth)
+//   - the slug portion is empty
+//   - the slug portion fails problem_repo::validate_slug
+inline std::optional<std::string> extract_slug_from_path(
+        const httplib::Request& req) {
+    static constexpr std::string_view kPrefix = "/api/v1/problems/";
+    const std::string& path = req.path;
+    if (path.size() <= kPrefix.size()) return std::nullopt;
+    if (path.compare(0, kPrefix.size(), kPrefix) != 0) return std::nullopt;
+    return parse_slug_param(std::string_view(path).substr(kPrefix.size()));
+}
+
 } // namespace detail
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -353,6 +410,71 @@ inline nlohmann::json serialize_problem_row(const litecode::ProblemRow& p) {
         {"memory_limit",     p.memory_limit},
         {"accepted_count",   p.accepted_count},
         {"submission_count", p.submission_count},
+        {"created_at",       p.created_at},
+        {"updated_at",       p.updated_at},
+    };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  Detail row -> JSON
+//
+//  Adds the heavy / multi-row fields the list endpoint deliberately
+//  omits:
+//    - description : the full Markdown body (SPEC §4.2 MEDIUMTEXT).
+//                    Delivered RAW — the front-end runs it through
+//                    DOMPurify (SPEC §6.3 + A32). Centralizing
+//                    sanitization in the front-end keeps the API
+//                    contract stable when the policy evolves.
+//    - tags        : list of {id, name} from tag_repo. Ordered by
+//                    tag name ASC (matches tag_repo's own ordering,
+//                    so the front-end doesn't have to re-sort).
+//    - samples     : list of {input, output} from
+//                    test_case_repo. Ordered by (order_num ASC, id
+//                    ASC) — same as the DB. judge_type is
+//                    deliberately NOT surfaced today; the front-end
+//                    renders samples as text and never compares.
+//
+//  We still OMIT is_deleted (same reason as the list endpoint:
+//  a `true` value would mean we leaked a tombstone). We DO include
+//  the maintenance counters (accepted_count / submission_count)
+//  because the front-end uses them to render "AC率" / "提交数"
+//  on the detail page header.
+// ────────────────────────────────────────────────────────────────────────────
+
+inline nlohmann::json serialize_sample(const litecode::SampleCaseRow& s) {
+    return nlohmann::json{
+        {"input",  s.input},
+        {"output", s.expected_output},
+    };
+}
+
+inline nlohmann::json serialize_problem_detail(
+        const litecode::ProblemRow& p,
+        const std::vector<litecode::TagRow>& tags,
+        const std::vector<litecode::SampleCaseRow>& samples) {
+    nlohmann::json tags_j = nlohmann::json::array();
+    for (const auto& t : tags) {
+        tags_j.push_back(nlohmann::json{
+            {"id",   t.id},
+            {"name", t.name},
+        });
+    }
+    nlohmann::json samples_j = nlohmann::json::array();
+    for (const auto& s : samples) {
+        samples_j.push_back(serialize_sample(s));
+    }
+    return nlohmann::json{
+        {"id",               p.id},
+        {"slug",             p.slug},
+        {"title",            p.title},
+        {"difficulty",       p.difficulty},
+        {"description",      p.description},
+        {"time_limit",       p.time_limit},
+        {"memory_limit",     p.memory_limit},
+        {"accepted_count",   p.accepted_count},
+        {"submission_count", p.submission_count},
+        {"tags",             std::move(tags_j)},
+        {"samples",          std::move(samples_j)},
         {"created_at",       p.created_at},
         {"updated_at",       p.updated_at},
     };
@@ -450,6 +572,150 @@ inline void list_problems_handler(httplib::Response&         res,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+//  GET /api/v1/problems/:slug   - Phase 3 *  (SPEC §5.2, §11 Phase 3, A5)
+//
+//  Wire flow:
+//    1) consume_rate_limit()           - 60/min/IP; 429 envelope on deny
+//    2) detail::extract_slug_from_path - 400 envelope on bad slug shape
+//    3) problem_repo::find_by_slug()   - include_deleted=false; throws
+//                                        or returns nullopt (→ 404)
+//    4) tag_repo::list_tags_for_problem()       - empty vector ⇒ "tags":[]
+//    5) test_case_repo::list_samples_for_problem() - same
+//    6) serialize_problem_detail()     - 200 + full body
+//
+//  Authorization: NONE. SPEC §5.2 row says "公开". The route
+//  handler does not invoke require_authentication; a missing /
+//  bogus Authorization header (if present) is ignored.
+//
+//  Soft delete: ALWAYS applied. SPEC §4.2: "前台列表自动过滤
+//  is_deleted=FALSE". The detail endpoint cannot surface a
+//  tombstone; admin paths under /api/v1/admin/problems/:slug
+//  own the include_deleted toggle (future).
+//
+//  What we DON'T do here:
+//    - We don't write to audit_logs. Public reads are not
+//      auditable actions; the structured log line below is
+//      enough for ops.
+//    - We don't sanitize `description` here. SPEC §6.3 + A32
+//      require the front-end to run Markdown through DOMPurify
+//      before injecting into the page; the API delivers raw
+//      Markdown so the policy stays in one place (the browser).
+//    - We don't include judge_type on the samples. The
+//      front-end renders samples as text and never compares;
+//      judge_type would be a UI hint at best, and the column
+//      is non-trivial to render correctly ("float_eps" needs
+//      a number-input pair). Adding it is a pure additive
+//      change later.
+// ────────────────────────────────────────────────────────────────────────────
+
+inline void get_problem_detail_handler(httplib::Response&         res,
+                                       const httplib::Request&    req,
+                                       litecode::ConnectionPool&  pool,
+                                       litecode::RateLimiter&     limiter,
+                                       const litecode::RateLimitConfig& rate_cfg) {
+    // 1) Rate limit FIRST so a flood of malformed slugs doesn't
+    //    blow past the validation work. consume_rate_limit throws
+    //    ApiException(429, RATE_LIMITED) on deny; server.h's
+    //    per-request wrap turns it into the unified envelope.
+    consume_rate_limit(res, req, limiter, problems_public_quota(rate_cfg));
+
+    // 2) Pull + validate the slug from the path. On any shape
+    //    failure the helper returns std::nullopt and we emit a
+    //    400 envelope. We DON'T pre-validate via a HEAD or
+    //    existence check — problem_repo::find_by_slug does the
+    //    authoritative lookup below; this layer's job is just
+    //    "is this string even shaped like a slug".
+    const auto slug = detail::extract_slug_from_path(req);
+    if (!slug.has_value()) {
+        send_error(res, 400, litecode::ErrorCode::INVALID_INPUT,
+                   "slug must be 1-100 chars of [a-z0-9-], not starting "
+                   "or ending with '-'",
+                   {{"field", "slug"},
+                    {"value", std::string(req.path)}});
+        return;
+    }
+    const std::string& slug_str = *slug;
+
+    // 3) Repo dispatch. find_by_slug throws on driver error and
+    //    returns std::nullopt when no live row matches. We do NOT
+    //    auto-create missing rows (this is a public read path).
+    std::optional<litecode::ProblemRow> row;
+    try {
+        row = litecode::problem_repo::find_by_slug(
+            pool, slug_str, /*include_deleted=*/false);
+    } catch (const std::exception& e) {
+        LOG_ERROR("problem_detail: find_by_slug threw",
+                  {{"slug",   slug_str},
+                   {"type",   typeid(e).name()},
+                   {"reason", e.what()}});
+        send_error(res, 500, litecode::ErrorCode::INTERNAL_ERROR,
+                   std::string("internal error: ") + e.what());
+        return;
+    }
+    if (!row.has_value()) {
+        // 404 envelope. We use a generic "not found" message — the
+        // caller should not be able to distinguish "no such slug"
+        // from "slug exists but is soft-deleted" via the response
+        // shape (anti-enumeration: a deleted problem's URL is not
+        // a probe oracle). The structured log below does record
+        // the slug, so ops can still trace abuse.
+        LOG_INFO("problem_detail: not found",
+                 {{"slug", slug_str}});
+        send_error(res, 404, litecode::ErrorCode::NOT_FOUND,
+                   "problem not found",
+                   {{"slug", slug_str}});
+        return;
+    }
+
+    // 4) Tags. list_tags_for_problem is bounded (a problem has at
+    //    most a handful of tags in practice; even pathological
+    //    hand-tagged imports are < 20). The empty-vector case
+    //    maps cleanly to "tags": [] in the response.
+    std::vector<litecode::TagRow> tags;
+    try {
+        tags = litecode::tag_repo::list_tags_for_problem(pool, row->id);
+    } catch (const std::exception& e) {
+        LOG_ERROR("problem_detail: list_tags_for_problem threw",
+                  {{"problem_id", std::to_string(row->id)},
+                   {"type",       typeid(e).name()},
+                   {"reason",     e.what()}});
+        send_error(res, 500, litecode::ErrorCode::INTERNAL_ERROR,
+                   std::string("internal error: ") + e.what());
+        return;
+    }
+
+    // 5) Samples. Same shape as tags — bounded, returns empty
+    //    vector when the problem has no sample test cases. The
+    //    public detail endpoint NEVER surfaces non-sample rows
+    //    (SPEC §4.3: "是否为示例用例（展示给用户）"); the judge
+    //    flow loads the full set via test_case_repo::list_for_problem.
+    std::vector<litecode::SampleCaseRow> samples;
+    try {
+        samples = litecode::test_case_repo::list_samples_for_problem(
+            pool, row->id);
+    } catch (const std::exception& e) {
+        LOG_ERROR("problem_detail: list_samples_for_problem threw",
+                  {{"problem_id", std::to_string(row->id)},
+                   {"type",       typeid(e).name()},
+                   {"reason",     e.what()}});
+        send_error(res, 500, litecode::ErrorCode::INTERNAL_ERROR,
+                   std::string("internal error: ") + e.what());
+        return;
+    }
+
+    // 6) Serialize + log + respond. nlohmann::json lets us build
+    //    the response in one place; serialize_problem_detail is
+    //    the single owner of the field shape.
+    LOG_INFO("problem_detail: served",
+             {{"slug",       slug_str},
+              {"problem_id", std::to_string(row->id)},
+              {"tags",       std::to_string(tags.size())},
+              {"samples",    std::to_string(samples.size())}});
+
+    send_success(res, serialize_problem_detail(*row, tags, samples));
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 //  Route registration
 //
 //  Returns HttpServer& so callers can chain. Phase 3 * ships only the
@@ -503,15 +769,32 @@ inline HttpServer& register_problem_routes(HttpServer&              server,
             }
         });
 
-    // GET /api/v1/problems/:slug - Phase 3 follow-up (SPEC §5.2, A5)
-// 501 placeholder. The detail endpoint lands as an additive commit
-// and reuses parse_list_query's siblings (parse_slug_param) once
-// it ships.
+    // GET /api/v1/problems/:slug - public detail, 60/min/IP
+    // (SPEC §5.2, A5). The regex pattern captures anything that
+    // isn't a '/' so multi-segment slugs (none allowed by
+    // problem_repo::validate_slug, but defended in depth) don't
+    // match. The handler itself validates the shape via
+    // detail::extract_slug_from_path and emits a 400 envelope
+    // on any failure.
     server.get(R"(/api/v1/problems/([^/]+))",
-        [](const httplib::Request&, httplib::Response& res) {
-            send_error(res, 501, ErrorCode::SERVICE_UNAVAILABLE,
-                       "GET /api/v1/problems/:slug not yet implemented "
-                       "(see SPEC section 11 Phase 3 - problem detail)");
+        [&pool, &limiter, rate_cfg]
+        (const httplib::Request& req, httplib::Response& res) {
+            try {
+                get_problem_detail_handler(res, req, pool, limiter, rate_cfg);
+            } catch (const ApiException&) {
+                // Already an envelope - let server.h wrap() emit it.
+                throw;
+            } catch (const std::exception& e) {
+                LOG_ERROR("problem_detail: handler threw",
+                          {{"type",   typeid(e).name()},
+                           {"reason", e.what()}});
+                if (res.body.empty()) {
+                    send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                               std::string("internal error: ") + e.what());
+                } else {
+                    throw;
+                }
+            }
         });
 
 // GET /api/v1/tags - Phase 3 follow-up (SPEC §5.2)
