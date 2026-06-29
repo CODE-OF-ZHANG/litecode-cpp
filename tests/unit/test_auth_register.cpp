@@ -629,21 +629,15 @@ TEST_F(AuthLiveFixture, RateLimitTriggersAtSixthRequest) {
 // ────────────────────────────────────────────────────────────────────────────
 //  Placeholder routes (501 until Phase 2 follow-ups)
 //
-//  /api/v1/auth/login and /api/v1/auth/refresh are now real
-//  handlers (login covered in test_auth_login.cpp, refresh in
-//  test_auth_refresh.cpp). Only logout + profile still 501.
+//  /api/v1/auth/login, /api/v1/auth/refresh, and /api/v1/auth/logout
+//  are now real handlers (login covered in test_auth_login.cpp,
+//  refresh in test_auth_refresh.cpp, logout in test_auth_logout.cpp).
+//  Only profile still 501.
 // ────────────────────────────────────────────────────────────────────────────
 
-// Refresh moved to its own suite (test_auth_refresh.cpp) since
-// Phase 2 ★ — see SPEC §5.1, §15.1. The route is now a real
-// handler, not a placeholder.
-
-TEST_F(AuthLiveFixture, LogoutReturnsNotImplemented) {
-    StdoutSilencer silencer;
-    auto r = handle.client->Post("/api/v1/auth/logout", "{}", "application/json");
-    ASSERT_TRUE(r);
-    EXPECT_EQ(r->status, 501);
-}
+// Login / refresh / logout moved to their own suites since
+// Phase 2 ★ — see SPEC §5.1, §15.1. They are real handlers, not
+// placeholders.
 
 TEST_F(AuthLiveFixture, ProfileReturnsNotImplemented) {
     StdoutSilencer silencer;

@@ -892,7 +892,7 @@ litecode-cpp/
 - [x] ★ 用户注册 API（POST /api/v1/auth/register，限流 5/分/IP）
 - [x] ★ 用户登录 API（POST /api/v1/auth/login，限流 10/分/IP；header-only + inline；`login_handler` + `LoginFailureTracker`（per-username count, kAuditLogEvery=5）+ `detail::parse_login_request`；bcrypt verify `noexcept`；anti-enumeration：用户不存在 vs 密码错误 → 同 401 envelope；5 次连续失败 → `audit_log_repo::record_login_failure` 写 audit_logs；成功 → 重置计数 + `user_repo::update_last_login`；tests/unit/test_auth_login.cpp 29 用例全通过 ~14s）
 - [x] ★ Refresh API（POST /api/v1/auth/refresh；header-only + inline；`refresh_handler` + `RefreshRequest` / `detail::parse_refresh_request`；无 rate limit（SPEC §5.1）；`verify` → `user_repo::find_by_id` → `rotate_token_pair`（自动 blacklist check + revoke old + sign new）；anti-enumeration：bad sig/expired/revoked/wrong kind/deleted user → 同 401 envelope；新 access token 携带最新 username/role；tests/unit/test_auth_refresh.cpp 25 用例全通过 ~6.9s）
-- [ ] ★ Logout API（POST /api/v1/auth/logout，refresh 入黑名单）
+- [x] ★ Logout API（POST /api/v1/auth/logout；header-only + inline；`logout_handler` + `LogoutRequest` / `detail::parse_logout_request`；需 Bearer 鉴权（`require_authentication` 401），无 rate limit（SPEC §5.1）；body `{refresh_token}` → `revoke_refresh_token`（best-effort，never throws，TTL=剩余有效期，max_ttl_seconds cap）；theft defense：access token 的 claims.user_id 作为 `expected_user_id`，refresh sub 失配时 refused（log WARN），bob session 不受影响；anti-enumeration：malformed/expired/wrong-kind/access-as-refresh → 同 200 + `{logged_out:true, revoked:false}`；幂等（store.revoke 重写 TTL）；tests/unit/test_auth_logout.cpp 28 用例全通过 ~11s）
 - [ ] ★ 用户信息 API（GET /api/v1/auth/profile）
 - [x] ☆ 失败登录审计（连续 5 次失败写 audit_logs，详见 login_handler + LoginFailureTracker）
 

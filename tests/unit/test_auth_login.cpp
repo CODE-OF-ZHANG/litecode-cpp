@@ -835,14 +835,6 @@ TEST_F(AuthLoginLiveFixture, SuccessAfterFailuresStopsAuditRowGrowth) {
 //  (refresh moved to its own suite: test_auth_refresh.cpp)
 // ────────────────────────────────────────────────────────────────────────────
 
-TEST_F(AuthLoginLiveFixture, LogoutReturnsNotImplemented) {
-    StdoutSilencer silencer;
-    auto r = handle.client->Post("/api/v1/auth/logout", "{}",
-                                  "application/json");
-    ASSERT_TRUE(r);
-    EXPECT_EQ(r->status, 501);
-}
-
 TEST_F(AuthLoginLiveFixture, ProfileReturnsNotImplemented) {
     StdoutSilencer silencer;
     auto r = handle.client->Get("/api/v1/auth/profile");

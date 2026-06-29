@@ -27,9 +27,9 @@
 //     password_hash.h / user_repo.h). Tests link this header directly
 //     and instantiate the route set with a real ConnectionPool + a
 //     dummy rate limiter (or a stub pool that throws on demand).
-//   - Phase 2 ★ ships **register** + **login** + **refresh**. Logout /
-//     profile still return 501 — they're the follow-up Phase 2 work
-//     and their stubs keep the route table stable.
+//   - Phase 2 ★ ships **register** + **login** + **refresh** + **logout**.
+//     Profile still returns 501 — it's the follow-up Phase 2 work
+//     and its stub keeps the route table stable.
 //   - Every handler follows the same shape:
 //       1) consume_rate_limit() — bucket + 429 envelope on deny
 //       2) parse_json_body() — 400 envelope on bad JSON
@@ -96,6 +96,7 @@
 #include "../db/connection_pool.h"       // ConnectionPool
 #include "../db/user_repo.h"             // user_repo::create_user / find_by_username
 #include "../logger.h"                   // LOG_INFO / LOG_WARN
+#include "../middleware/auth_middleware.h" // require_authentication (Phase 2 ★ logout)
 #include "../middleware/rate_limit.h"    // consume_rate_limit / RateLimiter / auth_register_quota
 #include "../server.h"                   // HttpServer / send_error / send_created / ErrorCode
 #include "../utils/uuid.h"               // (kept for parity with future logout handler)
@@ -307,6 +308,58 @@ parse_refresh_request(const nlohmann::json& j,
     RefreshRequest out;
 
     // refresh_token (required, string, non-empty)
+    if (!j.contains("refresh_token") || !j["refresh_token"].is_string()) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   "missing or non-string `refresh_token`",
+                   {{"field", "refresh_token"}});
+        return std::nullopt;
+    }
+    out.refresh_token = j["refresh_token"].get<std::string>();
+    if (out.refresh_token.empty()) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   "`refresh_token` must not be empty",
+                   {{"field", "refresh_token"}});
+        return std::nullopt;
+    }
+    return out;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  LogoutRequest — POST /api/v1/auth/logout body shape
+//
+//  Same shape as RefreshRequest: only the refresh token is required.
+//  We keep the request-body shape symmetric with /auth/refresh so the
+//  front-end can reuse its existing JSON plumbing; the difference is
+//  in what we DO with the token (revoke-and-forget vs. rotate).
+// ────────────────────────────────────────────────────────────────────────────
+
+struct LogoutRequest {
+    std::string refresh_token;
+};
+
+// parse_logout_request — extract a LogoutRequest from JSON. Returns
+// std::nullopt and writes a 400 envelope when the body is malformed.
+//
+// Rules mirror parse_refresh_request exactly:
+//   - `refresh_token` is required, must be a string, must be non-empty.
+//   - Surplus fields are ignored (front-end telemetry, device_id, etc.).
+//
+// The refresh token's content is opaque at this layer — same reason
+// as parse_refresh_request: we don't try to peek inside to distinguish
+// "this is an access token" from "this is a refresh token" or "this
+// is a JWT at all". The revoke_refresh_token() call inside
+// logout_handler is authoritative; trying to be clever here would
+// just duplicate the verifier's checks.
+//
+// Note: this helper lives in the SAME `namespace detail` block that
+// hosts parse_refresh_request (see line 294) — there's no new
+// namespace open here. The single closing brace on line 376 closes
+// the entire block opened back at line 294.
+inline std::optional<LogoutRequest>
+parse_logout_request(const nlohmann::json& j,
+                     httplib::Response&    res) {
+    LogoutRequest out;
+
     if (!j.contains("refresh_token") || !j["refresh_token"].is_string()) {
         send_error(res, 400, ErrorCode::INVALID_INPUT,
                    "missing or non-string `refresh_token`",
@@ -904,6 +957,133 @@ inline void refresh_handler(httplib::Response&                 res,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+//  POST /api/v1/auth/logout   — Phase 2 ★  (SPEC §5.1, §15.1, A2)
+//
+//  Wire flow:
+//    1. require_authentication()    — 401 envelope on missing / bad /
+//                                       expired Bearer access token
+//                                       (SPEC §5.1: "已登录")
+//    2. parse_json_body()           — 400 INVALID_INPUT on bad JSON
+//    3. detail::parse_logout_request()— 400 on missing/empty refresh_token
+//    4. revoke_refresh_token()      — best-effort: parses the refresh,
+//                                       checks sub == claims.user_id
+//                                       (theft defense), and adds the
+//                                       jti to the blacklist with a TTL
+//                                       equal to the token's remaining
+//                                       lifetime. NEVER throws.
+//    5. send_success()              — 200 + {logged_out: true}
+//
+//  Why the response is ALWAYS 200 on a well-formed request:
+//    The goal of /auth/logout is to forget the session. A malformed /
+//    expired / already-revoked / wrong-kind refresh token is already
+//    useless — there's no surviving session to invalidate. Returning
+//    200 with {logged_out: true} lets the front-end clear its
+//    in-memory state and navigate away without conditionals.
+//
+//  Theft defense (SPEC §15.1):
+//    The Bearer access token's claims.user_id is passed as
+//    `expected_user_id` to revoke_refresh_token. If a stolen refresh
+//    (signed for victim B) is presented with an access token signed
+//    for attacker A, the helper detects the mismatch, refuses to
+//    revoke, and returns a {user_matched: false} outcome. The handler
+//    logs the mismatch at WARN so operators can spot theft patterns;
+//    the wire still answers 200 because the attacker's intent (to
+//    invalidate the legitimate session) was foiled — telling them
+//    "wrong user" would be the opposite of what we want.
+//
+//  Why NO rate limit (SPEC §5.1):
+//    Logout is hit once per session and is idempotent. A client that
+//    spams /auth/logout is just adding rows to the blacklist with
+//    shorter TTLs (refresh tokens expire on their own); the per-IP
+//    bucket is reserved for register / login / submission endpoints
+//    where flooding matters.
+//
+//  What we DON'T do:
+//    - We don't clear the access token's jti (access tokens aren't
+//      tracked on the server — they're verified by signature + exp
+//      alone; see SPEC §15.1). The natural 2h expiry handles the
+//      rest. Revoking live access tokens is out of MVP scope.
+//    - We don't write to audit_logs. Logout is a routine user action,
+//      not an admin operation. The INFO log line is enough to drive
+//      user-facing "last logout" UI if Phase 6 wants it.
+// ────────────────────────────────────────────────────────────────────────────
+
+inline void logout_handler(httplib::Response&                 res,
+                           const httplib::Request&            req,
+                           RefreshTokenStore&                 store,
+                           const JwtConfig&                   jwt_cfg,
+                           std::string_view                   client_ip) {
+    // 1) Authentication gate. A valid Bearer access token is required
+    //    (SPEC §5.1: "已登录"). require_authentication throws
+    //    ApiException(401, UNAUTHORIZED) on every failure mode, which
+    //    server.h's per-request wrap turns into the unified envelope.
+    const Claims claims = require_authentication(req, jwt_cfg);
+
+    // 2) Body — must contain a refresh_token. Same shape as
+    //    /auth/refresh so the front-end can reuse its JSON plumbing.
+    auto j = parse_json_body(req, res);
+    if (!j) return;                                  // 400 already on the wire
+
+    auto parsed = detail::parse_logout_request(*j, res);
+    if (!parsed) return;                             // 400 already on the wire
+
+    // 3) Best-effort revocation. revoke_refresh_token() NEVER throws —
+    //    it folds every failure mode (malformed JWT, expired, wrong
+    //    kind, theft-mismatch) into the returned RevokeOutcome so the
+    //    wire stays consistent at 200. The detailed reason is logged
+    //    below at the appropriate level.
+    const auto outcome = revoke_refresh_token(
+        store,
+        parsed->refresh_token,
+        jwt_cfg.secret,
+        jwt_cfg.issuer,
+        jwt_cfg.refresh_ttl_seconds,
+        /*expected_user_id=*/claims.user_id);
+
+    if (!outcome.parsed) {
+        // Malformed / expired / wrong-kind refresh. The session
+        // we're trying to forget is already useless; nothing to
+        // revoke. Logged at INFO because this is the common case
+        // for a client that already let the refresh expire.
+        LOG_INFO("auth: logout (refresh did not parse)",
+                 {{"user_id",  claims.user_id},
+                  {"ip",       std::string(client_ip)},
+                  {"reason",   outcome.reason}});
+    } else if (!outcome.user_matched) {
+        // Theft signal: the refresh is for a different user than the
+        // access token. Don't revoke (the legitimate user's session
+        // is intact), but record it so operators can correlate.
+        LOG_WARN("auth: logout theft-mismatch (refresh sub != access sub)",
+                 {{"access_user_id",  claims.user_id},
+                  {"refresh_user_id", outcome.jti},
+                  {"reason",          outcome.reason},
+                  {"ip",              std::string(client_ip)}});
+    } else if (outcome.revoked) {
+        LOG_INFO("auth: logout",
+                 {{"user_id",  claims.user_id},
+                  {"jti",      outcome.jti},
+                  {"ip",       std::string(client_ip)}});
+    } else {
+        // Parsed + matched, but not revoked — should be unreachable
+        // given the current revoke_refresh_token contract, but log it
+        // defensively in case the helper grows a new failure mode.
+        LOG_INFO("auth: logout (no-op)",
+                 {{"user_id",  claims.user_id},
+                  {"jti",      outcome.jti},
+                  {"ip",       std::string(client_ip)}});
+    }
+
+    // 4) Always 200 — the front-end clears local state and moves on.
+    //    The "revoked" field lets the front-end distinguish a clean
+    //    logout (true) from a no-op logout (false: token was already
+    //    invalid). Both are non-error outcomes from the API's POV.
+    send_success(res, {
+        {"logged_out", true},
+        {"revoked",    outcome.revoked},
+    });
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 //  Route registration
 //
 //  Returns HttpServer& so callers can chain.
@@ -1050,7 +1230,46 @@ inline HttpServer& register_auth_routes(HttpServer&        server,
             }
         });
 
-    server.post("/api/v1/auth/logout",  not_implemented);
+    // POST /api/v1/auth/logout — Phase 2 ★  (SPEC §5.1)
+    //
+    // No rate limit (SPEC §5.1): logout is hit once per session and
+    // is idempotent. A flood of logouts just adds rows to the blacklist
+    // with shorter TTLs (refresh tokens self-expire on their own).
+    //
+    // The Bearer access token gates the endpoint (SPEC §5.1: "已登录").
+    // The user_id from the verified claims is fed to
+    // revoke_refresh_token as the theft-defense check, so a stolen
+    // refresh presented with the attacker's own access token is
+    // detected and refused.
+    //
+    // `pool` is NOT captured — logout_handler doesn't touch the DB
+    // (Phase 2 ★ keeps logout out of audit_logs since it's a routine
+    // user action, not an admin operation; the INFO log line is
+    // enough to drive user-facing "last logout" UI if Phase 6 wants
+    // it). When Phase 6 adds an admin-side session-invalidation
+    // hook, it'll either route through this same endpoint with
+    // admin context or open a new /api/v1/admin/sessions endpoint.
+    server.post("/api/v1/auth/logout",
+        [&store, jwt_cfg]
+        (const httplib::Request& req, httplib::Response& res) {
+            try {
+                const std::string ip = extract_client_ip(req);
+                logout_handler(res, req, store, jwt_cfg, ip);
+            } catch (const ApiException&) {
+                throw;                                  // unified envelope
+            } catch (const std::exception& e) {
+                LOG_ERROR("logout: handler threw",
+                          {{"type",   typeid(e).name()},
+                           {"reason", e.what()}});
+                if (res.body.empty()) {
+                    send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                               std::string("internal error: ") + e.what());
+                } else {
+                    throw;
+                }
+            }
+        });
+
     server.get ("/api/v1/auth/profile", not_implemented);
 
     return server;
