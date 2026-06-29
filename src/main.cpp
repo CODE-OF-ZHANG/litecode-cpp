@@ -3,8 +3,11 @@
 #include <iostream>
 #include <string>
 
+#include "auth/password_hash.h"
 #include "config.h"
+#include "db/user_repo.h"
 #include "logger.h"
+#include "routes/auth_routes.h"
 #include "routes/system_routes.h"   // Phase 1 ★ /api/v1/health
 
 #if defined(_WIN32)
@@ -119,6 +122,28 @@ int main() {
     std::cout << "bcrypt test: " << (ok ? "PASS" : "FAIL")
               << " (cost=" << litecode::kBcryptCostFactor << ")"
               << std::endl;
+
+    // Verify username / email validation (Phase 2 ★ auth_routes helpers)
+    {
+        std::string err;
+        const bool u1 = litecode::validate_username("alice",        &err);
+        const bool u2 = litecode::validate_username("ab",           &err); // too short
+        const bool u3 = litecode::validate_username(".alice",       &err); // leading dot
+        const bool u4 = litecode::validate_username("alice@bob",    &err); // invalid char
+        const bool e1 = litecode::validate_email("alice@x.io",      &err);
+        const bool e2 = litecode::validate_email("not-an-email",    &err);
+        const bool e3 = litecode::validate_email("a@b",             &err); // no dot
+        if (!(u1 && !u2 && !u3 && !u4 && e1 && !e2 && !e3)) {
+            std::cerr << "[validate] FAIL"
+                      << " u1=" << u1 << " u2=" << u2
+                      << " u3=" << u3 << " u4=" << u4
+                      << " e1=" << e1 << " e2=" << e2 << " e3=" << e3
+                      << " err='" << err << "'"
+                      << std::endl;
+            return 1;
+        }
+        std::cout << "[validate] PASS" << std::endl;
+    }
 
     // Verify jwt-cpp works
     auto token = jwt::create()

@@ -22,6 +22,8 @@ add_executable(test_password_hash    unit/test_password_hash.cpp)
 add_executable(test_auth_middleware  unit/test_auth_middleware.cpp)
 add_executable(test_rate_limit       unit/test_rate_limit.cpp)
 add_executable(test_refresh_token    unit/test_refresh_token.cpp)
+add_executable(test_user_repo        unit/test_user_repo.cpp)
+add_executable(test_auth_register    unit/test_auth_register.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -121,6 +123,43 @@ target_link_libraries(test_refresh_token PRIVATE
 target_include_directories(test_refresh_token PRIVATE
     ${CMAKE_SOURCE_DIR}/src)
 
+# user_repo.h (Phase 2 ★) — INSERT / SELECT / UPDATE on `users`. Pulls in
+# password_hash.h (for hash_password in the integration test setup) +
+# connection_pool.h (mysqlx::Session). Pure-unit tests don't need a
+# server / nlohmann_json / httplib; integration tests do — but since
+# the same binary serves both, we link the full stack and skip the
+# integration tests when MySQL is unreachable.
+target_link_libraries(test_user_repo PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    jwt-cpp::jwt-cpp
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp
+    litecode_bcrypt)
+target_include_directories(test_user_repo PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+
+# auth_routes.h (Phase 2 ★) — POST /api/v1/auth/register. End-to-end
+# tests spin up the full stack: HttpServer + ConnectionPool + RateLimiter
+# + JWT signing. Same link set as test_auth_middleware, plus the mysql
+# driver (the route handler talks to the DB) and bcrypt (for password
+# hashing in the happy-path test).
+target_link_libraries(test_auth_register PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    jwt-cpp::jwt-cpp
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp
+    litecode_bcrypt)
+target_include_directories(test_auth_register PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+
 # connection_pool.h pulls in mysqlx/xdevapi.h + config.h, so the test
 # binary needs mysql::concpp + OpenSSL on top of gtest_main.
 target_link_libraries(test_connection_pool PRIVATE
@@ -160,3 +199,5 @@ add_test(NAME password_hash     COMMAND test_password_hash)
 add_test(NAME auth_middleware   COMMAND test_auth_middleware)
 add_test(NAME rate_limit        COMMAND test_rate_limit)
 add_test(NAME refresh_token     COMMAND test_refresh_token)
+add_test(NAME user_repo         COMMAND test_user_repo)
+add_test(NAME auth_register     COMMAND test_auth_register)

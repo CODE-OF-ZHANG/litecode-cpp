@@ -889,7 +889,7 @@ litecode-cpp/
 - [x] ★ 管理员权限中间件（admin_middleware.h：`require_admin` 链式 `require_authentication` + `require_role("admin")`，未登录 401、登录但非 admin 403）
 - [x] ★ 限流中间件（按 IP+用户，令牌桶，§5.1 各端点配额）
 - [x] ★ Refresh Token 机制（签发 + 刷新 + 黑名单）
-- [ ] ★ 用户注册 API（POST /api/v1/auth/register，限流 5/分/IP）
+- [x] ★ 用户注册 API（POST /api/v1/auth/register，限流 5/分/IP）
 - [ ] ★ 用户登录 API（POST /api/v1/auth/login，限流 10/分/IP）
 - [ ] ★ Refresh API（POST /api/v1/auth/refresh）
 - [ ] ★ Logout API（POST /api/v1/auth/logout，refresh 入黑名单）
