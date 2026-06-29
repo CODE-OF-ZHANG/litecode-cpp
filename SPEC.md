@@ -17,6 +17,7 @@
 | v1.2 | 2026-06-27 | 大版本（基于代码审查的安全/性能/可维护性整改） |
 | v1.2.1 | 2026-06-29 | Phase 2 收尾：补全 `GET /api/v1/auth/profile`（含 19 用例集成测试）；修复 mysql-connector 9.x `created_at` / `last_login` DATETIME 列被读成 packed binary 的潜在 bug（user_repo SELECT 加 `DATE_FORMAT`） |
 | v1.2.2 | 2026-06-29 | Phase 3 开篇：实现 `problem_repo.h`（CRUD + 软删除 + 软删过滤查询，含 slug/title/difficulty/time/memory 校验、tag_id 筛选、limit/offset 分页钳制、`include_deleted` 切换）；tests/unit/test_problem.cpp 33 用例（15 纯单测 + 18 MySQL 集成测试，集成测试在 ping 失败时自动 SKIP）全通过 |
+| v1.2.3 | 2026-06-29 | Phase 3 续：实现 `tag_repo.h`（`tags` + `problem_tags` M:N，含 name 长度/空白/控制字符校验、trim、CRUD、`delete_by_id` FK 级联、`list` / `list_with_count` 软删过滤、`attach`（INSERT IGNORE 幂等）/ `detach` / `clear` / `replace`（START TRANSACTION 原子替换 + 去重 + INSERT IGNORE 兜底）/ `list_tags_for_problem` / `list_problems_for_tag`（live-only 默认）/ `count_*`、批量 `find_or_create_many`（一次多行 INSERT IGNORE + IN-clause SELECT 保持调用方顺序，支持中文名 "数组"/"哈希表"））；tests/unit/test_tag.cpp 30 用例（8 纯单测 + 22 MySQL 集成测试，集成测试在 ping 失败时自动 SKIP）全通过 |
 
 ### v1.2 主要变更摘要
 
@@ -901,7 +902,7 @@ litecode-cpp/
 ### Phase 3 - 题目模块
 
 - [x] ★ 题目数据模型（problem_repo.h：CRUD + 软删除 + 软删过滤查询）
-- [ ] ★ 标签数据模型（tag_repo.h：标签 + 题目-标签关联）
+- [x] ★ 标签数据模型（tag_repo.h：标签 + 题目-标签关联）
 - [ ] ★ 审计日志数据模型（audit_log_repo.h）
 - [ ] ★ 数据库迁移脚本（V001-V005，按 §10 目录落地）
 - [ ] ★ 题目列表 API（GET /api/v1/problems，分页 + 难度/标签筛选 + 软删过滤）

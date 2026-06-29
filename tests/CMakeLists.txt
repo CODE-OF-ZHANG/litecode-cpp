@@ -29,6 +29,7 @@ add_executable(test_auth_login       unit/test_auth_login.cpp)
 add_executable(test_auth_refresh     unit/test_auth_refresh.cpp)
 add_executable(test_auth_logout      unit/test_auth_logout.cpp)
 add_executable(test_auth_profile     unit/test_auth_profile.cpp)
+add_executable(test_tag              unit/test_tag.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -159,6 +160,21 @@ target_link_libraries(test_problem PRIVATE
     OpenSSL::SSL
     OpenSSL::Crypto)
 target_include_directories(test_problem PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+
+# tag_repo.h (Phase 3 ★) — INSERT / SELECT / UPDATE / DELETE on
+# `tags` + M:N helpers on `problem_tags` (attach / detach / clear /
+# replace / list_*) + bulk resolver find_or_create_many. The unit
+# tests are pure C++; the integration tests spin up real
+# ProblemRow rows to exercise the M:N paths. Same link set as
+# test_problem.
+target_link_libraries(test_tag PRIVATE
+    GTest::gtest_main
+    mysql::concpp
+    OpenSSL::SSL
+    OpenSSL::Crypto)
+target_include_directories(test_tag PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/db)
 
@@ -296,3 +312,4 @@ add_test(NAME auth_login        COMMAND test_auth_login)
 add_test(NAME auth_refresh      COMMAND test_auth_refresh)
 add_test(NAME auth_logout       COMMAND test_auth_logout)
 add_test(NAME auth_profile      COMMAND test_auth_profile)
+add_test(NAME tag               COMMAND test_tag)
