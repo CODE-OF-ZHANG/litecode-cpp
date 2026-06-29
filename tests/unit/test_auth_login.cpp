@@ -289,6 +289,7 @@ protected:
     std::unique_ptr<litecode::HttpServer>        server;
     std::unique_ptr<litecode::RateLimiter>       limiter;
     std::unique_ptr<litecode::LoginFailureTracker> tracker;
+    std::unique_ptr<litecode::InMemoryRefreshTokenStore> store;
     ServerHandle                                 handle;
     std::optional<UsernameTracker>               user_tracker;
 
@@ -315,10 +316,15 @@ protected:
 
         limiter       = std::make_unique<litecode::RateLimiter>();
         tracker       = std::make_unique<litecode::LoginFailureTracker>();
+        // The login suite doesn't exercise /api/v1/auth/refresh, but
+        // the route table now expects a RefreshTokenStore — supply a
+        // throwaway in-memory one so the registration call compiles
+        // and the per-test pool stays consistent.
+        store         = std::make_unique<litecode::InMemoryRefreshTokenStore>(1000);
         server        = std::make_unique<litecode::HttpServer>(
                               dev_server(), dev_cors());
         litecode::register_auth_routes(
-            *server, *pool, *limiter, *tracker,
+            *server, *pool, *limiter, *tracker, *store,
             dev_jwt(), lax_rate_limit());
         handle = start_server(server.get());
     }
@@ -328,6 +334,7 @@ protected:
         server.reset();
         limiter.reset();
         tracker.reset();
+        store.reset();
         user_tracker.reset();
         pool.reset();
     }
@@ -656,6 +663,7 @@ TEST_F(AuthLoginLiveFixture, RateLimitTriggersAtEleventhRequest) {
     server.reset();
     limiter.reset();
     tracker.reset();
+    store.reset();
 
     // 11 unique attempts: first 10 must pass through the rate limit
     // gate (we expect 401 on most, since none of these users exist;
@@ -671,9 +679,13 @@ TEST_F(AuthLoginLiveFixture, RateLimitTriggersAtEleventhRequest) {
 
     limiter = std::make_unique<litecode::RateLimiter>();
     tracker = std::make_unique<litecode::LoginFailureTracker>();
+    // Re-create the per-test store so the rebuilt server can wire it
+    // into the route table. The reset() above dropped it; tests that
+    // rebuild the server must rebuild the store too.
+    store   = std::make_unique<litecode::InMemoryRefreshTokenStore>(1000);
     server  = std::make_unique<litecode::HttpServer>(dev_server(), dev_cors());
     litecode::register_auth_routes(
-        *server, *pool, *limiter, *tracker,
+        *server, *pool, *limiter, *tracker, *store,
         dev_jwt(), tight_login_rate_limit());
     handle = start_server(server.get());
 
@@ -819,16 +831,9 @@ TEST_F(AuthLoginLiveFixture, SuccessAfterFailuresStopsAuditRowGrowth) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-//  Placeholder routes (refresh / logout / profile) — still 501
+//  Placeholder routes (logout / profile) — still 501
+//  (refresh moved to its own suite: test_auth_refresh.cpp)
 // ────────────────────────────────────────────────────────────────────────────
-
-TEST_F(AuthLoginLiveFixture, RefreshReturnsNotImplemented) {
-    StdoutSilencer silencer;
-    auto r = handle.client->Post("/api/v1/auth/refresh", "{}",
-                                  "application/json");
-    ASSERT_TRUE(r);
-    EXPECT_EQ(r->status, 501);
-}
 
 TEST_F(AuthLoginLiveFixture, LogoutReturnsNotImplemented) {
     StdoutSilencer silencer;

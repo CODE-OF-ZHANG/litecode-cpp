@@ -11,13 +11,23 @@
 //   - POST /api/v1/auth/logout       — auth required
 //   - GET  /api/v1/auth/profile      — auth required
 //
+// Phase 2 ★ refresh coverage (this file):
+//   - refresh_handler — verify+rotate via rotate_token_pair (blacklist check
+//     + revoke-old + sign-new lives in refresh_token.h). Looks up the
+//     user by `sub` so the new access token carries the current
+//     username/role (a user who got renamed or role-changed since the
+//     refresh was issued will see the up-to-date values).
+//   - Wire /api/v1/auth/refresh in register_auth_routes. No rate limit
+//     per SPEC §5.1; the per-IP bucket is reserved for register/login
+//     to stop credential-stuffing probes.
+//
 // Design notes:
 //   - Header-only + inline: matches every other Phase 1 / 2 module
 //     (server.h / error_handler.h / jwt_utils.h / refresh_token.h /
 //     password_hash.h / user_repo.h). Tests link this header directly
 //     and instantiate the route set with a real ConnectionPool + a
 //     dummy rate limiter (or a stub pool that throws on demand).
-//   - Phase 2 ★ ships **register** + **login**. Refresh / logout /
+//   - Phase 2 ★ ships **register** + **login** + **refresh**. Logout /
 //     profile still return 501 — they're the follow-up Phase 2 work
 //     and their stubs keep the route table stable.
 //   - Every handler follows the same shape:
@@ -44,7 +54,8 @@
 //   litecode::ConnectionPool   pool(litecode::PoolConfig::from_database_config(cfg.database));
 //   litecode::RateLimiter      limiter;
 //   litecode::LoginFailureTracker tracker;
-//   litecode::register_auth_routes(server, pool, limiter, tracker,
+//   litecode::RefreshTokenStore& store = *litecode::default_refresh_token_store();
+//   litecode::register_auth_routes(server, pool, limiter, tracker, store,
 //                                  cfg.jwt, cfg.rate_limit);
 //   server.listen_blocking();
 //
@@ -54,7 +65,8 @@
 //   litecode::RateLimiter      limiter;
 //   litecode::LoginFailureTracker tracker;
 //   litecode::ConnectionPool   pool(test_db_config());
-//   litecode::register_auth_routes(server, pool, limiter, tracker,
+//   litecode::InMemoryRefreshTokenStore store;
+//   litecode::register_auth_routes(server, pool, limiter, tracker, store,
 //                                  dev_jwt(), lax_rate_limit());
 //   auto h = start_server(&server);
 //   auto r = h.client->Post("/api/v1/auth/login",
@@ -259,6 +271,55 @@ parse_login_request(const nlohmann::json& j,
     // anyway, so an over-long candidate still feeds through the same
     // truncation and answers the right way.
 
+    return out;
+}
+
+} // namespace detail
+
+// ────────────────────────────────────────────────────────────────────────────
+//  RefreshRequest — POST /api/v1/auth/refresh body shape
+//
+//  Only one field is required: the refresh token. The body is JSON
+//  (matches the rest of /api/v1/auth/*) so the front-end doesn't need
+//  a second parsing path for refresh; if it ever wants to use
+//  HttpOnly cookies, the route can switch on `req.get_header_value(
+//  "Cookie")` without changing the contract.
+// ────────────────────────────────────────────────────────────────────────────
+
+struct RefreshRequest {
+    std::string refresh_token;
+};
+
+namespace detail {
+
+// parse_refresh_request — extract a RefreshRequest from JSON. Returns
+// std::nullopt and writes a 400 envelope when the body is malformed.
+//
+// The refresh token's content is opaque at this layer — we don't
+// try to peek inside to distinguish "this is an access token" from
+// "this is a refresh token" or "this is a JWT at all". The verify()
+// call inside refresh_handler is authoritative; trying to be clever
+// here would just duplicate the verifier's checks (and risk drifting
+// from them).
+inline std::optional<RefreshRequest>
+parse_refresh_request(const nlohmann::json& j,
+                      httplib::Response&    res) {
+    RefreshRequest out;
+
+    // refresh_token (required, string, non-empty)
+    if (!j.contains("refresh_token") || !j["refresh_token"].is_string()) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   "missing or non-string `refresh_token`",
+                   {{"field", "refresh_token"}});
+        return std::nullopt;
+    }
+    out.refresh_token = j["refresh_token"].get<std::string>();
+    if (out.refresh_token.empty()) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   "`refresh_token` must not be empty",
+                   {{"field", "refresh_token"}});
+        return std::nullopt;
+    }
     return out;
 }
 
@@ -656,6 +717,193 @@ inline void login_handler(httplib::Response&                 res,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+//  POST /api/v1/auth/refresh   — Phase 2 ★  (SPEC §5.1, §15.1, A2)
+//
+//  Wire flow:
+//    1. parse_json_body()              — 400 INVALID_INPUT on bad JSON
+//    2. detail::parse_refresh_request()— 400 on missing/empty/typed field
+//    3. verify() (jwt_utils)           — populates Claims with sub / jti / exp
+//    4. user_repo::find_by_id()        — 500 on DB error, 401 if user gone
+//    5. rotate_token_pair()            — verify + blacklist-check + revoke-old
+//                                        + sign-new (all in one helper)
+//    6. send_success()                 — 200 + new pair + user block
+//
+//  Why we look up the user before rotating: rotate_token_pair needs
+//  the current username + role (refresh tokens deliberately don't
+//  carry them — least privilege; SPEC §5.1). Looking up by `sub`
+//  also lets us catch the "user was deleted" case explicitly: a
+//  refresh token is still valid as a JWT, but the user it refers to
+//  is gone, so the right answer is 401 (not 500). We also use this
+//  hook to surface the current role / username in the new access
+//  token, so a role change since the refresh was issued is reflected
+//  on next refresh.
+//
+//  Anti-enumeration (SPEC §15.1): the 401 envelope is identical for
+//  every failure mode — bad signature, expired, revoked, kind wrong,
+//  user deleted. We log the actual reason at WARN so operators can
+//  investigate theft / clock-drift patterns; the wire only carries
+//  "invalid or expired refresh token".
+//
+//  Why NO rate limit (SPEC §5.1): refresh is meant to be hit on a
+//  schedule by the client (typically once per ~2h as the access
+//  token expires). Capping it would make a tab that's been idle for
+//  a few hours unable to come back. The blacklist + short access
+//  TTL provide the actual security; a stolen refresh is dead as
+//  soon as the legitimate user rotates it.
+// ────────────────────────────────────────────────────────────────────────────
+
+inline void refresh_handler(httplib::Response&                 res,
+                             const httplib::Request&            req,
+                             ConnectionPool&                    pool,
+                             RefreshTokenStore&                 store,
+                             const JwtConfig&                   jwt_cfg,
+                             std::string_view                   client_ip) {
+    auto j = parse_json_body(req, res);
+    if (!j) return;                                  // 400 already on the wire
+
+    auto parsed = detail::parse_refresh_request(*j, res);
+    if (!parsed) return;                             // 400 already on the wire
+
+    // 3) Verify the refresh token to recover the sub + jti + exp.
+    //    We do this BEFORE the user lookup so a malformed / wrong-kind
+    //    token fails fast (no DB hit) and gets the same 401 envelope
+    //    a revoked token would (anti-enumeration).
+    Claims claims;
+    try {
+        claims = verify(parsed->refresh_token,
+                         jwt_cfg.secret, jwt_cfg.issuer,
+                         TokenKind::Refresh);
+    } catch (const JwtError& e) {
+        LOG_WARN("refresh: token verification failed",
+                 {{"ip",     std::string(client_ip)},
+                  {"type",   typeid(e).name()},
+                  {"reason", e.what()}});
+        send_error(res, 401, ErrorCode::UNAUTHORIZED,
+                   "invalid or expired refresh token");
+        return;
+    }
+
+    // 3.5) The sub claim should be a decimal string of an int — same
+    //      shape we emit in sign_access / sign_refresh. Anything else
+    //      is a tampered token; treat as invalid.
+    int user_id = 0;
+    try {
+        user_id = std::stoi(claims.user_id);
+    } catch (const std::exception&) {
+        LOG_WARN("refresh: malformed sub claim",
+                 {{"ip",  std::string(client_ip)},
+                  {"sub", claims.user_id}});
+        send_error(res, 401, ErrorCode::UNAUTHORIZED,
+                   "invalid or expired refresh token");
+        return;
+    }
+    if (user_id <= 0) {
+        LOG_WARN("refresh: non-positive sub claim",
+                 {{"ip",  std::string(client_ip)},
+                  {"sub", claims.user_id}});
+        send_error(res, 401, ErrorCode::UNAUTHORIZED,
+                   "invalid or expired refresh token");
+        return;
+    }
+
+    // 4) Look up the user. nullopt ⇒ the user was deleted (or never
+    //    existed — which is the same as a tampered sub claim, just
+    //    observed one layer deeper). Both surface as 401.
+    std::optional<UserRow> row;
+    try {
+        row = user_repo::find_by_id(pool, user_id);
+    } catch (const std::exception& e) {
+        LOG_ERROR("refresh: find_by_id threw",
+                  {{"user_id", claims.user_id},
+                   {"ip",      std::string(client_ip)},
+                   {"type",    typeid(e).name()},
+                   {"reason",  e.what()}});
+        send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                   std::string("internal error: ") + e.what());
+        return;
+    }
+    if (!row) {
+        LOG_WARN("refresh: user not found",
+                 {{"user_id", claims.user_id},
+                  {"ip",      std::string(client_ip)}});
+        send_error(res, 401, ErrorCode::UNAUTHORIZED,
+                   "invalid or expired refresh token");
+        return;
+    }
+
+    // 5) Rotate. rotate_token_pair handles blacklist check + revoke-old
+    //    + sign-new in one shot. Throws RefreshTokenRevokedError if
+    //    this jti is already on the blacklist (the classic "reuse
+    //    detection" path — SPEC §15.1), RefreshTokenInvalidError for
+    //    any other verify failure (shouldn't happen here since we
+    //    already verified above, but the helper re-verifies as a
+    //    safety belt). Both map to the same 401 envelope so the wire
+    //    doesn't reveal which side of the check failed.
+    TokenPair tokens;
+    try {
+        tokens = rotate_token_pair(
+            store,
+            jwt_cfg.secret,
+            jwt_cfg.issuer,
+            parsed->refresh_token,
+            row->username,
+            row->role,
+            jwt_cfg.access_ttl_seconds,
+            jwt_cfg.refresh_ttl_seconds);
+    } catch (const RefreshTokenRevokedError& e) {
+        // Reuse detection. The previously-rotated token was presented
+        // again — a possible theft signal. Log at WARN with the jti
+        // so operators can correlate; the response stays generic.
+        LOG_WARN("refresh: token reuse detected (revoked jti presented)",
+                 {{"user_id", claims.user_id},
+                  {"jti",     claims.jti},
+                  {"ip",      std::string(client_ip)}});
+        send_error(res, 401, ErrorCode::UNAUTHORIZED,
+                   "invalid or expired refresh token");
+        return;
+    } catch (const RefreshTokenInvalidError& e) {
+        LOG_WARN("refresh: rotate_token_pair invalid",
+                 {{"user_id", claims.user_id},
+                  {"ip",      std::string(client_ip)},
+                  {"reason",  e.what()}});
+        send_error(res, 401, ErrorCode::UNAUTHORIZED,
+                   "invalid or expired refresh token");
+        return;
+    } catch (const std::exception& e) {
+        LOG_ERROR("refresh: rotate_token_pair threw",
+                  {{"user_id", claims.user_id},
+                   {"ip",      std::string(client_ip)},
+                   {"type",    typeid(e).name()},
+                   {"reason",  e.what()}});
+        send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                   std::string("internal error: ") + e.what());
+        return;
+    }
+
+    LOG_INFO("auth: refresh",
+             {{"user_id",  std::to_string(row->id)},
+              {"username", row->username},
+              {"role",     row->role}});
+
+    // 6) Same envelope shape as login / register so the front-end can
+    //    share its "store tokens + user" code across all three.
+    send_success(res, {
+        {"user", {
+            {"id",       row->id},
+            {"username", row->username},
+            {"role",     row->role},
+            {"email",    row->email ? nlohmann::json(*row->email)
+                                    : nlohmann::json(nullptr)},
+        }},
+        {"access_token",  tokens.access_token},
+        {"refresh_token", tokens.refresh_token},
+        {"token_type",    "Bearer"},
+        {"expires_in",    tokens.access_expires_in_seconds(
+                              std::chrono::system_clock::now())},
+    });
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 //  Route registration
 //
 //  Returns HttpServer& so callers can chain.
@@ -666,12 +914,14 @@ inline void login_handler(httplib::Response&                 res,
 //    litecode::ConnectionPool pool(litecode::PoolConfig::from_database_config(cfg.database));
 //    litecode::RateLimiter limiter;
 //    litecode::LoginFailureTracker tracker;
-//    litecode::register_auth_routes(server, pool, limiter, tracker,
+//    litecode::InMemoryRefreshTokenStore store;     // (or Redis-backed later)
+//    litecode::register_auth_routes(server, pool, limiter, tracker, store,
 //                                   cfg.jwt, cfg.rate_limit);
 //    server.listen_blocking();
 //
 //  Tests pass an in-process server + a freshly-constructed pool +
 //  a fresh tracker (so failure counts don't bleed between cases) +
+//  a fresh InMemoryRefreshTokenStore (so blacklist state is per-test) +
 //  the process-wide rate limiter.
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -679,6 +929,7 @@ inline HttpServer& register_auth_routes(HttpServer&        server,
                                         ConnectionPool&    pool,
                                         RateLimiter&       limiter,
                                         LoginFailureTracker& tracker,
+                                        RefreshTokenStore& store,
                                         const JwtConfig&   jwt_cfg,
                                         const RateLimitConfig& rate_cfg) {
     // POST /api/v1/auth/register — 5/min/IP (SPEC §5.1)
@@ -754,12 +1005,12 @@ inline HttpServer& register_auth_routes(HttpServer&        server,
             }
         });
 
-    // The remaining auth endpoints (refresh / logout / profile) are
-    // reserved for the follow-up Phase 2 work. We register a 501
-    // placeholder for each so the route table is stable and the
-    // front-end's integration can be staged endpoint by endpoint.
-    // The placeholder returns a SPEC §5.7 envelope so callers always
-    // get the same shape they expect from the eventual implementations.
+    // The remaining auth endpoints (logout / profile) are reserved
+    // for the follow-up Phase 2 work. We register a 501 placeholder
+    // for each so the route table is stable and the front-end's
+    // integration can be staged endpoint by endpoint. The placeholder
+    // returns a SPEC §5.7 envelope so callers always get the same
+    // shape they expect from the eventual implementations.
     auto not_implemented = [](const httplib::Request&,
                               httplib::Response& res) {
         send_error(res, 501, ErrorCode::SERVICE_UNAVAILABLE,
@@ -767,7 +1018,38 @@ inline HttpServer& register_auth_routes(HttpServer&        server,
                    "(see SPEC §11 Phase 2)");
     };
 
-    server.post("/api/v1/auth/refresh", not_implemented);
+    // POST /api/v1/auth/refresh — Phase 2 ★  (SPEC §5.1)
+    //
+    // No rate limit (SPEC §5.1): refresh is meant to be hit on a
+    // schedule as the access token ages out. The blacklist + short
+    // access TTL provide the actual security — a stolen refresh is
+    // dead the moment the legitimate user rotates it.
+    //
+    // The lambda captures pool / store BY REFERENCE (they outlive the
+    // server, owned by main() / the test fixture) and jwt_cfg BY VALUE
+    // (same reasoning as the register / login lambdas above — defends
+    // against a temporary JwtConfig going out of scope).
+    server.post("/api/v1/auth/refresh",
+        [&pool, &store, jwt_cfg]
+        (const httplib::Request& req, httplib::Response& res) {
+            try {
+                const std::string ip = extract_client_ip(req);
+                refresh_handler(res, req, pool, store, jwt_cfg, ip);
+            } catch (const ApiException&) {
+                throw;                                  // unified envelope
+            } catch (const std::exception& e) {
+                LOG_ERROR("refresh: handler threw",
+                          {{"type",   typeid(e).name()},
+                           {"reason", e.what()}});
+                if (res.body.empty()) {
+                    send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                               std::string("internal error: ") + e.what());
+                } else {
+                    throw;
+                }
+            }
+        });
+
     server.post("/api/v1/auth/logout",  not_implemented);
     server.get ("/api/v1/auth/profile", not_implemented);
 

@@ -25,6 +25,7 @@ add_executable(test_refresh_token    unit/test_refresh_token.cpp)
 add_executable(test_user_repo        unit/test_user_repo.cpp)
 add_executable(test_auth_register    unit/test_auth_register.cpp)
 add_executable(test_auth_login       unit/test_auth_login.cpp)
+add_executable(test_auth_refresh     unit/test_auth_refresh.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -178,6 +179,23 @@ target_include_directories(test_auth_login PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/db)
 
+# auth_routes.h's POST /api/v1/auth/refresh — Phase 2 ★. Same link
+# set as test_auth_login; the rotation tests drive the full stack
+# (server + pool + store + JWT) and verify the new pair with the
+# same jwt_utils helpers used in production.
+target_link_libraries(test_auth_refresh PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    jwt-cpp::jwt-cpp
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp
+    litecode_bcrypt)
+target_include_directories(test_auth_refresh PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+
 # connection_pool.h pulls in mysqlx/xdevapi.h + config.h, so the test
 # binary needs mysql::concpp + OpenSSL on top of gtest_main.
 target_link_libraries(test_connection_pool PRIVATE
@@ -220,3 +238,4 @@ add_test(NAME refresh_token     COMMAND test_refresh_token)
 add_test(NAME user_repo         COMMAND test_user_repo)
 add_test(NAME auth_register     COMMAND test_auth_register)
 add_test(NAME auth_login        COMMAND test_auth_login)
+add_test(NAME auth_refresh      COMMAND test_auth_refresh)

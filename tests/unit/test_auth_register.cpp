@@ -256,6 +256,12 @@ protected:
     std::unique_ptr<litecode::ConnectionPool> pool;
     std::unique_ptr<litecode::HttpServer>  server;
     std::unique_ptr<litecode::RateLimiter> limiter;
+    // login-failure tracker is required by the new register_auth_routes
+    // signature (Phase 2 ★ added /api/v1/auth/refresh, which doesn't
+    // need the tracker but the parameter is shared across the whole
+    // auth route family). Register-only tests pass a fresh instance
+    // and never bump the counter.
+    std::unique_ptr<litecode::LoginFailureTracker> failure_tracker;
     ServerHandle                          handle;
     // UsernameTracker needs a pool pointer, which doesn't exist until
     // SetUp() runs. Wrapped in optional so the field is default-
@@ -294,7 +300,15 @@ protected:
         limiter = std::make_unique<litecode::RateLimiter>();
         server  = std::make_unique<litecode::HttpServer>(
             dev_server(), dev_cors());
+        // Throwaway store + login-failure tracker — the register
+        // suite doesn't exercise /api/v1/auth/refresh, but
+        // register_auth_routes now takes both (Phase 2 ★ refresh
+        // signature).
+        failure_tracker = std::make_unique<litecode::LoginFailureTracker>();
+        auto register_store =
+            std::make_unique<litecode::InMemoryRefreshTokenStore>(1000);
         litecode::register_auth_routes(*server, *pool, *limiter,
+                                       *failure_tracker, *register_store,
                                        dev_jwt(), lax_rate_limit());
         handle = start_server(server.get());
     }
@@ -302,6 +316,7 @@ protected:
     void TearDown() override {
         handle = ServerHandle();   // default ctor — no-op destructor
         server.reset();
+        failure_tracker.reset();
         limiter.reset();
         tracker.reset();           // runs UsernameTracker's destructor
         pool.reset();
@@ -576,7 +591,14 @@ TEST_F(AuthLiveFixture, RateLimitTriggersAtSixthRequest) {
     // Fresh limiter with the SPEC §5.1 quota — bucket starts at 5 tokens.
     limiter = std::make_unique<litecode::RateLimiter>();
     server  = std::make_unique<litecode::HttpServer>(dev_server(), dev_cors());
+    // Throwaway store + failure tracker — the rate-limit suite
+    // doesn't exercise /api/v1/auth/refresh or login, but the
+    // route table needs both.
+    auto rate_store =
+        std::make_unique<litecode::InMemoryRefreshTokenStore>(1000);
+    litecode::LoginFailureTracker rate_failure_tracker;
     litecode::register_auth_routes(*server, *pool, *limiter,
+                                   rate_failure_tracker, *rate_store,
                                    dev_jwt(), tight_register_rate_limit());
     handle = start_server(server.get());
 
@@ -606,23 +628,15 @@ TEST_F(AuthLiveFixture, RateLimitTriggersAtSixthRequest) {
 
 // ────────────────────────────────────────────────────────────────────────────
 //  Placeholder routes (501 until Phase 2 follow-ups)
+//
+//  /api/v1/auth/login and /api/v1/auth/refresh are now real
+//  handlers (login covered in test_auth_login.cpp, refresh in
+//  test_auth_refresh.cpp). Only logout + profile still 501.
 // ────────────────────────────────────────────────────────────────────────────
 
-TEST_F(AuthLiveFixture, LoginReturnsNotImplemented) {
-    StdoutSilencer silencer;
-    auto r = handle.client->Post("/api/v1/auth/login", "{}", "application/json");
-    ASSERT_TRUE(r);
-    EXPECT_EQ(r->status, 501);
-    const auto body = nlohmann::json::parse(r->body);
-    EXPECT_EQ(body["code"], "SERVICE_UNAVAILABLE");
-}
-
-TEST_F(AuthLiveFixture, RefreshReturnsNotImplemented) {
-    StdoutSilencer silencer;
-    auto r = handle.client->Post("/api/v1/auth/refresh", "{}", "application/json");
-    ASSERT_TRUE(r);
-    EXPECT_EQ(r->status, 501);
-}
+// Refresh moved to its own suite (test_auth_refresh.cpp) since
+// Phase 2 ★ — see SPEC §5.1, §15.1. The route is now a real
+// handler, not a placeholder.
 
 TEST_F(AuthLiveFixture, LogoutReturnsNotImplemented) {
     StdoutSilencer silencer;
