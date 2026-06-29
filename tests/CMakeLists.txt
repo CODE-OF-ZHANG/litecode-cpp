@@ -21,6 +21,7 @@ add_executable(test_jwt_utils        unit/test_jwt_utils.cpp)
 add_executable(test_password_hash    unit/test_password_hash.cpp)
 add_executable(test_auth_middleware  unit/test_auth_middleware.cpp)
 add_executable(test_rate_limit       unit/test_rate_limit.cpp)
+add_executable(test_refresh_token    unit/test_refresh_token.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -108,6 +109,18 @@ target_link_libraries(test_rate_limit PRIVATE
 target_include_directories(test_rate_limit PRIVATE
     ${CMAKE_SOURCE_DIR}/src)
 
+# refresh_token.h (Phase 2 ★) — refresh-token mechanism (issue / rotate /
+# revoke / blacklist). Header-only, depends on jwt_utils.h (which
+# transitively pulls in jwt-cpp + OpenSSL HMAC). No httplib / nlohmann_json
+# / mysql dependency because the surface is just std::string / Claims.
+target_link_libraries(test_refresh_token PRIVATE
+    GTest::gtest_main
+    jwt-cpp::jwt-cpp
+    OpenSSL::SSL
+    OpenSSL::Crypto)
+target_include_directories(test_refresh_token PRIVATE
+    ${CMAKE_SOURCE_DIR}/src)
+
 # connection_pool.h pulls in mysqlx/xdevapi.h + config.h, so the test
 # binary needs mysql::concpp + OpenSSL on top of gtest_main.
 target_link_libraries(test_connection_pool PRIVATE
@@ -146,3 +159,4 @@ add_test(NAME jwt_utils         COMMAND test_jwt_utils)
 add_test(NAME password_hash     COMMAND test_password_hash)
 add_test(NAME auth_middleware   COMMAND test_auth_middleware)
 add_test(NAME rate_limit        COMMAND test_rate_limit)
+add_test(NAME refresh_token     COMMAND test_refresh_token)
