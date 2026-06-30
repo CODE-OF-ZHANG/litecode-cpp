@@ -13,10 +13,10 @@
 //       end runs the description through DOMPurify (SPEC §6.3 + A32);
 //       the API delivers the raw Markdown so the front-end can
 //       own the sanitization policy.
-//   - GET /api/v1/tags - public, no rate limit (future: tag list)
-//   - POST /api/v1/admin/problems       (🔒 admin, future)
-//   - PUT  /api/v1/admin/problems/:slug (🔒 admin, future)
-//   - DELETE /api/v1/admin/problems/:slug (🔒 admin, future)
+//   - GET /api/v1/tags - public, no rate limit (owned by tag_routes.h)
+//   - POST /api/v1/admin/problems       (🔒 admin, 30/min/user) — owned by
+//   - PUT  /api/v1/admin/problems/:slug (🔒 admin, 30/min/user) — admin_problem_routes.h
+//   - DELETE /api/v1/admin/problems/:slug (🔒 admin, 30/min/user)
 //   - POST /api/v1/admin/problems/import  (🔒 admin, future)
 //
 // Phase 3 * ships the LIST + DETAIL endpoints. The remaining routes
@@ -718,10 +718,12 @@ inline void get_problem_detail_handler(httplib::Response&         res,
 // ────────────────────────────────────────────────────────────────────────────
 //  Route registration
 //
-//  Returns HttpServer& so callers can chain. Phase 3 * ships only the
-//  list endpoint; the detail / admin routes are wired as 501
-//  placeholders so the route table is stable and the front-end can
-//  stage its integration endpoint-by-endpoint.
+//  Returns HttpServer& so callers can chain. Phase 3 * ships the
+//  public list + detail endpoints; the admin CRUD routes live in
+//  src/routes/admin_problem_routes.h and are registered by a
+//  separate call to register_admin_problem_routes(). The bulk
+//  import endpoint remains a 501 placeholder pending Phase 3's
+//  bulk-import commit.
 //
 //  Production usage (from main.cpp):
 //
@@ -730,6 +732,8 @@ inline void get_problem_detail_handler(httplib::Response&         res,
 //    litecode::RateLimiter    limiter;
 //    litecode::register_problem_routes(
 //        server, pool, limiter, cfg.rate_limit);
+//    litecode::register_admin_problem_routes(
+//        server, pool, limiter, cfg.rate_limit, cfg.jwt);
 //    server.listen_blocking();
 //
 //  Tests pass an in-process server + a freshly-constructed pool +
@@ -803,22 +807,19 @@ inline HttpServer& register_problem_routes(HttpServer&              server,
 // keeps main.cpp smoke registration tractable. problem_routes
 // does NOT register /api/v1/tags.
 
-    // POST /api/v1/admin/problems       (🔒 admin, SPEC §5.2, A18)
-    // PUT  /api/v1/admin/problems/:slug (🔒 admin, SPEC §5.2, A19)
+    // POST /api/v1/admin/problems       (🔒 admin, SPEC §5.2, A18) — owned by
+    // PUT  /api/v1/admin/problems/:slug (🔒 admin, SPEC §5.2, A19) — admin_problem_routes.h.
     // DEL  /api/v1/admin/problems/:slug (🔒 admin, SPEC §5.2, A20)
-    // POST /api/v1/admin/problems/import  (🔒 admin, SPEC §5.2, A17, A21)
-    // All four land as Phase 3 follow-up commits with the admin
-    // middleware (require_admin) wired in front of the handler.
+    // POST /api/v1/admin/problems/import  (🔒 admin, SPEC §5.2, A17, A21) — still
+    //                                       a 501 placeholder; bulk import
+    //                                       lands as a separate Phase 3 commit.
     auto not_implemented = [](const httplib::Request&,
                               httplib::Response& res) {
         send_error(res, 501, ErrorCode::SERVICE_UNAVAILABLE,
                    "this admin problem endpoint is not yet implemented "
-                   "(see SPEC §11 Phase 3 - admin problem CRUD / bulk import)");
+                   "(see SPEC §11 Phase 3 - admin bulk import)");
     };
     server.post(R"(/api/v1/admin/problems/import)", not_implemented);
-    server.post(R"(/api/v1/admin/problems)",         not_implemented);
-    server.put (R"(/api/v1/admin/problems/([^/]+))", not_implemented);
-    server.del (R"(/api/v1/admin/problems/([^/]+))", not_implemented);
 
     return server;
 }

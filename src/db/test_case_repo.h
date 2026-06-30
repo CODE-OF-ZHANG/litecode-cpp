@@ -44,13 +44,37 @@
 //                                       never surfaces non-sample
 //                                       cases, see SPEC §4.3 "示例
 //                                       用例").
+//       * insert                   -- INSERT one row (sample or judge
+//                                       case), returning the new id.
+//                                       Used by admin create / update
+//                                       / bulk import to attach test
+//                                       cases to a freshly-created
+//                                       problem row.
+//       * delete_for_problem       -- DELETE every row for a problem.
+//                                       Used by replace_for_problem
+//                                       below and by admin problem
+//                                       delete (to scrub attached
+//                                       test cases when the problem
+//                                       goes away — currently a no-op
+//                                       because soft-delete keeps the
+//                                       rows; reserved for a future
+//                                       hard-delete admin path).
+//       * replace_for_problem      -- clear + insert (in one
+//                                       transaction) for a given
+//                                       problem, with `is_sample`
+//                                       propagated uniformly across
+//                                       every input row (the caller
+//                                       passes a homogeneous vector
+//                                       — the admin POST / PUT path
+//                                       splits samples vs judge
+//                                       cases into two calls when
+//                                       it needs both). Used by
+//                                       admin update.
 //
-//   - All reads use parameterized SQL (`?` placeholders) — SPEC §15.2
-//     forbids string concatenation. mysqlx::SqlStatement::bind()
-//     handles the binding; user-supplied data never reaches the
-//     wire string. The repo is read-only for now: writes (create
-//     / update / delete) live behind the admin problem CRUD /
-//     bulk import endpoints that ship with Phase 3 admin work.
+//   - All reads + writes use parameterized SQL (`?` placeholders) —
+//     SPEC §15.2 forbids string concatenation. mysqlx::SqlStatement::
+//     bind() handles the binding; user-supplied data never reaches
+//     the wire string.
 //
 // Design notes:
 //   - Header-only + inline: matches every other Phase 1/2/3 module
@@ -290,6 +314,200 @@ inline std::vector<SampleCaseRow> list_for_problem(
     } catch (const mysqlx::Error& e) {
         throw TestCaseRepoError(
             std::string("test_case_repo::list_for_problem: ") + e.what());
+    }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+//  Write API — Phase 3 admin CRUD / bulk import (SPEC §5.2, A18, A19)
+//
+//  All write paths parameterize every value (SPEC §15.2). They are
+//  intentionally thin: validate in the route handler, then call the
+//  repo. We deliberately do NOT re-validate the problem_id FK in
+//  the repo — the route layer pre-checks via problem_repo::find_by_*
+//  so the call-site contract is "I just verified the parent exists".
+//
+//  Thread safety: every public method acquires a fresh
+//  PooledConnection from the pool, runs the SQL, releases. `replace_*`
+//  holds the connection for the duration of the transaction so the
+//  pool grows up to max_size concurrent connections.
+// ───────────────────────────────────────────────────────────────────────────
+
+// insert — INSERT one test_cases row, returning the new id (>= 1 on
+// success; 0 is impossible because the column is AUTO_INCREMENT).
+//
+// Field semantics mirror SPEC §4.3:
+//   - input / expected_output: LONGTEXT NOT NULL; passed as std::string
+//     for safe lifetime.
+//   - is_sample: TRUE for the public-facing samples, FALSE for the
+//     judge-only cases. The admin POST / PUT body decides which via
+//     a separate "samples" / "test_cases" key (single endpoint that
+//     accepts both shapes is left to a future bulk-import commit).
+//   - judge_type: one of "exact" / "ignore_trailing" / "float_eps" /
+//     "special". The route layer normalizes an absent value to
+//     "exact" (matches the column DEFAULT).
+//   - order_num: user-controlled ordering; smaller comes first. The
+//     route layer defaults to the array index when the caller omits
+//     it.
+//   - float_epsilon: std::optional<double>. The DECIMAL(10,8) column
+//     accepts NULL; the route layer passes std::nullopt for every
+//     judge_type other than "float_eps". We deliberately convert
+//     std::optional<double> -> std::optional<std::string> via the
+//     mysqlx binding path's string form so a `nullopt` value lands
+//     as SQL NULL, not "0" or "0.00000000".
+//
+// Throws TestCaseRepoError on driver error (handler → 500).
+inline int insert(ConnectionPool& pool,
+                 int problem_id,
+                 const std::string& input,
+                 const std::string& expected_output,
+                 bool is_sample,
+                 const std::string& judge_type,
+                 int order_num,
+                 std::optional<double> float_epsilon = std::nullopt) {
+    auto conn = pool.acquire();
+    try {
+        // We use the bind-many positional form so the float_epsilon
+        // NULL path doesn't have to branch on the SQL string. mysqlx
+        // binds std::nullopt as SQL NULL automatically when the
+        // destination is a numeric / string column.
+        if (float_epsilon.has_value()) {
+            // Decimal literal — keep enough precision for DECIMAL(10,8).
+            // to_string of a double gives 17 significant digits which
+            // is more than enough for any epsilon <= 1.
+            const std::string eps_str = std::to_string(*float_epsilon);
+            auto rs = conn.execute(
+                "INSERT INTO test_cases "
+                "(problem_id, input, expected_output, is_sample, "
+                " judge_type, order_num, float_epsilon) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                problem_id,
+                input,
+                expected_output,
+                is_sample,
+                judge_type,
+                order_num,
+                eps_str);
+            return static_cast<int>(rs.getAutoIncrementValue());
+        } else {
+            auto rs = conn.execute(
+                "INSERT INTO test_cases "
+                "(problem_id, input, expected_output, is_sample, "
+                " judge_type, order_num) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                problem_id,
+                input,
+                expected_output,
+                is_sample,
+                judge_type,
+                order_num);
+            return static_cast<int>(rs.getAutoIncrementValue());
+        }
+    } catch (const mysqlx::Error& e) {
+        throw TestCaseRepoError(std::string("test_case_repo::insert: ") + e.what());
+    }
+}
+
+// delete_for_problem — DELETE every test_cases row for a given
+// problem. Returns the number of rows removed. Used by
+// `replace_for_problem` (below) and reserved for a future hard-delete
+// admin path; the current admin problem DELETE is a soft-delete and
+// does NOT call this (test cases of soft-deleted problems are kept
+// so the row's historical submission_count / accepted_count still
+// make sense on a future restore).
+inline int delete_for_problem(ConnectionPool& pool, int problem_id) {
+    auto conn = pool.acquire();
+    try {
+        auto rs = conn.execute(
+            "DELETE FROM test_cases WHERE problem_id = ?",
+            problem_id);
+        return static_cast<int>(rs.getAffectedItemsCount());
+    } catch (const mysqlx::Error& e) {
+        throw TestCaseRepoError(
+            std::string("test_case_repo::delete_for_problem: ") + e.what());
+    }
+}
+
+// replace_for_problem — clear + insert the given rows, atomically
+// inside a single transaction held on one connection. Same shape
+// as tag_repo::replace: a half-applied state is never observable
+// on the wire.
+//
+// `rows` carries an `is_sample` flag on every entry so a single
+// call can rewrite both the public samples AND the judge-only
+// cases. The admin update path currently only sends samples
+// (SPEC §8.1 — the judge cases are usually added later via a
+// future admin UI), so the non-sample side will commonly be empty;
+// that's fine — the DELETE clears zero rows and the INSERT loop
+// is skipped.
+//
+// IMPORTANT: because the transaction must span every INSERT, this
+// function does NOT call insert() (which acquires its own
+// PooledConnection from the pool and would break the transaction
+// boundary). Instead we build the INSERTs inline on the same
+// PooledConnection the BEGIN opened on. The two INSERT shapes (with
+// / without float_epsilon) mirror the insert() overload above; any
+// schema change to either must be reflected here too.
+//
+// Throws TestCaseRepoError on any driver error. The transaction is
+// rolled back when a mid-loop failure leaves the connection
+// without commit() — meaning the problem keeps its OLD test cases
+// intact, not a half-set.
+inline void replace_for_problem(ConnectionPool& pool,
+                                int problem_id,
+                                const std::vector<SampleCaseRow>& rows,
+                                bool is_sample_for_all_rows) {
+    auto conn = pool.acquire();
+    try {
+        conn.execute("START TRANSACTION");
+        try {
+            conn.execute(
+                "DELETE FROM test_cases WHERE problem_id = ?",
+                problem_id);
+            for (const auto& row : rows) {
+                // Two INSERT shapes (with / without float_epsilon).
+                // SampleCaseRow doesn't carry float_epsilon today; we
+                // bind NULL for that column on every row, which is
+                // semantically correct for judge_type values other
+                // than "float_eps" (the column is documented as
+                // "only for float_eps"). For the "float_eps" rows
+                // we bind a sensible default epsilon — the admin
+                // POST / PUT body can supply a richer vector in a
+                // future commit if needed.
+                if (row.judge_type == "float_eps") {
+                    conn.execute(
+                        "INSERT INTO test_cases "
+                        "(problem_id, input, expected_output, is_sample, "
+                        " judge_type, order_num, float_epsilon) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        problem_id,
+                        row.input,
+                        row.expected_output,
+                        is_sample_for_all_rows,
+                        row.judge_type,
+                        row.order_num,
+                        std::string("0.00000001"));
+                } else {
+                    conn.execute(
+                        "INSERT INTO test_cases "
+                        "(problem_id, input, expected_output, is_sample, "
+                        " judge_type, order_num) "
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                        problem_id,
+                        row.input,
+                        row.expected_output,
+                        is_sample_for_all_rows,
+                        row.judge_type,
+                        row.order_num);
+                }
+            }
+            conn.execute("COMMIT");
+        } catch (...) {
+            try { conn.execute("ROLLBACK"); } catch (...) {}
+            throw;
+        }
+    } catch (const mysqlx::Error& e) {
+        throw TestCaseRepoError(
+            std::string("test_case_repo::replace_for_problem: ") + e.what());
     }
 }
 

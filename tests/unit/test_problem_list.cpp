@@ -17,8 +17,9 @@
 //         includes the maintenance counters)
 //       * parse_list_query semantics - invalid query => 400 envelope
 //         with code/message/details; missing query => default filter
-//       * 501 placeholders on /api/v1/problems/:slug, /api/v1/tags,
-//         /api/v1/admin/problems/* - registered routes return
+//       * 501 placeholders on /api/v1/problems/:slug, /api/v1/tags -
+//         registered routes return 501 (not yet implemented) when hit
+//         (these are the "next phase will land" stubs)
 //         SERVICE_UNAVAILABLE envelopes
 //
 //   - Integration tests (require a reachable MySQL):
@@ -575,14 +576,27 @@ TEST_F(ProblemListLiveFixture, TagsEndpointNoLongerReturns501) {
     EXPECT_EQ(body["code"], "NOT_FOUND");
 }
 
-TEST_F(ProblemListLiveFixture, AdminCreateReturns501Placeholder) {
+TEST_F(ProblemListLiveFixture, AdminCreateEndpointNotRegisteredByProblemRoutes) {
     StdoutSilencer silencer;
+    // v1.2.6 shipped the admin POST endpoint as a 501 placeholder
+    // registered from problem_routes.h. v1.2.9 (Phase 3 ★ admin CRUD
+    // commit) moves the admin endpoints into their own header,
+    // src/routes/admin_problem_routes.h, and removes the 501
+    // placeholders from problem_routes.h. This fixture only
+    // registers problem_routes, so POST /api/v1/admin/problems no
+    // longer has a handler at all — cpp-httplib's catch-all 404
+    // handler shapes the response into the unified envelope (per
+    // SPEC §5.7).
+    //
+    // Full admin CRUD coverage lives in tests/unit/test_admin_problem_crud.cpp
+    // (the dedicated fixture spins up register_admin_problem_routes
+    // + mints admin / user JWTs).
     const auto r = handle.client->Post(
         "/api/v1/admin/problems",
         R"({"slug":"x","title":"x","difficulty":"easy"})",
         "application/json");
     ASSERT_TRUE(r);
-    EXPECT_EQ(r->status, 501);
+    EXPECT_EQ(r->status, 404);
 }
 
 // ────────────────────────────────────────────────────────────────────────────

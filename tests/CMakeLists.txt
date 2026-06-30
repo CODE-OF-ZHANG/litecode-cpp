@@ -34,6 +34,7 @@ add_executable(test_audit_log        unit/test_audit_log.cpp)
 add_executable(test_problem_list     unit/test_problem_list.cpp)
 add_executable(test_problem_detail    unit/test_problem_detail.cpp)
 add_executable(test_tag_list          unit/test_tag_list.cpp)
+add_executable(test_admin_problem_crud unit/test_admin_problem_crud.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -401,3 +402,24 @@ add_test(NAME audit_log         COMMAND test_audit_log)
 add_test(NAME problem_list      COMMAND test_problem_list)
 add_test(NAME problem_detail     COMMAND test_problem_detail)
 add_test(NAME tag_list           COMMAND test_tag_list)
+add_test(NAME admin_problem_crud COMMAND test_admin_problem_crud)
+
+# admin_problem_routes.h (Phase 3 ★) — POST/PUT/DELETE
+# /api/v1/admin/problems endpoints (SPEC §5.2, A18/A19/A20/A27).
+# End-to-end tests spin up HttpServer + ConnectionPool + RateLimiter +
+# JWT signing (mint admin + user tokens) + problem_repo / tag_repo /
+# test_case_repo / audit_log_repo writes. Same link set as
+# test_auth_profile (the admin path uses require_admin + writes to
+# audit_logs, mirroring the Phase 2 login-failure path).
+target_link_libraries(test_admin_problem_crud PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    jwt-cpp::jwt-cpp
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp
+    litecode_bcrypt)
+target_include_directories(test_admin_problem_crud PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
