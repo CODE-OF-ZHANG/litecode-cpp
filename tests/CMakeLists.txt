@@ -35,6 +35,7 @@ add_executable(test_problem_list     unit/test_problem_list.cpp)
 add_executable(test_problem_detail    unit/test_problem_detail.cpp)
 add_executable(test_tag_list          unit/test_tag_list.cpp)
 add_executable(test_admin_problem_crud unit/test_admin_problem_crud.cpp)
+add_executable(test_admin_bulk_import unit/test_admin_bulk_import.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -403,6 +404,7 @@ add_test(NAME problem_list      COMMAND test_problem_list)
 add_test(NAME problem_detail     COMMAND test_problem_detail)
 add_test(NAME tag_list           COMMAND test_tag_list)
 add_test(NAME admin_problem_crud COMMAND test_admin_problem_crud)
+add_test(NAME admin_bulk_import COMMAND test_admin_bulk_import)
 
 # admin_problem_routes.h (Phase 3 ★) — POST/PUT/DELETE
 # /api/v1/admin/problems endpoints (SPEC §5.2, A18/A19/A20/A27).
@@ -423,3 +425,32 @@ target_link_libraries(test_admin_problem_crud PRIVATE
 target_include_directories(test_admin_problem_crud PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/db)
+
+# admin_bulk_import_routes.h (Phase 3 ★) — POST
+# /api/v1/admin/problems/import (SPEC §5.2, §8.2, A17, A21, A27).
+# End-to-end tests spin up HttpServer + ConnectionPool + RateLimiter +
+# JWT signing (mint admin + user tokens) + problem_repo / tag_repo /
+# test_case_repo / audit_log_repo writes. Same link set as
+# test_admin_problem_crud (the bulk-import path uses require_admin +
+# writes to audit_logs + invokes the same repos).
+target_link_libraries(test_admin_bulk_import PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    jwt-cpp::jwt-cpp
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp
+    litecode_bcrypt)
+target_include_directories(test_admin_bulk_import PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+# admin_bulk_import_routes.h is header-only + inline and pulls in
+# problem_routes.h / admin_problem_routes.h / tag_repo.h /
+# test_case_repo.h / audit_log_repo.h transitively (via the
+# namespace ::detail / ::bulk_import::detail split we use to dodge
+# ODR collisions). The MSVC linker hits the COFF section limit
+# without /bigobj. Same trick is in litecode.vcxproj for main.cpp.
+if(MSVC)
+    target_compile_options(test_admin_bulk_import PRIVATE /bigobj)
+endif()

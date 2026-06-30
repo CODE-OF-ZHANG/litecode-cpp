@@ -807,19 +807,13 @@ inline HttpServer& register_problem_routes(HttpServer&              server,
 // keeps main.cpp smoke registration tractable. problem_routes
 // does NOT register /api/v1/tags.
 
-    // POST /api/v1/admin/problems       (🔒 admin, SPEC §5.2, A18) — owned by
-    // PUT  /api/v1/admin/problems/:slug (🔒 admin, SPEC §5.2, A19) — admin_problem_routes.h.
-    // DEL  /api/v1/admin/problems/:slug (🔒 admin, SPEC §5.2, A20)
-    // POST /api/v1/admin/problems/import  (🔒 admin, SPEC §5.2, A17, A21) — still
-    //                                       a 501 placeholder; bulk import
-    //                                       lands as a separate Phase 3 commit.
-    auto not_implemented = [](const httplib::Request&,
-                              httplib::Response& res) {
-        send_error(res, 501, ErrorCode::SERVICE_UNAVAILABLE,
-                   "this admin problem endpoint is not yet implemented "
-                   "(see SPEC §11 Phase 3 - admin bulk import)");
-    };
-    server.post(R"(/api/v1/admin/problems/import)", not_implemented);
+    // POST /api/v1/admin/problems/import  (🔒 admin, SPEC §5.2, A17, A21) —
+    //                                       owned by admin_bulk_import_routes.h
+    //                                       (Phase 3 v1.2.10). This header
+    //                                       intentionally does NOT register
+    //                                       that endpoint; a separate
+    //                                       register_admin_bulk_import_routes()
+    //                                       call wires it.
 
     return server;
 }

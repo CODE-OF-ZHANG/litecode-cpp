@@ -460,9 +460,22 @@ inline void replace_for_problem(ConnectionPool& pool,
     try {
         conn.execute("START TRANSACTION");
         try {
-            conn.execute(
-                "DELETE FROM test_cases WHERE problem_id = ?",
-                problem_id);
+            // DELETE scoped to is_sample_for_all_rows so a follow-up
+            // call (e.g. the bulk-import endpoint calling this once
+            // for samples and once for judge cases) doesn't wipe
+            // the rows we just inserted. The (problem_id, is_sample,
+            // order_num) index from V005 covers this filter.
+            if (is_sample_for_all_rows) {
+                conn.execute(
+                    "DELETE FROM test_cases "
+                    "WHERE problem_id = ? AND is_sample = TRUE",
+                    problem_id);
+            } else {
+                conn.execute(
+                    "DELETE FROM test_cases "
+                    "WHERE problem_id = ? AND is_sample = FALSE",
+                    problem_id);
+            }
             for (const auto& row : rows) {
                 // Two INSERT shapes (with / without float_epsilon).
                 // SampleCaseRow doesn't carry float_epsilon today; we

@@ -701,6 +701,107 @@ inline bool restore(ConnectionPool& pool, std::string_view slug) {
     }
 }
 
+// UpsertResult — return value of upsert().
+//
+//   - id       : the problem row's primary key after the call. On a
+//                fresh insert this is the new AUTO_INCREMENT id; on
+//                overwrite this is the existing row's id.
+//   - created  : true ⇔ a new row was inserted; false ⇔ the existing
+//                row was overwritten. The caller (route layer) uses
+//                this to label the response entry as "created" vs
+//                "overwritten".
+struct UpsertResult {
+    int  id      = 0;
+    bool created = false;
+};
+
+// upsert — INSERT a new problem row, or overwrite an existing one
+// keyed by `slug`. The behavior of the conflict branch is "full
+// overwrite": title / difficulty / description / time_limit /
+// memory_limit are all replaced with the new values, `is_deleted`
+// is flipped to FALSE (so a previously soft-deleted row comes back
+// to life — a free side-effect of the upsert contract), and
+// `updated_at` is refreshed via MySQL's NOW(). The admin
+// ?on_duplicate=overwrite path in the bulk-import endpoint funnels
+// through here, mirroring SPEC §8.2 ("可选 query 参数
+// ?on_duplicate=overwrite 覆盖").
+//
+// The slug column has a UNIQUE constraint, so the ON DUPLICATE KEY
+// branch fires only when another row (live or soft-deleted) already
+// owns `row.slug`.
+//
+// Returns the row id and a `created` flag. On any driver / SQL
+// failure throws ProblemRepoError (handler → 500 envelope).
+inline UpsertResult upsert(ConnectionPool& pool, const ProblemRow& row) {
+    const int time_limit   = row.time_limit   == 0 ? 1000 : row.time_limit;
+    const int memory_limit = row.memory_limit == 0 ? 256  : row.memory_limit;
+
+    // Defense-in-depth validation on the EFFECTIVE values.
+    {
+        std::string err;
+        if (!validate_slug      (row.slug,        &err)) throw ProblemRepoError("upsert: " + err);
+        if (!validate_title     (row.title,       &err)) throw ProblemRepoError("upsert: " + err);
+        if (!validate_difficulty(row.difficulty,  &err)) throw ProblemRepoError("upsert: " + err);
+        if (!validate_time_limit(time_limit,     &err)) throw ProblemRepoError("upsert: " + err);
+        if (!validate_memory_limit(memory_limit, &err)) throw ProblemRepoError("upsert: " + err);
+    }
+
+    auto conn = pool.acquire();
+    try {
+        auto rs = conn.execute(
+            "INSERT INTO problems "
+            "(slug, title, difficulty, description, time_limit, memory_limit) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON DUPLICATE KEY UPDATE "
+            "title = VALUES(title), "
+            "difficulty = VALUES(difficulty), "
+            "description = VALUES(description), "
+            "time_limit = VALUES(time_limit), "
+            "memory_limit = VALUES(memory_limit), "
+            "is_deleted = FALSE, "
+            "updated_at = NOW()",
+            row.slug,
+            row.title,
+            row.difficulty,
+            row.description,
+            time_limit,
+            memory_limit);
+        // Disambiguate created vs overwritten via the affected-rows
+        // count. MySQL's INSERT ... ON DUPLICATE KEY UPDATE returns:
+        //   1 — a fresh row was inserted (created path)
+        //   2 — an existing row was overwritten (ON DUPLICATE branch)
+        //   0 — no change (the existing row matched every value)
+        // The mysql-connector-c++ 9.x getAutoIncrementValue() is
+        // NOT a reliable discriminator — it can return the next
+        // AUTO_INCREMENT value even for the ON DUPLICATE branch on
+        // some connector versions / pool states. Affected rows is
+        // the authoritative MySQL-defined signal.
+        const auto affected = rs.getAffectedItemsCount();
+        // One indexed lookup; the slug index makes it a single-page
+        // read. Done unconditionally so we always return the right
+        // id (the AUTO_INCREMENT might not be the row id when we
+        // hit the ON DUPLICATE branch — auto_increment advances
+        // even on duplicate-key attempts in MySQL).
+        const auto existing = conn.fetch_scalar<std::int64_t>(
+            "SELECT id FROM problems WHERE slug = ? LIMIT 1",
+            std::string(row.slug));
+        if (!existing.has_value()) {
+            throw ProblemRepoError(
+                "problem_repo::upsert: row vanished after upsert for slug '"
+                + row.slug + "'");
+        }
+        const int row_id = static_cast<int>(*existing);
+        // created ⇔ affected == 1 (a real INSERT happened). Anything
+        // else (0 / 2) means we hit the ON DUPLICATE branch.
+        const bool created = (affected == 1);
+        return UpsertResult{row_id, created};
+    } catch (const ProblemRepoError&) {
+        throw;
+    } catch (const mysqlx::Error& e) {
+        throw ProblemRepoError(std::string("problem_repo::upsert: ") + e.what());
+    }
+}
+
 // count — total rows matching `filter`. Used by list() to fill the
 // `total` field on the result. We keep the same include_deleted /
 // difficulty / tag_id predicates as list() so the two stay in sync.
