@@ -797,15 +797,11 @@ inline HttpServer& register_problem_routes(HttpServer&              server,
             }
         });
 
-// GET /api/v1/tags - Phase 3 follow-up (SPEC §5.2)
-// 501 placeholder. Will read tag_repo::list_with_count() and ship
-// the same envelope shape as /api/v1/problems.
-    server.get("/api/v1/tags",
-        [](const httplib::Request&, httplib::Response& res) {
-            send_error(res, 501, ErrorCode::SERVICE_UNAVAILABLE,
-                       "GET /api/v1/tags not yet implemented "
-                       "(see SPEC section 11 Phase 3 - tag list)");
-        });
+// GET /api/v1/tags is owned by src/routes/tag_routes.h
+// (Phase 3 *) — it lives in its own header so the ODR-clean
+// include set (only tag_repo, no problem_repo / audit_log_repo)
+// keeps main.cpp smoke registration tractable. problem_routes
+// does NOT register /api/v1/tags.
 
     // POST /api/v1/admin/problems       (🔒 admin, SPEC §5.2, A18)
     // PUT  /api/v1/admin/problems/:slug (🔒 admin, SPEC §5.2, A19)

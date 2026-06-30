@@ -555,13 +555,24 @@ TEST_F(ProblemListLiveFixture, DetailEndpointReturns404ForUnknownSlug) {
     EXPECT_EQ(body["code"], "NOT_FOUND");
 }
 
-TEST_F(ProblemListLiveFixture, TagsEndpointReturns501Placeholder) {
+TEST_F(ProblemListLiveFixture, TagsEndpointNoLongerReturns501) {
+    // v1.2.6 shipped /api/v1/tags as a 501 placeholder from
+    // register_problem_routes(). v1.2.8 (Phase 3 *) moved that
+    // route to src/routes/tag_routes.h's register_tag_routes() —
+    // but THIS fixture only registers problem_routes, not
+    // tag_routes, so /api/v1/tags is now unrouted in the test
+    // server. The response is a 404 NOT_FOUND envelope (server.h's
+    // default error handler shapes it), not the 501 from before.
+    // The full /api/v1/tags end-to-end behavior (200 happy path /
+    // ordering / problem_count / X-Request-Id / no rate-limit
+    // headers / 404 / 405 / UTF-8 round-trip / soft-delete
+    // exclusion) is covered in tests/unit/test_tag_list.cpp.
     StdoutSilencer silencer;
     const auto r = do_get(handle, "/api/v1/tags");
     ASSERT_TRUE(r.ok);
-    EXPECT_EQ(r.status, 501);
+    EXPECT_EQ(r.status, 404);
     const auto body = nlohmann::json::parse(r.body);
-    EXPECT_EQ(body["code"], "SERVICE_UNAVAILABLE");
+    EXPECT_EQ(body["code"], "NOT_FOUND");
 }
 
 TEST_F(ProblemListLiveFixture, AdminCreateReturns501Placeholder) {

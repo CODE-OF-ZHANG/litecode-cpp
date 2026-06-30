@@ -33,6 +33,7 @@ add_executable(test_tag              unit/test_tag.cpp)
 add_executable(test_audit_log        unit/test_audit_log.cpp)
 add_executable(test_problem_list     unit/test_problem_list.cpp)
 add_executable(test_problem_detail    unit/test_problem_detail.cpp)
+add_executable(test_tag_list          unit/test_tag_list.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -238,6 +239,29 @@ target_include_directories(test_problem_detail PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/db)
 
+# tag_routes.h (Phase 3 ★) — GET /api/v1/tags public list endpoint
+# (SPEC §5.2). End-to-end tests spin up the full HttpServer +
+# ConnectionPool + RateLimiter stack, seed tags via tag_repo and
+# problems via problem_repo (and attach via tag_repo::attach) so
+# the problem_count field is exercised end-to-end against MySQL.
+# The route handler does NOT call consume_rate_limit() (SPEC §5.2
+# puts no quota on /api/v1/tags), but the registration signature
+# still takes a RateLimiter so a future "add 60/min/IP quota"
+# commit doesn't have to retune every test call site. The pure
+# unit tests (serialize_tag_with_count shape / UTF-8 round-trip /
+# zero-count handling) run without MySQL. Same link set as
+# test_problem_list.
+target_link_libraries(test_tag_list PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp)
+target_include_directories(test_tag_list PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+
 # auth_routes.h (Phase 2 ★) — POST /api/v1/auth/register. End-to-end
 # tests spin up the full stack: HttpServer + ConnectionPool + RateLimiter
 # + JWT signing. Same link set as test_auth_middleware, plus the mysql
@@ -376,3 +400,4 @@ add_test(NAME tag               COMMAND test_tag)
 add_test(NAME audit_log         COMMAND test_audit_log)
 add_test(NAME problem_list      COMMAND test_problem_list)
 add_test(NAME problem_detail     COMMAND test_problem_detail)
+add_test(NAME tag_list           COMMAND test_tag_list)
