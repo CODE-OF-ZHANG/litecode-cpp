@@ -80,6 +80,7 @@
 #include "db/problem_repo.h"
 #include "db/tag_repo.h"
 #include "db/test_case_repo.h"
+#include "db/problem_revisions_repo.h"      // v1.2.12 — POST/PUT e2e revision checks
 #include "logger.h"
 #include "middleware/rate_limit.h"
 #include "routes/admin_problem_routes.h"
@@ -1672,6 +1673,142 @@ TEST_F(AdminProblemCrudLiveFixture, SoftDeletedProblemInvisibleToPublicList) {
         }
         EXPECT_FALSE(found) << "expected " << slug << " to be hidden";
     }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  v1.2.12 — problem_revisions e2e hooks
+//
+//  Verify that admin POST / PUT handlers land problem_revisions rows
+//  end-to-end (route → record_best_effort → revisions table). We
+//  drive the public endpoints, then read straight back via
+//  `problem_revisions_repo::latest_for_problem` / `list_for_problem`
+//  to confirm the storage layer is wired correctly. SlugTracker /
+//  AdminProblemCleanup will hard-delete the problem row in TearDown
+//  (FK CASCADE clears any leftover revisions).
+// ────────────────────────────────────────────────────────────────────────────
+
+TEST_F(AdminProblemCrudLiveFixture, PostCreatesRevisionOneRow) {
+    StdoutSilencer silencer;
+    const std::string slug = fresh_slug("rev1");
+    slug_tracker->add(slug);
+
+    nlohmann::json body = build_create_body(slug, "Rev Create Happy");
+    body["time_limit_ms"]   = 1500;
+    body["memory_limit_mb"] = 256;
+    body["tags"]            = nlohmann::json::array({fresh_tag_name("rev1")});
+
+    const auto r = do_post(handle, "/api/v1/admin/problems",
+                           body.dump(), admin_token);
+    ASSERT_TRUE(r.ok) << r.body;
+    ASSERT_EQ(r.status, 201);
+    const auto j = nlohmann::json::parse(r.body);
+    const int problem_id = j["data"]["problem_id"].is_number_integer()
+                          ? j["data"]["problem_id"].get<int>()
+                          : 0;
+    // The serialized detail payload doesn't include problem_id at the
+    // root level, so we resolve it via the slug (problem_repo's
+    // slug→id round-trip) — same code path the GET detail endpoint
+    // uses.
+    const auto row = litecode::problem_repo::find_by_slug(
+        *pool, slug, /*include_deleted=*/true);
+    ASSERT_TRUE(row.has_value());
+    ASSERT_EQ(row->id, problem_id == 0 ? row->id : problem_id);
+
+    // Latest revision on this problem should be revision_no=1, action=create.
+    auto latest = litecode::problem_revisions_repo::latest_for_problem(
+        *pool, row->id);
+    ASSERT_TRUE(latest.has_value()) << "no revision row written for new problem";
+    EXPECT_EQ(latest->revision_no, 1);
+    EXPECT_EQ(latest->action,      std::string("create"));
+    EXPECT_EQ(latest->slug,        slug);
+    EXPECT_EQ(latest->title,       std::string("Rev Create Happy"));
+    EXPECT_EQ(latest->time_limit,  1500);
+    EXPECT_EQ(latest->memory_limit, 256);
+    EXPECT_EQ(latest->editor_username, admin_username);
+
+    for (const auto& t : j["data"]["tags"]) {
+        tag_tracker->add(t["name"].get<std::string>());
+    }
+}
+
+TEST_F(AdminProblemCrudLiveFixture, PutIncrementsRevisionNoAndRewritesSummary) {
+    StdoutSilencer silencer;
+    const std::string slug = fresh_slug("rev3");
+    slug_tracker->add(slug);
+
+    // Seed via POST so we have a problem + first revision.
+    nlohmann::json create = build_create_body(slug, "Rev v1");
+    create["tags"] = nlohmann::json::array({fresh_tag_name("rev2")});
+    {
+        const auto r = do_post(handle, "/api/v1/admin/problems",
+                               create.dump(), admin_token);
+        ASSERT_TRUE(r.ok) << r.body;
+        ASSERT_EQ(r.status, 201);
+        const auto j = nlohmann::json::parse(r.body);
+        for (const auto& t : j["data"]["tags"]) {
+            tag_tracker->add(t["name"].get<std::string>());
+        }
+    }
+    const auto row0 = litecode::problem_repo::find_by_slug(
+        *pool, slug, /*include_deleted=*/true);
+    ASSERT_TRUE(row0.has_value());
+
+    // First PUT — title change + same slug + a different tag set.
+    {
+        nlohmann::json put = create;
+        put["title"]   = "Rev v2";
+        put["slug"]    = slug;
+        put["tags"]    = nlohmann::json::array({fresh_tag_name("rev2-alt")});
+        const auto r = do_put(handle,
+            "/api/v1/admin/problems/" + slug, put.dump(), admin_token);
+        ASSERT_TRUE(r.ok) << r.body;
+        ASSERT_EQ(r.status, 200);
+        const auto j = nlohmann::json::parse(r.body);
+        for (const auto& t : j["data"]["tags"]) {
+            tag_tracker->add(t["name"].get<std::string>());
+        }
+    }
+    // Second PUT — title change + slug rename.
+    {
+        const std::string new_slug = slug + "-v3";
+        slug_tracker->add(new_slug);
+        nlohmann::json put = create;
+        put["title"]   = "Rev v3";
+        put["slug"]    = new_slug;
+        put["tags"]    = nlohmann::json::array({fresh_tag_name("rev2-alt2")});
+        const auto r = do_put(handle,
+            "/api/v1/admin/problems/" + slug, put.dump(), admin_token);
+        ASSERT_TRUE(r.ok) << r.body;
+        ASSERT_EQ(r.status, 200);
+        const auto j = nlohmann::json::parse(r.body);
+        for (const auto& t : j["data"]["tags"]) {
+            tag_tracker->add(t["name"].get<std::string>());
+        }
+    }
+
+    // Now there should be 3 revisions on this problem_id:
+    //   rev_no=1, action=create, slug=original
+    //   rev_no=2, action=update, slug=original, title=Rev v2
+    //   rev_no=3, action=update, slug=new_slug,  title=Rev v3
+    litecode::RevisionListFilter f;
+    f.problem_id = row0->id;
+    f.limit      = 100;
+    auto page = litecode::problem_revisions_repo::list_for_problem(*pool, f);
+    ASSERT_EQ(page.total, 3);
+    ASSERT_EQ(page.items.size(), 3u);
+
+    // Newest first.
+    EXPECT_EQ(page.items[0].revision_no, 3);
+    EXPECT_EQ(page.items[0].action,      std::string("update"));
+    EXPECT_EQ(page.items[0].title,       std::string("Rev v3"));
+
+    EXPECT_EQ(page.items[1].revision_no, 2);
+    EXPECT_EQ(page.items[1].action,      std::string("update"));
+    EXPECT_EQ(page.items[1].title,       std::string("Rev v2"));
+
+    EXPECT_EQ(page.items[2].revision_no, 1);
+    EXPECT_EQ(page.items[2].action,      std::string("create"));
+    EXPECT_EQ(page.items[2].title,       std::string("Rev v1"));
 }
 
 } // namespace

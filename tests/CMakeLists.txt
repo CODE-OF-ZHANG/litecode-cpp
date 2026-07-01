@@ -32,6 +32,7 @@ add_executable(test_auth_profile     unit/test_auth_profile.cpp)
 add_executable(test_tag              unit/test_tag.cpp)
 add_executable(test_audit_log        unit/test_audit_log.cpp)
 add_executable(test_problem_list     unit/test_problem_list.cpp)
+add_executable(test_problem_revision unit/test_problem_revision.cpp)
 add_executable(test_problem_detail    unit/test_problem_detail.cpp)
 add_executable(test_tag_list          unit/test_tag_list.cpp)
 add_executable(test_admin_problem_crud unit/test_admin_problem_crud.cpp)
@@ -401,6 +402,7 @@ add_test(NAME auth_profile      COMMAND test_auth_profile)
 add_test(NAME tag               COMMAND test_tag)
 add_test(NAME audit_log         COMMAND test_audit_log)
 add_test(NAME problem_list      COMMAND test_problem_list)
+add_test(NAME problem_revision  COMMAND test_problem_revision)
 add_test(NAME problem_detail     COMMAND test_problem_detail)
 add_test(NAME tag_list           COMMAND test_tag_list)
 add_test(NAME admin_problem_crud COMMAND test_admin_problem_crud)
@@ -425,6 +427,13 @@ target_link_libraries(test_admin_problem_crud PRIVATE
 target_include_directories(test_admin_problem_crud PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/db)
+# admin_problem_routes.h now pulls in problem_revisions_repo.h
+# (v1.2.12), which combined with the other Phase 3 repos blows
+# past the MSVC COFF section limit (C1128). /bigobj fixes it.
+# Same trick is in test_admin_bulk_import and main.cpp below.
+if(MSVC)
+    target_compile_options(test_admin_problem_crud PRIVATE /bigobj)
+endif()
 
 # admin_bulk_import_routes.h (Phase 3 ★) — POST
 # /api/v1/admin/problems/import (SPEC §5.2, §8.2, A17, A21, A27).
@@ -443,6 +452,22 @@ target_link_libraries(test_admin_bulk_import PRIVATE
     mysql::concpp
     litecode_bcrypt)
 target_include_directories(test_admin_bulk_import PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+# problem_revisions_repo.h (v1.2.12) — record / record_best_effort /
+# find_by_id / latest_for_problem / list_for_problem / count_for_problem /
+# delete_for_problem on `problem_revisions`. The unit tests are pure
+# C++ (validators + exception hierarchy + constants); the integration
+# tests create throwaway problems via problem_repo + revisions via
+# this repo + clean up via delete_for_problem. Same link set as
+# test_audit_log (the JSON snapshot round-trip uses nlohmann_json).
+target_link_libraries(test_problem_revision PRIVATE
+    GTest::gtest_main
+    mysql::concpp
+    nlohmann_json::nlohmann_json
+    OpenSSL::SSL
+    OpenSSL::Crypto)
+target_include_directories(test_problem_revision PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/db)
 # admin_bulk_import_routes.h is header-only + inline and pulls in

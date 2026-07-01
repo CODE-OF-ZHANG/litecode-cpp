@@ -98,6 +98,7 @@
 #include "../db/problem_repo.h"                 // problem_repo::create / update / soft_delete / find_by_*
 #include "../db/tag_repo.h"                     // tag_repo::find_or_create_many / replace / list_tags_for_problem
 #include "../db/test_case_repo.h"               // test_case_repo::list_samples_for_problem / replace_for_problem
+#include "../db/problem_revisions_repo.h"      // problem_revisions_repo::record_best_effort (v1.2.12)
 #include "../logger.h"                          // LOG_INFO / LOG_WARN
 #include "../middleware/admin_middleware.h"     // require_admin
 #include "../middleware/rate_limit.h"           // consume_rate_limit / admin_write_quota / extract_client_ip
@@ -597,7 +598,64 @@ inline void admin_create_problem_handler(
         return;
     }
 
-    // 6) Audit log (strict). Failure here MUST surface as 500 —
+    // 6) Problem-revision snapshot (best-effort; v1.2.12). Failure
+    //    here is logged and swallowed — it does NOT escalate to 500.
+    //    audit_logs (the next step) is the durable security trail;
+    //    problem_revisions is the content-history layer on top of it,
+    //    and a missing revision on a single CREATE is recoverable
+    //    (the next PUT will land a new revision_no=2 row, and the
+    //    "what was the problem at version 1?" gap is small). The
+    //    revision_id is captured for the audit payload so future
+    //    investigators can correlate the security row with the
+    //    content row by hand.
+    std::int64_t revision_id_for_audit = 0;
+    {
+        RevisionEntry re;
+        re.problem_id      = new_id;
+        re.revision_no     = 0;                                // 0 ⇒ repo allocates MAX+1
+        re.editor_id       = std::stoi(claims.user_id);
+        re.editor_username = claims.username;
+        re.editor_ip       = extract_client_ip(req);
+        re.action          = problem_revisions_repo::kActionRevisionCreate;
+        re.slug            = row.slug;
+        re.title           = row.title;
+        re.difficulty      = row.difficulty;
+        re.time_limit      = row.time_limit;
+        re.memory_limit    = row.memory_limit;
+        re.description     = row.description;
+        re.tags_snapshot   = *tags_v;                          // vector<string> → nlohmann::json
+        re.samples_snapshot = nlohmann::json::array();
+        for (const auto& s : *samples_v) {
+            re.samples_snapshot.push_back({
+                {"input",  s.input},
+                {"output", s.expected_output},
+            });
+        }
+        re.summary = std::nullopt;                            // CREATE doesn't have a "before"
+        try {
+            revision_id_for_audit =
+                problem_revisions_repo::record_best_effort(pool, re);
+        } catch (const std::exception& e) {
+            // record_best_effort already LOG_WARNs; the belt-and-
+            // suspenders catch is for the case where a future
+            // hardening pass changes it to strict.
+            LOG_WARN("admin_problem_create: revision snapshot threw",
+                     {{"problem_id", std::to_string(new_id)},
+                      {"type",       typeid(e).name()},
+                      {"reason",     e.what()}});
+            revision_id_for_audit = 0;
+        }
+        if (revision_id_for_audit > 0) {
+            LOG_INFO("admin_problem_create: revision recorded",
+                     {{"problem_id",  std::to_string(new_id)},
+                      {"revision_id", std::to_string(revision_id_for_audit)}});
+        }
+        // revision_id_for_audit = 0 ⇒ missing snapshot; the audit
+        // payload below carries `revision_id = 0` so the audit UI
+        // can flag the row as "(no revision recorded)".
+    }
+
+    // 7) Audit log (strict). Failure here MUST surface as 500 —
     //    a lost audit row on a destructive admin action is a
     //    security trail gap.
     try {
@@ -614,6 +672,7 @@ inline void admin_create_problem_handler(
             {"memory_limit_mb", row.memory_limit},
             {"tag_names",      *tags_v},
             {"sample_count",   static_cast<int>(samples_v->size())},
+            {"revision_id",    revision_id_for_audit},
         };
         ae.ip           = extract_client_ip(req);
         audit_log_repo::record(pool, ae);
@@ -627,7 +686,7 @@ inline void admin_create_problem_handler(
         return;
     }
 
-    // 7) Read-back + serialize. We deliberately read the row back
+    // 8) Read-back + serialize. We deliberately read the row back
     //    so the response carries the canonical `created_at` /
     //    `updated_at` strings instead of fabricating them from
     //    request bytes.
@@ -814,6 +873,71 @@ inline void admin_update_problem_handler(
         return;
     }
 
+    // Problem-revision snapshot (best-effort; v1.2.12). Mirror of
+    // the CREATE step. revision_no=0 lets the repo allocate
+    // COALESCE(MAX(revision_no),0)+1, so a PUT after N previous
+    // revisions lands at N+1. `summary` is a short human-readable
+    // line listing what changed (≤200 chars). revision_id is fed
+    // into the audit payload below.
+    std::int64_t revision_id_for_audit = 0;
+    {
+        RevisionEntry re;
+        re.problem_id      = new_id;
+        re.revision_no     = 0;                                // 0 ⇒ repo allocates MAX+1
+        re.editor_id       = std::stoi(claims.user_id);
+        re.editor_username = claims.username;
+        re.editor_ip       = extract_client_ip(req);
+        re.action          = problem_revisions_repo::kActionRevisionUpdate;
+        re.slug            = patch.slug;                       // NEW slug (post-rename)
+        re.title           = patch.title;
+        re.difficulty      = patch.difficulty;
+        re.time_limit      = patch.time_limit;
+        re.memory_limit    = patch.memory_limit;
+        re.description     = patch.description;
+        re.tags_snapshot   = *tags_v;
+        re.samples_snapshot = nlohmann::json::array();
+        for (const auto& s : *samples_v) {
+            re.samples_snapshot.push_back({
+                {"input",  s.input},
+                {"output", s.expected_output},
+            });
+        }
+
+        // Compact one-liner. Only fields that changed get a
+        // mention; falls back to "updated" when nothing visibly
+        // differs (PUT body matched the current row byte-for-byte).
+        std::string summary;
+        if (old_slug != patch.slug) {
+            summary += "slug: " + old_slug + " -> " + patch.slug + "; ";
+        }
+        if (!pre_title.empty() && pre_title != patch.title) {
+            summary += "title changed; ";
+        }
+        if (summary.empty()) {
+            summary = "updated";
+        }
+        if (summary.size() > 200) summary.resize(200);
+        re.summary = summary;
+
+        try {
+            revision_id_for_audit =
+                problem_revisions_repo::record_best_effort(pool, re);
+        } catch (const std::exception& e) {
+            LOG_WARN("admin_problem_update: revision snapshot threw",
+                     {{"problem_id", std::to_string(new_id)},
+                      {"type",       typeid(e).name()},
+                      {"reason",     e.what()}});
+            revision_id_for_audit = 0;
+        }
+        if (revision_id_for_audit > 0) {
+            LOG_INFO("admin_problem_update: revision recorded",
+                     {{"problem_id",  std::to_string(new_id)},
+                      {"revision_id", std::to_string(revision_id_for_audit)},
+                      {"old_slug",    old_slug},
+                      {"new_slug",    patch.slug}});
+        }
+    }
+
     // Audit log.
     try {
         AuditEntry ae;
@@ -831,6 +955,7 @@ inline void admin_update_problem_handler(
             {"memory_limit_mb", patch.memory_limit},
             {"tag_names",       *tags_v},
             {"sample_count",    static_cast<int>(samples_v->size())},
+            {"revision_id",     revision_id_for_audit},
         };
         ae.ip           = extract_client_ip(req);
         audit_log_repo::record(pool, ae);
@@ -886,6 +1011,17 @@ inline void admin_update_problem_handler(
 //         - returns false (no live row) → 404
 //         - throws → 500
 //    6) audit_log_repo::record (action=problem.delete)
+//
+//    NOTE (v1.2.12): unlike POST/PUT, DELETE does NOT write a
+//    problem_revisions row. Rationale: a soft-delete only flips
+//    `is_deleted = TRUE`; the existing revisions remain the truthful
+//    snapshot history of the problem's content. Writing a
+//    "deleted" revision here would only duplicate the audit row
+//    without new content. If a future restore-cycle re-publishes
+//    the problem, the next CREATE / UPDATE will land at MAX(revision_no)+1
+//    so the deletion is implicit via the gap in revision_no / slug
+//    history.
+//
 //    7) send_no_content(204)
 // ────────────────────────────────────────────────────────────────────────────
 
