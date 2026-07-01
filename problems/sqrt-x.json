@@ -1,0 +1,22 @@
+{
+  "slug": "sqrt-x",
+  "title": "x 的平方根",
+  "difficulty": "medium",
+  "tags": ["数学", "二分查找"],
+  "time_limit_ms": 1000,
+  "memory_limit_mb": 256,
+  "description": "## 题目描述\n\n给你一个非负整数 `x`，计算并返回 `x` 的 **平方根**。\n\n由于返回类型是浮点数，结果与真实值的 **相对误差或绝对误差** 在 `10^{-4}` 以内即视为正确。\n\n**注意**：不允许使用任何内置指数函数和算术函数，例如 `pow(x, 0.5)` 或者 `x ** 0.5`。\n\n## 输入格式\n\n一行，一个非负整数 `x`（`0 <= x <= 2^31 - 1`）。\n\n## 输出格式\n\n一行，`x` 的平方根，**保留 6 位小数**。\n\n## 示例 1\n\n输入：\n```\n4\n```\n\n输出：\n```\n2.000000\n```\n\n## 示例 2\n\n输入：\n```\n8\n```\n\n输出：\n```\n2.828427\n```\n\n## 数据范围\n\n- `0 <= x <= 2^31 - 1`\n\n**判分方式**：本题采用 `float_eps` 判分（绝对/相对误差 < `10^{-4}` 视为相等），你可以输出 `2.8284` 或 `2.82842713` 等任意在容差范围内的近似值。",
+  "samples": [
+    {"input": "4\n", "output": "2.000000\n"},
+    {"input": "8\n", "output": "2.828427\n"}
+  ],
+  "test_cases": [
+    {"input": "0\n", "expected_output": "0.000000\n", "judge_type": "float_eps", "float_epsilon": 0.0001},
+    {"input": "1\n", "expected_output": "1.000000\n", "judge_type": "float_eps", "float_epsilon": 0.0001},
+    {"input": "4\n", "expected_output": "2.000000\n", "judge_type": "float_eps", "float_epsilon": 0.0001},
+    {"input": "8\n", "expected_output": "2.828427\n", "judge_type": "float_eps", "float_epsilon": 0.0001},
+    {"input": "9\n", "expected_output": "3.000000\n", "judge_type": "float_eps", "float_epsilon": 0.0001},
+    {"input": "1000000\n", "expected_output": "1000.000000\n", "judge_type": "float_eps", "float_epsilon": 0.0001},
+    {"input": "2147483647\n", "expected_output": "46340.950001\n", "judge_type": "float_eps", "float_epsilon": 0.0001}
+  ]
+}

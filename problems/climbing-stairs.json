@@ -1,0 +1,22 @@
+{
+  "slug": "climbing-stairs",
+  "title": "爬楼梯",
+  "difficulty": "easy",
+  "tags": ["动态规划", "数学"],
+  "time_limit_ms": 1000,
+  "memory_limit_mb": 256,
+  "description": "## 题目描述\n\n假设你正在爬楼梯，需要 `n` 阶你才能到达楼顶。\n\n每次你可以爬 `1` 或 `2` 个台阶。你有多少种不同的方法可以爬到楼顶？\n\n## 输入格式\n\n一行，一个正整数 `n`（`1 <= n <= 45`）。\n\n## 输出格式\n\n一行，爬到楼顶的方法总数。\n\n## 示例 1\n\n输入：\n```\n2\n```\n\n输出：\n```\n2\n```\n\n解释：有两种方法可以爬到楼顶：\n1. `1` 阶 + `1` 阶\n2. `2` 阶\n\n## 示例 2\n\n输入：\n```\n3\n```\n\n输出：\n```\n3\n```\n\n解释：有三种方法：\n1. `1+1+1`\n2. `1+2`\n3. `2+1`\n\n## 数据范围\n\n- `1 <= n <= 45`\n\n**提示**：本题答案不超过 `2^31 - 1`（即 `2147483647`）。",
+  "samples": [
+    {"input": "2\n", "output": "2\n"},
+    {"input": "3\n", "output": "3\n"}
+  ],
+  "test_cases": [
+    {"input": "1\n", "expected_output": "1\n", "judge_type": "exact"},
+    {"input": "2\n", "expected_output": "2\n", "judge_type": "exact"},
+    {"input": "3\n", "expected_output": "3\n", "judge_type": "exact"},
+    {"input": "5\n", "expected_output": "8\n", "judge_type": "exact"},
+    {"input": "10\n", "expected_output": "89\n", "judge_type": "exact"},
+    {"input": "20\n", "expected_output": "10946\n", "judge_type": "exact"},
+    {"input": "45\n", "expected_output": "1836311903\n", "judge_type": "exact"}
+  ]
+}
