@@ -25,14 +25,16 @@
 #
 # 任务 JSON schema（web 侧按此结构下发）：
 #   {
-#     "submission_id":       42,
-#     "language":            "cpp",
-#     "code":                "...source...",
-#     "time_limit_ms":       1000,
-#     "memory_limit_mb":     256,
-#     "compile_timeout_ms":  10000,
-#     "run_hard_timeout_ms": 30000,
-#     "output_limit_bytes":  16777216,
+#     "submission_id":          42,
+#     "language":               "cpp",
+#     "code":                   "...source...",
+#     "time_limit_ms":          1000,
+#     "memory_limit_mb":        256,
+#     "compile_timeout_ms":     10000,
+#     "run_hard_timeout_ms":    30000,
+#     "output_limit_bytes":     16777216,
+#     "special_judge_source":   "// (optional) C++ SPJ source code ...",
+#     "special_judge_language": "cpp",
 #     "test_cases": [
 #       {
 #         "input":           "...",
@@ -80,7 +82,7 @@ COMPILE_FLAGS=(
 
 # ───── lib 加载 ─────────────────────────────────────────────
 # shellcheck source=/dev/null
-for f in "${JUDGE_LIB_DIR}/common.sh" "${JUDGE_LIB_DIR}/cgroup.sh" "${JUDGE_LIB_DIR}/compare.sh"; do
+for f in "${JUDGE_LIB_DIR}/common.sh" "${JUDGE_LIB_DIR}/cgroup.sh" "${JUDGE_LIB_DIR}/compare.sh" "${JUDGE_LIB_DIR}/spj.sh"; do
     if [ ! -r "${f}" ]; then
         echo "[judge.sh] missing lib file: ${f}" >&2
         exit 2
@@ -92,6 +94,8 @@ done
 . "${JUDGE_LIB_DIR}/cgroup.sh"
 # shellcheck source=/dev/null
 . "${JUDGE_LIB_DIR}/compare.sh"
+# shellcheck source=/dev/null
+. "${JUDGE_LIB_DIR}/spj.sh"
 
 # =============================================================
 # Section A — 帮助 / 探活（docker-compose build-only 用法）
@@ -156,6 +160,26 @@ RUN_HARD_TIMEOUT_MS="${RUN_HARD_TIMEOUT_MS:-${DEFAULT_RUN_HARD_TIMEOUT_MS}}"
 OUTPUT_LIMIT_BYTES="$(jq -r '.output_limit_bytes // '"${DEFAULT_OUTPUT_LIMIT_BYTES}" "${TASK_FILE}" 2>/dev/null)"
 OUTPUT_LIMIT_BYTES="${OUTPUT_LIMIT_BYTES:-${DEFAULT_OUTPUT_LIMIT_BYTES}}"
 
+# ───── Special Judge 字段（SPEC §11 Phase 4 ☆ / §4.3）───────────
+# 这两个字段为可选：当任意 test_case.judge_type = "special" 时，C++ 侧
+# （submission_routes.h / judge_scheduler.h）会从 problem_special_judges 表
+# 把对应 problem 的 SPJ 源码塞进来。空串 = 该题没有挂 SPJ，judge.sh
+# 退化为 "special 类型点统一判 WA"（见 compare.sh::compare_special）。
+#
+# 之所以用 `//` 作 sentinel：`jq -r` 对 missing key 返 "null"；我们用
+# `// null` 兜底再用 shell 参数展开把 "null" / 空 都归一为空。避免
+# jq 不可用（极少见）时 `//` jq 短路给到 default 的同时又把坏字符串
+# 当 SPJ 源码喂给 g++。
+SPECIAL_JUDGE_SOURCE_RAW="$(jq -r '.special_judge_source // ""' "${TASK_FILE}" 2>/dev/null || echo "")"
+if [ "${SPECIAL_JUDGE_SOURCE_RAW}" = "null" ]; then
+    SPECIAL_JUDGE_SOURCE_RAW=""
+fi
+SPECIAL_JUDGE_LANGUAGE_RAW="$(jq -r '.special_judge_language // ""' "${TASK_FILE}" 2>/dev/null || echo "")"
+if [ "${SPECIAL_JUDGE_LANGUAGE_RAW}" = "null" ]; then
+    SPECIAL_JUDGE_LANGUAGE_RAW=""
+fi
+SPECIAL_JUDGE_ENABLED="false"
+
 TC_COUNT="$(jq -r '(.test_cases // []) | length' "${TASK_FILE}" 2>/dev/null)"
 TC_COUNT="${TC_COUNT:-0}"
 
@@ -180,7 +204,46 @@ for ((i = 0; i < TC_COUNT; i++)); do
     jq -r ".test_cases[${i}].judge_type // \"exact\""  "${TASK_FILE}" > "${cdir}/judge_type"
     jq -r ".test_cases[${i}].float_epsilon // 0.000001" "${TASK_FILE}" > "${cdir}/float_epsilon"
     set -e
+    # 探测任一 case 是否需特殊判（SPEC §11 Phase 4 ☆ SPJ 框架）；
+    # 一旦启用则后续在编译用户代码完成后立刻编译 SPJ。
+    if [ -z "${SPECIAL_JUDGE_SOURCE_RAW}" ]; then
+        continue
+    fi
+    case "$(cat "${cdir}/judge_type" 2>/dev/null || true)" in
+        special)
+            SPECIAL_JUDGE_ENABLED="true"
+            ;;
+    esac
 done
+
+# 编译 Special Judge（一次性，编译错误 → 当前 submission 整体 SE）
+# 仅当 SPECIAL_JUDGE_ENABLED=true 时执行。
+SPJ_BIN_PATH=""
+SPJ_COMPILE_RC=0
+if [ "${SPECIAL_JUDGE_ENABLED}" = "true" ]; then
+    if [ -z "${SPECIAL_JUDGE_LANGUAGE_RAW}" ] || [ "${SPECIAL_JUDGE_LANGUAGE_RAW}" != "cpp" ]; then
+        # 防御：admin 没填语言或填了非 cpp（当前镜像只支持 cpp）。
+        # 视作 SE，避免把垃圾塞进 g++。
+        SPECIAL_JUDGE_ENABLED="false"
+        SPJ_COMPILE_RC=1
+    else
+        SPJ_BIN_PATH="${JUDGE_TMP}/spj_bin"
+        SPJ_SRC_PATH="${JUDGE_TMP}/spj_src.cpp"
+        mkdir -p "${JUDGE_TMP}"
+        printf '%s' "${SPECIAL_JUDGE_SOURCE_RAW}" > "${SPJ_SRC_PATH}"
+        set +e
+        compile_spj "${SPJ_SRC_PATH}" "${SPJ_BIN_PATH}"
+        SPJ_COMPILE_RC=$?
+        set -e
+        if [ "${SPJ_COMPILE_RC}" -eq 0 ] && [ -x "${SPJ_BIN_PATH}" ]; then
+            # 暴露给 compare.sh：所有 judge_type=special 的点都走 SPJ。
+            export LITECODE_SPJ_BIN="${SPJ_BIN_PATH}"
+        else
+            # 编译失败：后续每个特殊点 emit SE，并把 stderr 折进 info。
+            export LITECODE_SPJ_BIN=""
+        fi
+    fi
+fi
 
 # 探测 cgroup 基线（空 = host/无 cgroup 容器内）
 CGROUP_BASE="$(cgroup_v2_base)"
@@ -396,11 +459,84 @@ for ((i = 0; i < TC_COUNT; i++)); do
                 >> "${JUDGE_TMP}/case_results.jsonl"
             ;;
         special)
-            FINAL_STATUS="se"
-            FAILED_CASE_INDEX="${i}"
-            ERROR_MESSAGE="special judge not implemented (v1.3)"
-            printf '{"index":%s,"status":"se","time_ms":%s,"mem_kb":%s,"info":null}\n' \
-                "${i}" "${TIME_MS}" "${MEM_KB}" >> "${JUDGE_TMP}/case_results.jsonl"
+            # ─── Special Judge 调度（SPEC §11 Phase 4 ☆ / §4.3）───
+            # 三个分支：
+            #   1) SPJ 编译失败 → 该 case 折 SE，整 submission 折 SE
+            #   2) SPJ 未配置且 test case 是 special → 折 WA（operator 意图：
+            #      题还没挂 SPJ；admin 上传后再跑就有结果了）
+            #   3) SPJ 已编译 + 调用 → 按 SPJ exit code 判定 AC/WA，SPJ 自己的
+            #      崩溃（非法退出码）按 SE 抓
+            if [ "${SPECIAL_JUDGE_ENABLED}" != "true" ] || [ -z "${LITECODE_SPJ_BIN:-}" ] || [ ! -x "${LITECODE_SPJ_BIN:-}" ]; then
+                if [ "${SPJ_COMPILE_RC:-0}" -ne 0 ]; then
+                    # 1) 编译失败 — 把 stderr 摘到 info + 整 submission SE
+                    SPJ_ERR="$(spj_err_for_info "${SPJ_BIN_PATH:-}" 2048)"
+                    SPJ_ERR="${SPJ_ERR:-special judge source failed to compile}"
+                    FINAL_STATUS="se"
+                    FAILED_CASE_INDEX="${i}"
+                    ERROR_MESSAGE="${SPJ_ERR}"
+                    printf '{"index":%s,"status":"se","time_ms":%s,"mem_kb":%s,"info":"spj compile failed: %s"}\n' \
+                        "${i}" "${TIME_MS}" "${MEM_KB}" "${SPJ_ERR}" \
+                        >> "${JUDGE_TMP}/case_results.jsonl"
+                else
+                    # 2) 题未挂 SPJ — admin 还没上传；判 WA 让 operator 看见
+                    FINAL_STATUS="wa"
+                    FAILED_CASE_INDEX="${i}"
+                    CASE_STATUS="wa"
+                    printf '{"index":%s,"status":"wa","time_ms":%s,"mem_kb":%s,"info":"no special judge configured"}\n' \
+                        "${i}" "${TIME_MS}" "${MEM_KB}" \
+                        >> "${JUDGE_TMP}/case_results.jsonl"
+                fi
+            else
+                # 3) 调 SPJ。 rc=0 AC, rc=1 WA, 其它 SE。
+                set +e
+                compare_special_with "${LITECODE_SPJ_BIN}" "${OUT_FILE}" "${EXPECTED_FILE}" "${cdir}/input.txt"
+                SPJ_RC=$?
+                set -e
+                case "${SPJ_RC}" in
+                    0)
+                        CASE_STATUS="ac"
+                        printf '{"index":%s,"status":"ac","time_ms":%s,"mem_kb":%s,"info":null}\n' \
+                            "${i}" "${TIME_MS}" "${MEM_KB}" \
+                            >> "${JUDGE_TMP}/case_results.jsonl"
+                        ;;
+                    1)
+                        FINAL_STATUS="wa"
+                        FAILED_CASE_INDEX="${i}"
+                        CASE_STATUS="wa"
+                        SPJ_INFO="$(spj_stdout_for_info 256)"
+                        if [ -z "${SPJ_INFO}" ]; then
+                            printf '{"index":%s,"status":"wa","time_ms":%s,"mem_kb":%s,"info":null}\n' \
+                                "${i}" "${TIME_MS}" "${MEM_KB}" \
+                                >> "${JUDGE_TMP}/case_results.jsonl"
+                        else
+                            printf '{"index":%s,"status":"wa","time_ms":%s,"mem_kb":%s,"info":"%s"}\n' \
+                                "${i}" "${TIME_MS}" "${MEM_KB}" "${SPJ_INFO}" \
+                                >> "${JUDGE_TMP}/case_results.jsonl"
+                        fi
+                        ;;
+                    *)
+                        # SPJ 自身崩了（非法退出码）。把 case 判 SE 让 operator 看得见，
+                        # 但 FINAL_STATUS 留给后续 case 覆盖（不污染整 submission 的根
+                        # 因 — SPJ 崩在中间意味着前面 AC 的点真的对了）。注意：当前实
+                        # 现里 FINAL_STATUS 一旦被改成非 ac 就固定（continue 的护栏），
+                        # 所以为了一致性这里也把 FINAL_STATUS='se'，FAILED_CASE_INDEX
+                        # 设为本 case；下一个 case 因为 FINAL_STATUS!='ac' 直接 skipped。
+                        FINAL_STATUS="se"
+                        FAILED_CASE_INDEX="${i}"
+                        ERROR_MESSAGE="special judge crashed (exit=${SPJ_RC})"
+                        SPJ_INFO="$(spj_stdout_for_info 256)"
+                        if [ -z "${SPJ_INFO}" ]; then
+                            printf '{"index":%s,"status":"se","time_ms":%s,"mem_kb":%s,"info":"spj exit=%s"}\n' \
+                                "${i}" "${TIME_MS}" "${MEM_KB}" "${SPJ_RC}" \
+                                >> "${JUDGE_TMP}/case_results.jsonl"
+                        else
+                            printf '{"index":%s,"status":"se","time_ms":%s,"mem_kb":%s,"info":"spj exit=%s: %s"}\n' \
+                                "${i}" "${TIME_MS}" "${MEM_KB}" "${SPJ_RC}" "${SPJ_INFO}" \
+                                >> "${JUDGE_TMP}/case_results.jsonl"
+                        fi
+                        ;;
+                esac
+            fi
             ;;
         *)
             FINAL_STATUS="se"

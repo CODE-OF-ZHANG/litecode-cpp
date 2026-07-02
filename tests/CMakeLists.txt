@@ -38,6 +38,7 @@ add_executable(test_tag_list          unit/test_tag_list.cpp)
 add_executable(test_admin_problem_crud unit/test_admin_problem_crud.cpp)
 add_executable(test_admin_bulk_import unit/test_admin_bulk_import.cpp)
 add_executable(test_docker_client    unit/test_docker_client.cpp)
+add_executable(test_special_judge    unit/test_special_judge.cpp)
 add_executable(test_warm_pool        unit/test_warm_pool.cpp)
 add_executable(test_judge_scheduler  unit/test_judge_scheduler.cpp)
 add_executable(test_submission       unit/test_submission.cpp)
@@ -187,6 +188,23 @@ target_link_libraries(test_tag PRIVATE
     OpenSSL::SSL
     OpenSSL::Crypto)
 target_include_directories(test_tag PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+
+# special_judge_repo.h (Phase 4 ☆ v1.2.18) — find_by_problem_id /
+# exists_for_problem / upsert / remove_by_problem_id on
+# `problem_special_judges`. The unit tests are pure C++ (validators +
+# constants + exception hierarchy + struct defaults); the integration
+# tests create throwaway problems via raw SQL (mirroring
+# test_problem_revision's RevisionTracker pattern). Same link set as
+# test_audit_log — header-only repo, no MySQL framework deps beyond the
+# driver + OpenSSL.
+target_link_libraries(test_special_judge PRIVATE
+    GTest::gtest_main
+    mysql::concpp
+    OpenSSL::SSL
+    OpenSSL::Crypto)
+target_include_directories(test_special_judge PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/db)
 
@@ -413,6 +431,7 @@ add_test(NAME tag_list           COMMAND test_tag_list)
 add_test(NAME admin_problem_crud COMMAND test_admin_problem_crud)
 add_test(NAME admin_bulk_import COMMAND test_admin_bulk_import)
 add_test(NAME docker_client      COMMAND test_docker_client)
+add_test(NAME special_judge      COMMAND test_special_judge)
 add_test(NAME warm_pool          COMMAND test_warm_pool)
 add_test(NAME judge_scheduler    COMMAND test_judge_scheduler)
 
@@ -572,6 +591,13 @@ target_include_directories(test_submission PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/db
     ${CMAKE_SOURCE_DIR}/src/judge)
+# Phase 4 ☆ v1.2.18: special_judge_repo.h transitively brought into
+# submission_routes.h pushes test_submission over the MSVC COFF section
+# limit (C1128); /bigobj is the documented workaround (same trick used
+# by test_admin_problem_crud / test_admin_bulk_import / main.cpp).
+if(MSVC)
+    target_compile_options(test_submission PRIVATE /bigobj)
+endif()
 add_test(NAME submission          COMMAND test_submission)
 
 # submission_routes.h (Phase 4 ★ follow-up) — SSE push on submission

@@ -108,6 +108,7 @@
 #include "../db/problem_repo.h"                 // problem_repo::find_by_id / ProblemRow
 #include "../db/submission_repo.h"              // submission_repo::* (SubmissionRow etc.)
 #include "../db/test_case_repo.h"               // test_case_repo::list_for_problem
+#include "../db/special_judge_repo.h"           // special_judge_repo::find_by_problem_id (Phase 4 ☆ SPJ)
 #include "../judge/judge_notifier.h"            // judge::JudgeNotifier (Phase 4 ★ SSE)
 #include "../judge/judge_scheduler.h"           // JudgeScheduler / JudgeTask
 #include "../logger.h"                          // LOG_INFO / LOG_WARN
@@ -608,6 +609,41 @@ inline void create_submission_handler(
                    {"problem_id",    std::to_string(*problem_id)},
                    {"type",          typeid(e).name()},
                    {"reason",        e.what()}});
+    }
+
+    // 6b) Special Judge 框架（Phase 4 ☆ v1.2.18）。从
+    //     problem_special_judges 表读取该题的 SPJ 源码 + 语言。
+    //     读失败或没挂 SPJ 都不视作致命错误：空 spj_source 让
+    //     judge.sh 把所有 judge_type=special 的 case 判 WA，符合
+    //     "admin 还没上传 SPJ，operator 在迭代" 的意图。
+    //
+    //     注意：和 test_cases 不同，SPJ 读取失败 LOG_WARN 而不是
+    //     LOG_ERROR — 用户代码仍然合法，operator 在仪表盘上一眼
+    //     看见 "no spj" 就行，避免了 SPJ 暂时不可用就把整个
+    //     POST 顶到 500。
+    try {
+        const auto spj = litecode::special_judge_repo::find_by_problem_id(
+            pool, *problem_id);
+        if (spj.has_value()) {
+            task.spj_source   = spj->source;
+            task.spj_language = spj->language;
+            LOG_INFO("submission_create: special judge attached",
+                     {{"submission_id", std::to_string(submission_id)},
+                      {"problem_id",    std::to_string(*problem_id)},
+                      {"source_bytes",  std::to_string(spj->source.size())},
+                      {"language",      spj->language}});
+        }
+    } catch (const std::exception& e) {
+        LOG_WARN("submission_create: special judge load failed",
+                 {{"submission_id", std::to_string(submission_id)},
+                  {"problem_id",    std::to_string(*problem_id)},
+                  {"type",          typeid(e).name()},
+                  {"reason",        e.what()}});
+        // Deliberately NOT a 500 — the submission row is valid; the
+        // judge.sh SPJ path will see an empty spj_source and fold
+        // special-type cases to WA. The operator will notice on the
+        // dashboard; future ticket-routing can escalate this to a
+        // 500 with a custom error_code if needed.
     }
 
     // 7) Enqueue. A null scheduler means "queue disabled" — we keep

@@ -205,6 +205,20 @@ struct JudgeTask {
     int                        memory_limit_mb = 256;    // from problems.memory_limit
     int                        compile_timeout_ms = 10'000;
     std::vector<TestCaseInput> test_cases;
+
+    // ─── Special Judge 框架 (Phase 4 ☆ v1.2.18) ───
+    //
+    // Loaded from the problem_special_judges table by the submission
+    // route when it builds the JudgeTask (see special_judge_repo.h).
+    // judge.sh treats an empty `spj_source` as "no SPJ attached",
+    // in which case every judge_type=special case folds to WA (the
+    // operator can iterate without SE flooding the dashboard).
+    //
+    // `spj_language` is reserved for future py/java/... — only
+    // "cpp" is honored by judge.sh today (the litecode-judge image
+    // is C++-only, see judge/Dockerfile).
+    std::string                spj_source;
+    std::string                spj_language;       // "cpp" | "" (empty == unset)
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -915,6 +929,20 @@ private:
         j["compile_timeout_ms"]  = task.compile_timeout_ms;
         j["run_hard_timeout_ms"] = cfg_.judge_hard_timeout_seconds * 1000;
         j["output_limit_bytes"]  = cfg_.output_limit_bytes;
+        // Special Judge (Phase 4 ☆). Empty spj_source ⇒ judge.sh's
+        // special-type cases fall back to "no SPJ ⇒ WA" (the operator
+        // can iterate without flooding 'se'). Empty spj_language is
+        // tolerated and treated identically to "no SPJ attached".
+        if (task.spj_source.empty()) {
+            j["special_judge_source"] = nullptr;
+        } else {
+            j["special_judge_source"] = task.spj_source;
+        }
+        if (task.spj_language.empty()) {
+            j["special_judge_language"] = nullptr;
+        } else {
+            j["special_judge_language"] = task.spj_language;
+        }
         j["test_cases"]          = nlohmann::json::array();
         for (const auto& tc : task.test_cases) {
             nlohmann::json e;

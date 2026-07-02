@@ -16,6 +16,16 @@ if [ -n "${LITECODE_JUDGE_LIB_COMPARE_LOADED:-}" ]; then
 fi
 LITECODE_JUDGE_LIB_COMPARE_LOADED=1
 
+# LITECODE_SPJ_BIN — exported by judge.sh when a problem has a
+# problem_special_judges row. compare_special() dispatches to the
+# compiled SPJ binary (see judge/lib/spj.sh) when this env var is
+# set to an executable. When unset OR the file is missing, we fall
+# back to "WA" so a problem with no SPJ attached (yet) still produces
+# a deterministic verdict for every judge_type=special case. judge.sh
+# sources lib/spj.sh lazily after setting this variable so the
+# compare_* family stays composable.
+LITECODE_SPJ_BIN="${LITECODE_SPJ_BIN:-}"
+
 # 完全相同（精度交给上游的 CRLF/BOM 归一化）
 compare_exact() {
     local a="$1" b="$2"
@@ -113,7 +123,37 @@ compare_float_eps() {
     ' "${b}"
 }
 
-# special judge — v1.3 占位（v1.2/Phase 4 MVP 永远返回不相等，驱动 SE）
+# special judge — Phase 4 ☆ Special Judge 框架（v1.2.18）
+#
+# Calls the SPJ binary (compiled from problem_special_judges.source
+# upstream by judge.sh) with three file paths: <input> <expected> <out>.
+# Returns 0 when the SPJ exits 0 (AC), 1 when non-zero (WA). Exit codes
+# 124 / 137 / other collapse to WA here; judge.sh separately decides
+# whether to surface SE based on whether the SPJ itself failed to
+# compile (compile failure ⇒ SE; SPJ runtime crash on a single case ⇒
+# also SE for that one case, but later cases continue — the SPJ's own
+# crashes are not "the user's fault").
+#
+# Contract:
+#   compare_special <out> <expected> <input>
+#   rc=0 ⇒ AC, rc=1 ⇒ WA, rc=2 ⇒ SE (no SPJ attached)
+#
+# Fall-back when LITECODE_SPJ_BIN is unset OR the file is not
+# executable: we return 1 (WA) so the submission lands in 'wa'
+# rather than 'se'. This matches the "judge admin has not yet
+# attached an SPJ" intent — the operator can iterate without a
+# system error stamp on every run. (Folding 'no SPJ' into 'SE'
+# would block the C++ scheduler / admin-dashboard from
+# distinguishing "broken problem" from "wrong answer").
 compare_special() {
+    local out="$1" expected="$2" input="$3"
+    if [ -n "${LITECODE_SPJ_BIN}" ] && [ -x "${LITECODE_SPJ_BIN}" ]; then
+        # Delegate to spj.sh — needs lib/spj.sh to be sourced by the
+        # caller (judge.sh does this in Section D before the test loop).
+        compare_special_with "${LITECODE_SPJ_BIN}" "${out}" "${expected}" "${input}"
+        return $?
+    fi
+    # No SPJ ⇒ WA. judge.sh separately writes an info message so the
+    # operator can see why every special case is failing.
     return 1
 }
