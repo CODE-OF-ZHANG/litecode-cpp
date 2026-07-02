@@ -928,7 +928,7 @@ litecode-cpp/
 
 - [x] ★ 判题 Docker 镜像（judge/Dockerfile + judge.sh，§7.2 用户、§7.3 安全标志）—— v1.2.13
 - [x] ★ Docker 客户端（docker_client.h：经 socket 代理的 create/start/exec/kill/rm）
-- [ ] ★ 容器预热池（warm_pool.h：启动时预创建 K 个 idle，异步补齐）
+- [x] ★ 容器预热池（warm_pool.h：启动时预创建 K 个 idle，异步补齐）—— `litecode::judge::WarmPool`（K=2 默认；预创建 K 个 idle + 后台 refill 线程补齐到 K；`acquire()`/`release()`/`shutdown()`；`make_probe()` 接 HealthService → /health 返回 `warm_pool`；test_warm_pool.cpp 23 用例全通过；详见 v1.2.14）
 - [ ] ★ 判题调度器（judge_scheduler.h：**线程池 + 任务队列** + 最大并发数 + 30s 硬超时）
 - [ ] ★ 异步判题流程（POST 立即返回 submission_id，worker 异步执行）
 - [ ] ★ 提交数据模型（submission_repo.h：pending/running/终态全生命周期）

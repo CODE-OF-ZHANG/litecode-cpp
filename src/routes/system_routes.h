@@ -277,7 +277,9 @@ inline HealthService::Probe make_queue_size_probe() {
     };
 }
 
-// Warm-pool size probe — Phase 4 will hand a live reader here.
+// Warm-pool size probe — placeholder for boot before the warm pool is
+// constructed (Phase 4 has a real WarmPool that overrides this via
+// `make_warm_pool_probe(WarmPool*)` below).
 inline HealthService::Probe make_warm_pool_probe() {
     return []() -> ProbeResult {
         ProbeResult r;
@@ -287,6 +289,22 @@ inline HealthService::Probe make_warm_pool_probe() {
         return r;
     };
 }
+
+// ── Phase 4 live wiring ────────────────────────────────────────────────────
+//
+// Callers (judge_scheduler.h, main.cpp) that own a `litecode::judge::WarmPool`
+// can wire it into /api/v1/health via:
+//
+//     #include "judge/warm_pool.h"
+//     health.register_probe("warm_pool",
+//                           litecode::judge::WarmPool::make_probe(&pool));
+//
+// We deliberately do NOT have `system_routes.h` include `warm_pool.h`
+// itself — that would force every translation unit that needs the
+// health endpoint to drag in the docker client (and the MySQL driver
+// transitively, since docker_client.h's CompileOptions is fine but
+// warm_pool.h also reaches into logger.h / system_routes.h itself).
+// `WarmPool::make_probe()` is the canonical entry point.
 
 // Docker daemon probe — Phase 4 will hand a live reader here. We
 // register a no-op healthy probe so the field stays "ok" until Phase 4

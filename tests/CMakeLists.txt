@@ -38,6 +38,7 @@ add_executable(test_tag_list          unit/test_tag_list.cpp)
 add_executable(test_admin_problem_crud unit/test_admin_problem_crud.cpp)
 add_executable(test_admin_bulk_import unit/test_admin_bulk_import.cpp)
 add_executable(test_docker_client    unit/test_docker_client.cpp)
+add_executable(test_warm_pool        unit/test_warm_pool.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -409,6 +410,7 @@ add_test(NAME tag_list           COMMAND test_tag_list)
 add_test(NAME admin_problem_crud COMMAND test_admin_problem_crud)
 add_test(NAME admin_bulk_import COMMAND test_admin_bulk_import)
 add_test(NAME docker_client      COMMAND test_docker_client)
+add_test(NAME warm_pool          COMMAND test_warm_pool)
 
 # admin_problem_routes.h (Phase 3 ★) — POST/PUT/DELETE
 # /api/v1/admin/problems endpoints (SPEC §5.2, A18/A19/A20/A27).
@@ -500,5 +502,22 @@ target_link_libraries(test_docker_client PRIVATE
     OpenSSL::Crypto
     mysql::concpp)
 target_include_directories(test_docker_client PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/judge)
+
+# warm_pool.h (Phase 4 ★) — judge container warm-up pool. Pulls in
+# docker_client.h (for CreateOptions + Client) + system_routes.h
+# (for HealthService::Probe), both header-only and inline. Same link
+# set as test_docker_client; the integration tests reuse the same
+# mock httplib server pattern so the binary is fully reproducible
+# without docker installed.
+target_link_libraries(test_warm_pool PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp)
+target_include_directories(test_warm_pool PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/judge)
