@@ -39,6 +39,7 @@ add_executable(test_admin_problem_crud unit/test_admin_problem_crud.cpp)
 add_executable(test_admin_bulk_import unit/test_admin_bulk_import.cpp)
 add_executable(test_docker_client    unit/test_docker_client.cpp)
 add_executable(test_warm_pool        unit/test_warm_pool.cpp)
+add_executable(test_judge_scheduler  unit/test_judge_scheduler.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -411,6 +412,7 @@ add_test(NAME admin_problem_crud COMMAND test_admin_problem_crud)
 add_test(NAME admin_bulk_import COMMAND test_admin_bulk_import)
 add_test(NAME docker_client      COMMAND test_docker_client)
 add_test(NAME warm_pool          COMMAND test_warm_pool)
+add_test(NAME judge_scheduler    COMMAND test_judge_scheduler)
 
 # admin_problem_routes.h (Phase 3 ★) — POST/PUT/DELETE
 # /api/v1/admin/problems endpoints (SPEC §5.2, A18/A19/A20/A27).
@@ -520,4 +522,27 @@ target_link_libraries(test_warm_pool PRIVATE
     mysql::concpp)
 target_include_directories(test_warm_pool PRIVATE
     ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/judge)
+
+# judge_scheduler.h (Phase 4 ★) — async judge pipeline: thread pool +
+# task queue + max-concurrent + 30s hard timeout + warm_pool
+# integration. The unit tests (status enums, validator, parse helper,
+# probe wiring) run without MySQL. The integration tests spin up a
+# mock httplib docker proxy + (when MySQL is reachable) a real
+# ConnectionPool, and exercise the full mark_running → docker
+# create → start → wait → logs → mark_finished path end-to-end.
+# Pulls in submission_repo + test_case_repo + problem_repo +
+# user_repo for the DB integration tests. Same link set as
+# test_warm_pool, plus the bcrypt dep (user_repo::create_user hashes
+# a password).
+target_link_libraries(test_judge_scheduler PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp)
+target_include_directories(test_judge_scheduler PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db
     ${CMAKE_SOURCE_DIR}/src/judge)

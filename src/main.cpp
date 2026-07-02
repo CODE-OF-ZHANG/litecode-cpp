@@ -6,6 +6,8 @@
 #include "auth/password_hash.h"
 #include "config.h"
 #include "judge/docker_client.h"    // Phase 4 ★ docker_client + make_docker_probe
+#include "judge/judge_scheduler.h"  // Phase 4 ★ scheduler + make_probe
+#include "judge/warm_pool.h"        // Phase 4 ★ warm_pool + make_probe
 #include "logger.h"
 #include "middleware/rate_limit.h"
 #include "routes/auth_routes.h"
@@ -186,6 +188,24 @@ int main() {
             "docker",
             litecode::docker::make_docker_probe(docker_client.get()));
 
+        // Phase 4 ★ judge scheduler probe — exercises the queue
+        // shape (queue_size / running / max_concurrent). We build a
+        // JudgeScheduler but do NOT call start() (no docker daemon
+        // in the smoke build), so the probe reports the queue is
+        // "not running". This is exactly the contract the production
+        // boot path needs; the unit / integration tests in
+        // tests/unit/test_judge_scheduler.cpp exercise the live path.
+        auto sched_cfg = litecode::judge::make_default_scheduler_config(
+            cfg.judge);
+        litecode::judge::JudgeScheduler scheduler(
+            docker_client.get(),
+            /*pool=*/nullptr,
+            /*db=*/nullptr,
+            std::move(sched_cfg));
+        health.register_probe(
+            "judge_queue",
+            litecode::judge::JudgeScheduler::make_probe(&scheduler));
+
         int status = 200;
         const nlohmann::json body = health.build_response(&status);
         std::cout << "health smoke: status=" << status
@@ -196,6 +216,15 @@ int main() {
         if (status != 503) {
             std::cerr << "[health] FAIL: expected 503 with null pool, got "
                       << status << std::endl;
+            return 1;
+        }
+        // Queue probe must publish max_concurrent even when not started
+        // (SPEC §16.1 wants the field present and parsable).
+        if (!body.contains("max_concurrent") ||
+            body["max_concurrent"].get<int>() !=
+                cfg.judge.max_concurrent_judges) {
+            std::cerr << "[health] FAIL: judge_queue probe missing "
+                      << "max_concurrent" << std::endl;
             return 1;
         }
         std::cout << "[health] PASS" << std::endl;
