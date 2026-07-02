@@ -87,6 +87,7 @@
 #pragma once
 
 #include <cctype>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -107,6 +108,7 @@
 #include "../db/problem_repo.h"                 // problem_repo::find_by_id / ProblemRow
 #include "../db/submission_repo.h"              // submission_repo::* (SubmissionRow etc.)
 #include "../db/test_case_repo.h"               // test_case_repo::list_for_problem
+#include "../judge/judge_notifier.h"            // judge::JudgeNotifier (Phase 4 ★ SSE)
 #include "../judge/judge_scheduler.h"           // JudgeScheduler / JudgeTask
 #include "../logger.h"                          // LOG_INFO / LOG_WARN
 #include "../middleware/auth_middleware.h"      // require_authentication / Claims
@@ -299,6 +301,89 @@ inline std::optional<int> extract_id_from_path(const httplib::Request& req) {
 inline int claims_user_id_int(const Claims& c) noexcept {
     try { return std::stoi(c.user_id); }
     catch (...) { return 0; }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  SSE helpers (Phase 4 ★)
+//
+//  The /api/v1/submissions/sse/:id endpoint uses chunked transfer
+//  encoding + the text/event-stream Content-Type. We assemble each
+//  SSE frame as a string ("event: <name>\ndata: <json>\n\n") and
+//  push it through httplib's set_chunked_content_provider().
+//
+//  extract_sse_id_from_path — strip the
+//  "/api/v1/submissions/sse/" prefix from req.path and return the
+//  trailing integer id. Returns std::nullopt on any shape failure
+//  (non-numeric / out-of-range / nested path / leading "sse"
+//  suffix). The route handler maps std::nullopt → 400.
+inline std::optional<int> extract_sse_id_from_path(const httplib::Request& req) {
+    static constexpr std::string_view kPrefix = "/api/v1/submissions/sse/";
+    const std::string& path = req.path;
+    if (path.size() <= kPrefix.size()) return std::nullopt;
+    if (path.compare(0, kPrefix.size(), kPrefix) != 0) return std::nullopt;
+    const std::string_view tail = std::string_view(path).substr(kPrefix.size());
+    if (tail.empty()) return std::nullopt;
+    if (tail.find('/') != std::string_view::npos) return std::nullopt;
+    std::size_t consumed = 0;
+    int value = 0;
+    try {
+        value = std::stoi(std::string(tail), &consumed);
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+    if (consumed != tail.size()) return std::nullopt;
+    if (value <= 0) return std::nullopt;
+    if (value > std::numeric_limits<int>::max()) return std::nullopt;
+    return value;
+}
+
+// sse_content_type — the canonical Content-Type for an SSE
+// response. RFC: "text/event-stream" with UTF-8 charset. (Some
+// clients (older EventSource polyfills) also accept
+// text/event-stream;charset=UTF-8 — the canonical form below is
+// what the spec uses.)
+inline constexpr const char* kSseContentType =
+    "text/event-stream; charset=utf-8";
+
+// sse_no_retry_interval — the default retry interval (ms) we
+// advertise in the trailing retry: field. SPEC §5.3 leaves the
+// client to decide; we set a conservative 3s so a flaky connection
+// doesn't get hammered.
+inline constexpr int kSseRetryIntervalMs = 3000;
+
+// format_sse_event — build one SSE frame. The frame contains an
+// event name, a JSON data payload, and the trailing blank line
+// that delimits events. We use nlohmann::json::dump() for the data
+// so the payload is exactly the same shape as the
+// serialize_submission_row() output (the client's
+// JSON.parse(event.data) is symmetric with the regular poll
+// endpoint).
+//
+// Frames we emit:
+//   - "result" — the submission row is terminal. data is the
+//                row's JSON (no `code` field; same as the list
+//                endpoint). The handler closes the connection
+//                immediately after.
+//   - "pending" — timeout fired before the worker finished.
+//                 data is {"submission_id": <id>}. The client is
+//                 expected to fall back to polling; the handler
+//                 closes the connection after this event so the
+//                 client doesn't hold a connection open
+//                 indefinitely.
+//
+// RFC: blank line is two LF bytes (0x0A 0x0A). The format below
+// uses C++ \n\n which cpp-httplib serializes verbatim.
+inline std::string format_sse_event(std::string_view event_name,
+                                    const nlohmann::json& data) {
+    std::string out;
+    out.reserve(event_name.size() + data.dump().size() + 32);
+    out.append("event: ");
+    out.append(event_name);
+    out.push_back('\n');
+    out.append("data: ");
+    out.append(data.dump());
+    out.append("\n\n");
+    return out;
 }
 
 } // namespace detail
@@ -864,6 +949,272 @@ inline void list_submissions_handler(
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+//  GET /api/v1/submissions/sse/:id   - Phase 4 ★  (SPEC §5.3, A25)
+//
+//  Server-Sent Events push for the judge result. The client opens
+//  a long-lived HTTP connection; the server emits ONE event when
+//  the submission reaches a terminal state, then closes the
+//  connection. Falls back to a single "pending" event after a
+//  timeout so the client can switch to polling.
+//
+//  Wire flow:
+//    1) require_authentication(...) — 401 envelope
+//    2) detail::extract_sse_id_from_path() — 400 on shape failure
+//    3) submission_repo::find_by_id() — 404 envelope if missing
+//    4) non-admin + not-own → 403 envelope
+//    5) Subscribe to the JudgeNotifier:
+//         - If row is already terminal, skip the wait — emit
+//           the result event directly.
+//         - Otherwise, register a callback and block on the
+//           notifier's condition variable for up to
+//           kSseWaitTimeoutMs.
+//    6) Emit the SSE frame(s) and close.
+//
+//  Authorization (SPEC §5.3): same rules as GET /:id — non-admin
+//  can only watch their own submissions; admin sees everything.
+//
+//  Connection lifetime:
+//    - We use chunked transfer encoding (the SSE spec requires
+//      the response to be "an open HTTP response"). The handler
+//      returns to cpp-httplib the moment the chunked content
+//      provider exits. The provider's `done` callback is what
+//      signals the response is complete; we never call it
+//      explicitly — the provider function returns false when
+//      we're done writing, and cpp-httplib wires up the close
+//      itself.
+//    - The first chunk we write is the "retry: <ms>" frame
+//      (an SSE comment that tells the client how long to wait
+//      before reconnecting). The second chunk is the result
+//      event. We then return false from the provider to close
+//      the connection cleanly.
+//
+//  Timeout policy:
+//    - kSseWaitTimeoutMs caps the wait at 25 seconds. The
+//      client is expected to reconnect on a dropped
+//      connection; we use the standard SSE retry interval
+//      (kSseRetryIntervalMs = 3s) so a reconnecting client
+//      will see the result as soon as the worker finishes.
+//    - When the timeout fires, we emit a "pending" event
+//      (data: { submission_id: <id> }) and close. The client
+//      falls back to GET /:id polling. This is gentler than
+//      silently closing — the client gets a clear signal
+//      that "we don't have a result yet, try the regular
+//      poll endpoint".
+//
+//  Why a separate route from GET /:id:
+//    - Different Content-Type (text/event-stream vs.
+//      application/json) and a different transport (chunked
+//      vs. fixed-length). The cpp-httplib handler signature
+//      doesn't change — both write to httplib::Response —
+//      but the SSE path uses set_chunked_content_provider()
+//      instead of set_content(), and we never let server.h's
+//      set_error_handler overwrite our stream (it only
+//      overwrites when res.body is empty, and a streaming
+//      response is "empty" in that sense — we mitigate by
+//      writing the response status header manually before
+//      we begin streaming).
+//
+//  ODR note: this header transitively pulls in
+//  judge_notifier.h, which is a separate header from the
+//  rest of submission_routes.h. main.cpp does not register
+//  this route (same ODR caveat documented at the top of
+//  the file). Tests link the header directly and exercise
+//  the SSE path via httplib::Client's stream API.
+// ────────────────────────────────────────────────────────────────────────────
+
+namespace detail {
+
+// emit_sse_error — write a single-event SSE response that carries
+// the standard error envelope. We use the unified error shape
+// (make_error_envelope) inside the SSE data field so the client
+// sees a JSON object — not a string — on the data line.
+//
+// We deliberately do NOT use send_error() here because the SSE
+// response must use text/event-stream. A normal send_error
+// writes application/json + a fixed body, which the EventSource
+// API will then refuse to parse as JSON.
+//
+// Returns the formatted event string; the caller writes it to
+// the chunked content provider.
+inline std::string format_sse_error_event(int http_status,
+                                          ErrorCode code,
+                                          std::string_view message) {
+    nlohmann::json env = make_error_envelope(code, message, nullptr);
+    // Tag the envelope with the HTTP status so a client that
+    // doesn't read X-Status off the wire can still map the
+    // event back to the right code.
+    env["status"] = http_status;
+
+    std::string out;
+    out.reserve(env.dump().size() + 32);
+    out.append("event: error\n");
+    out.append("data: ");
+    out.append(env.dump());
+    out.append("\n\n");
+    return out;
+}
+
+}  // namespace detail
+
+// kSseWaitTimeoutMs — single source of truth for the SSE wait
+// cap. Used by both the route handler and the test fixture.
+inline constexpr int kSseWaitTimeoutMs = 25'000;
+
+inline void sse_submission_handler(
+        httplib::Response&                  res,
+        const httplib::Request&             req,
+        litecode::ConnectionPool&           pool,
+        const litecode::JwtConfig&          jwt_cfg,
+        litecode::judge::JudgeNotifier*     notifier) {
+
+    // 1) Auth.
+    const Claims claims = require_authentication(req, jwt_cfg);
+
+    // 2) Path → id. 400 on any shape failure.
+    const auto id_opt = detail::extract_sse_id_from_path(req);
+    if (!id_opt.has_value()) {
+        // The SSE transport can't carry a 400 envelope the way
+        // a regular JSON response can; we emit one SSE "error"
+        // event with the standard envelope shape and close.
+        const std::string body = detail::format_sse_error_event(
+            400, litecode::ErrorCode::INVALID_INPUT,
+            "submission id must be a positive integer");
+        res.status = 400;
+        res.set_content(body, detail::kSseContentType);
+        return;
+    }
+    const int id = *id_opt;
+
+    // 3) Repo dispatch. SSE error → 404 event.
+    std::optional<litecode::SubmissionRow> row;
+    try {
+        row = litecode::submission_repo::find_by_id(pool, id);
+    } catch (const std::exception& e) {
+        LOG_ERROR("submission_sse: find_by_id threw",
+                  {{"id",   std::to_string(id)},
+                   {"type", typeid(e).name()},
+                   {"reason", e.what()}});
+        const std::string body = detail::format_sse_error_event(
+            500, litecode::ErrorCode::INTERNAL_ERROR,
+            std::string("internal error: ") + e.what());
+        res.status = 500;
+        res.set_content(body, detail::kSseContentType);
+        return;
+    }
+    if (!row.has_value()) {
+        const std::string body = detail::format_sse_error_event(
+            404, litecode::ErrorCode::NOT_FOUND,
+            "submission not found");
+        res.status = 404;
+        res.set_content(body, detail::kSseContentType);
+        return;
+    }
+
+    // 4) Non-admin + not-own → 403.
+    if (claims.role != "admin" &&
+        row->user_id != detail::claims_user_id_int(claims)) {
+        LOG_WARN("submission_sse: forbidden (not own submission)",
+                 {{"id",         std::to_string(id)},
+                  {"owner_id",   std::to_string(row->user_id)},
+                  {"caller_id",  claims.user_id},
+                  {"caller_role", claims.role}});
+        const std::string body = detail::format_sse_error_event(
+            403, litecode::ErrorCode::FORBIDDEN,
+            "you can only view your own submissions");
+        res.status = 403;
+        res.set_content(body, detail::kSseContentType);
+        return;
+    }
+
+    // 5) If a notifier is configured AND the row is still in
+    //    a transient state, wait for the result. We also handle
+    //    the "row is already terminal" fast path (the row may
+    //    have finished between the find_by_id and now).
+    //
+    //    When the notifier is null (dev box without a wired
+    //    JudgeScheduler), we still emit the current row's state
+    //    — the SSE endpoint gracefully degrades to "give me
+    //    the snapshot you have right now, even if it's not
+    //    terminal yet". This matches the "polling is the
+    //    fallback" contract.
+    std::optional<litecode::SubmissionRow> final_row = row;
+    bool timed_out = false;
+    if (notifier != nullptr && !litecode::is_terminal_status(row->status)) {
+        try {
+            // Re-fetch the row at the moment we subscribe so a
+            // terminal flip that happened between the SELECT and
+            // the notifier subscription is captured. The notifier
+            // might never fire for this submission if the worker
+            // already finished — the row's status will be
+            // terminal, and wait_for()'s fast path returns
+            // immediately with the snapshot.
+            auto pre = litecode::submission_repo::find_by_id(pool, id);
+            if (pre.has_value()) {
+                final_row = pre;
+            }
+            const auto published = notifier->wait_for(
+                id, final_row,
+                std::chrono::milliseconds(kSseWaitTimeoutMs));
+            if (published.has_value()) {
+                final_row = *published;
+            } else {
+                timed_out = true;
+            }
+        } catch (const std::exception& e) {
+            // wait_for is noexcept today, but we belt-and-suspender
+            // around it for forward compatibility.
+            LOG_WARN("submission_sse: notifier wait_for threw",
+                     {{"id",    std::to_string(id)},
+                      {"error", e.what()}});
+        }
+    }
+
+    // 6) Build the SSE payload. Two cases:
+    //    - terminal: emit "result" event with the row's JSON.
+    //    - timeout:  emit "pending" event with the id so the
+    //                client knows to fall back to polling.
+    std::string body;
+    if (timed_out) {
+        body = detail::format_sse_event("pending",
+            nlohmann::json{{"submission_id", id}});
+    } else {
+        body = detail::format_sse_event("result",
+            serialize_submission_row(*final_row, /*include_code=*/false));
+    }
+
+    LOG_INFO("submission_sse: served",
+             {{"id",     std::to_string(id)},
+              {"status", final_row ? std::string(final_row->status)
+                                   : std::string("?")},
+              {"event",  timed_out ? "pending" : "result"},
+              {"sse_subscribers_before",
+                            std::to_string(
+                                notifier ? notifier->subscriber_count_for(id)
+                                         : 0)}});
+
+    // 7) Write the response. We assemble a single "retry: NNN\n\n"
+    //    preamble + a single event frame, then ship the whole thing
+    //    as the response body via set_content(). This is the
+    //    "SSE-shaped, one-shot" response: an EventSource polyfill
+    //    on the client side reads the body as one chunk and
+    //    dispatches the events. We do NOT use
+    //    set_chunked_content_provider() because (a) cpp-httplib's
+    //    in-process client has well-known trouble parsing chunked
+    //    responses (the test fixture's std::move(client) -> false
+    //    pattern), and (b) our payload is bounded (one event frame)
+    //    so a fixed Content-Length is honest, not a lie. A future
+    //    commit that wants true long-lived streaming can switch
+    //    this to set_chunked_content_provider() and emit multiple
+    //    events from a loop.
+    static const std::string kRetryFrame =
+        std::string("retry: ") +
+        std::to_string(litecode::detail::kSseRetryIntervalMs) +
+        "\n\n";
+    const std::string full = kRetryFrame + body;
+    res.set_content(full, detail::kSseContentType);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 //  Route registration
 //
 //  Three handlers, three endpoints. The JudgeScheduler pointer is
@@ -904,7 +1255,8 @@ inline HttpServer& register_submission_routes(
         RateLimiter&                      limiter,
         const RateLimitConfig&            rate_cfg,
         const JwtConfig&                  jwt_cfg,
-        judge::JudgeScheduler*            scheduler) {
+        judge::JudgeScheduler*            scheduler,
+        judge::JudgeNotifier*             notifier = nullptr) {
 
     // POST /api/v1/submissions — async enqueue (SPEC §5.3, A6/A25).
     server.post("/api/v1/submissions",
@@ -945,6 +1297,38 @@ inline HttpServer& register_submission_routes(
                 if (res.body.empty()) {
                     send_error(res, 500, ErrorCode::INTERNAL_ERROR,
                                std::string("internal error: ") + e.what());
+                } else {
+                    throw;
+                }
+            }
+        });
+
+    // GET /api/v1/submissions/sse/:id — Phase 4 ★ SSE push
+    // (SPEC §5.3, A25). Registered AFTER the generic
+    // /api/v1/submissions/([^/]+) pattern. cpp-httplib tries
+    // patterns in registration order, but the SSE pattern has
+    // TWO segments after /submissions/ and the generic one has
+    // ONE — they don't overlap, so order doesn't actually
+    // matter. We register SSE AFTER for code-readability (a
+    // future "sse" / "events" / "stream" sibling endpoint
+    // would also be SSE-shaped and live next to it).
+    server.get(R"(/api/v1/submissions/sse/([^/]+))",
+        [&pool, &jwt_cfg, notifier]
+        (const httplib::Request& req, httplib::Response& res) {
+            try {
+                sse_submission_handler(res, req, pool, jwt_cfg, notifier);
+            } catch (const ApiException&) {
+                throw;
+            } catch (const std::exception& e) {
+                LOG_ERROR("submission_sse: handler threw",
+                          {{"type",   typeid(e).name()},
+                           {"reason", e.what()}});
+                if (res.body.empty()) {
+                    const std::string body = detail::format_sse_error_event(
+                        500, ErrorCode::INTERNAL_ERROR,
+                        std::string("internal error: ") + e.what());
+                    res.status = 500;
+                    res.set_content(body, detail::kSseContentType);
                 } else {
                     throw;
                 }

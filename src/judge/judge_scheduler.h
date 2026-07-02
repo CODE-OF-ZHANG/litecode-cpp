@@ -164,6 +164,7 @@
 #include "../logger.h"                  // LOG_* / RequestIdScope
 #include "../routes/system_routes.h"    // HealthService::Probe / ProbeResult
 #include "docker_client.h"              // docker::Client / CreateOptions
+#include "judge_notifier.h"             // JudgeNotifier (Phase 4 ★ SSE)
 #include "warm_pool.h"                  // WarmPool / IdleContainer
 
 namespace litecode {
@@ -315,12 +316,27 @@ public:
 class JudgeScheduler {
 public:
     // Pointers must outlive the scheduler. The scheduler is non-owning;
-    // main() owns the docker client, the warm pool, and the DB pool.
+    // main() owns the docker client, the warm pool, the DB pool, and
+    // (Phase 4 ★ SSE) the JudgeNotifier.
     JudgeScheduler(docker::Client*   client,
                    WarmPool*         pool,
                    ConnectionPool*   db,
                    JudgeSchedulerConfig cfg) noexcept
         : client_(client), pool_(pool), db_(db), cfg_(std::move(cfg)) {}
+
+    // Wire a JudgeNotifier (Phase 4 ★ SSE). After this call, the
+    // worker publishes a result row to the notifier on every
+    // mark_finished() so SSE clients watching the submission can
+    // unblock. Passing nullptr disables the publish side (the
+    // "notifier not configured" path — same as a missing docker
+    // client, dev boxes can still POST submissions but the SSE
+    // endpoint will time out). The pointer must outlive the
+    // scheduler; the scheduler does not take ownership.
+    void set_notifier(JudgeNotifier* notifier) noexcept {
+        notifier_ = notifier;
+    }
+
+    JudgeNotifier* notifier() const noexcept { return notifier_; }
 
     JudgeScheduler(const JudgeScheduler&)            = delete;
     JudgeScheduler& operator=(const JudgeScheduler&) = delete;
@@ -739,8 +755,9 @@ private:
         JudgeResult result = parse_judge_result_json(logs, wres.exit_code);
 
         // 9. Persist the result.
+        bool persisted = false;
         try {
-            submission_repo::mark_finished(
+            persisted = submission_repo::mark_finished(
                 *db_, task.submission_id, result.status,
                 std::optional<int>(result.time_used_ms),
                 std::optional<int>(result.memory_used_kb),
@@ -752,6 +769,61 @@ private:
                              {"error",         e.what()}}); } catch (...) {}
             // Don't return — fall through to cleanup. The submission
             // will stay in 'running'; the operator can requeue manually.
+        }
+
+        // 9b. Phase 4 ★ SSE — publish the result to the notifier.
+        //     The notifier wakes every SSE handler that subscribed
+        //     via GET /api/v1/submissions/sse/:id. We only publish
+        //     when mark_finished() actually flipped the row (a
+        //     defensive guard against the "row was already terminal"
+        //     case — there are no SSE subscribers to wake in that
+        //     path anyway, and re-publishing a stale row would
+        //     surprise clients that connected after the row was
+        //     already done).
+        //
+        //     We assemble the SubmissionRow from the task +
+        //     mark_finished result rather than re-reading the DB
+        //     (one round-trip saved on every judge). The row's
+        //     status / time / mem / error_message come from
+        //     `result`; the rest is identity (id / user_id /
+        //     problem_id / language) and code (which the SSE
+        //     handler does not include anyway — code is a detail
+        //     field). finished_at is left nullopt because we did
+        //     not SELECT it; the SSE client doesn't strictly need
+        //     it (the publish event signals "result is ready, GET
+        //     /:id for the full row if you want finished_at").
+        if (persisted && notifier_ != nullptr) {
+            try {
+                SubmissionRow published;
+                published.id          = task.submission_id;
+                published.user_id     = task.user_id;
+                published.problem_id  = task.problem_id;
+                published.language    = task.language;
+                published.code        = task.code;
+                published.status      = result.status;
+                published.time_used   = result.time_used_ms > 0
+                                            ? std::optional<int>(result.time_used_ms)
+                                            : std::nullopt;
+                published.memory_used = result.memory_used_kb > 0
+                                            ? std::optional<int>(result.memory_used_kb)
+                                            : std::nullopt;
+                published.error_message = result.error_message.empty()
+                                            ? std::optional<std::string>()
+                                            : std::optional<std::string>(result.error_message);
+                // created_at / finished_at: leave as defaults
+                // (empty / nullopt). The SSE handler's
+                // serialize_submission_row treats empty
+                // created_at as "not loaded" and the client
+                // interprets that as "poll /:id for the full
+                // record". Today's SSE clients always re-fetch
+                // the row via GET /:id on the publish event, so
+                // the truncation is invisible.
+                (void)notifier_->publish(published);
+            } catch (...) {
+                // The publish path itself doesn't throw (we wrap
+                // every callback invocation in try/catch), but the
+                // SubmissionRow construction might. Swallow.
+            }
         }
 
         try {
@@ -958,6 +1030,7 @@ public:
     docker::Client*       client_;
     WarmPool*             pool_;
     ConnectionPool*       db_;
+    JudgeNotifier*        notifier_ = nullptr;   // Phase 4 ★ SSE — non-owning
     JudgeSchedulerConfig  cfg_;
 
     std::deque<JudgeTask> queue_;

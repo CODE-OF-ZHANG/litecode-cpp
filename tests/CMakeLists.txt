@@ -41,6 +41,7 @@ add_executable(test_docker_client    unit/test_docker_client.cpp)
 add_executable(test_warm_pool        unit/test_warm_pool.cpp)
 add_executable(test_judge_scheduler  unit/test_judge_scheduler.cpp)
 add_executable(test_submission       unit/test_submission.cpp)
+add_executable(test_submission_sse   unit/test_submission_sse.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -572,3 +573,24 @@ target_include_directories(test_submission PRIVATE
     ${CMAKE_SOURCE_DIR}/src/db
     ${CMAKE_SOURCE_DIR}/src/judge)
 add_test(NAME submission          COMMAND test_submission)
+
+# submission_routes.h (Phase 4 ★ follow-up) — SSE push on submission
+# results: GET /api/v1/submissions/sse/:id. The new test binary
+# covers the SSE handler + the JudgeNotifier pub/sub channel. It
+# uses the same stack as test_submission (full HttpServer +
+# ConnectionPool + RateLimiter + JWT signing + JudgeScheduler +
+# JudgeNotifier) so the link set is identical. The new header
+# judge_notifier.h is header-only + inline (no extra deps).
+target_link_libraries(test_submission_sse PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    jwt-cpp::jwt-cpp
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp)
+target_include_directories(test_submission_sse PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db
+    ${CMAKE_SOURCE_DIR}/src/judge)
+add_test(NAME submission_sse      COMMAND test_submission_sse)
