@@ -40,6 +40,7 @@ add_executable(test_admin_bulk_import unit/test_admin_bulk_import.cpp)
 add_executable(test_docker_client    unit/test_docker_client.cpp)
 add_executable(test_warm_pool        unit/test_warm_pool.cpp)
 add_executable(test_judge_scheduler  unit/test_judge_scheduler.cpp)
+add_executable(test_submission       unit/test_submission.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -546,3 +547,28 @@ target_include_directories(test_judge_scheduler PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/db
     ${CMAKE_SOURCE_DIR}/src/judge)
+
+# submission_routes.h (Phase 4 ★) — POST /api/v1/submissions (async),
+# GET /api/v1/submissions/:id, GET /api/v1/submissions (history
+# list). End-to-end tests spin up HttpServer + ConnectionPool +
+# RateLimiter + JWT signing + a JudgeScheduler wired to a MockDockerProxy
+# (so the full async pipeline runs without a docker daemon — workers
+# fail-fast to SE for the "queue disabled" cases, and produce AC via
+# the mock proxy for the round-trip case). The pure-unit tests
+# (validators + serialize_submission_row + extract_id_from_path +
+# parse_status_param) run without MySQL. Same link set as
+# test_judge_scheduler, plus jwt-cpp (the auth path uses
+# require_authentication).
+target_link_libraries(test_submission PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    jwt-cpp::jwt-cpp
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp)
+target_include_directories(test_submission PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db
+    ${CMAKE_SOURCE_DIR}/src/judge)
+add_test(NAME submission          COMMAND test_submission)

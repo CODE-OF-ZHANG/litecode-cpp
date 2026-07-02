@@ -203,6 +203,7 @@ struct SubmissionRow {
 struct SubmissionListFilter {
     std::optional<int> user_id;
     std::optional<int> problem_id;
+    std::optional<std::string> status;            // one of kStatus* values
     bool               include_unfinished = true;
     int                limit              = 20;    // 1..100
     int                offset             = 0;     // >= 0
@@ -462,28 +463,43 @@ inline int count(ConnectionPool& pool, const SubmissionListFilter& filter) {
     std::string sql = "SELECT COUNT(*) FROM submissions WHERE 1 = 1";
     if (f.user_id.has_value())    sql += " AND user_id = ?";
     if (f.problem_id.has_value()) sql += " AND problem_id = ?";
+    if (f.status.has_value())     sql += " AND status = ?";
     if (!f.include_unfinished) {
         sql += " AND status NOT IN ('pending','running')";
     }
 
     auto conn = pool.acquire();
     try {
-        // Dispatch on (user_id × problem_id) shape to keep the bind()
-        // argument count exactly right — mysqlx requires positional
-        // binding to match the placeholder count.
-        if (f.user_id.has_value() && f.problem_id.has_value()) {
-            const auto v = conn.fetch_scalar<std::int64_t>(
-                sql, *f.user_id, *f.problem_id);
-            return v.value_or(0);
-        } else if (f.user_id.has_value()) {
-            const auto v = conn.fetch_scalar<std::int64_t>(sql, *f.user_id);
-            return v.value_or(0);
-        } else if (f.problem_id.has_value()) {
-            const auto v = conn.fetch_scalar<std::int64_t>(sql, *f.problem_id);
-            return v.value_or(0);
+        // Dispatch on the (user_id × problem_id × status) shape to
+        // keep the bind() argument count exactly right — mysqlx
+        // requires positional binding to match the placeholder count.
+        const bool has_u = f.user_id.has_value();
+        const bool has_p = f.problem_id.has_value();
+        const bool has_s = f.status.has_value();
+        if (has_u && has_p && has_s) {
+            return static_cast<int>(conn.fetch_scalar<std::int64_t>(
+                sql, *f.user_id, *f.problem_id, *f.status).value_or(0));
+        } else if (has_u && has_p) {
+            return static_cast<int>(conn.fetch_scalar<std::int64_t>(
+                sql, *f.user_id, *f.problem_id).value_or(0));
+        } else if (has_u && has_s) {
+            return static_cast<int>(conn.fetch_scalar<std::int64_t>(
+                sql, *f.user_id, *f.status).value_or(0));
+        } else if (has_p && has_s) {
+            return static_cast<int>(conn.fetch_scalar<std::int64_t>(
+                sql, *f.problem_id, *f.status).value_or(0));
+        } else if (has_u) {
+            return static_cast<int>(conn.fetch_scalar<std::int64_t>(
+                sql, *f.user_id).value_or(0));
+        } else if (has_p) {
+            return static_cast<int>(conn.fetch_scalar<std::int64_t>(
+                sql, *f.problem_id).value_or(0));
+        } else if (has_s) {
+            return static_cast<int>(conn.fetch_scalar<std::int64_t>(
+                sql, *f.status).value_or(0));
         } else {
-            const auto v = conn.fetch_scalar<std::int64_t>(sql);
-            return v.value_or(0);
+            return static_cast<int>(conn.fetch_scalar<std::int64_t>(
+                sql).value_or(0));
         }
     } catch (const mysqlx::Error& e) {
         throw SubmissionRepoError(
@@ -517,6 +533,7 @@ inline SubmissionListResult list(ConnectionPool& pool,
                       " FROM submissions WHERE 1 = 1";
     if (f.user_id.has_value())    sql += " AND user_id = ?";
     if (f.problem_id.has_value()) sql += " AND problem_id = ?";
+    if (f.status.has_value())     sql += " AND status = ?";
     if (!f.include_unfinished) {
         sql += " AND status NOT IN ('pending','running')";
     }
@@ -524,14 +541,28 @@ inline SubmissionListResult list(ConnectionPool& pool,
 
     auto conn = pool.acquire();
     try {
+        const bool has_u = f.user_id.has_value();
+        const bool has_p = f.problem_id.has_value();
+        const bool has_s = f.status.has_value();
         mysqlx::SqlResult rs = ([&]() {
-            if (f.user_id.has_value() && f.problem_id.has_value()) {
+            if (has_u && has_p && has_s) {
+                return conn.execute(sql, *f.user_id, *f.problem_id,
+                                    *f.status, f.limit, f.offset);
+            } else if (has_u && has_p) {
                 return conn.execute(sql, *f.user_id, *f.problem_id,
                                     f.limit, f.offset);
-            } else if (f.user_id.has_value()) {
+            } else if (has_u && has_s) {
+                return conn.execute(sql, *f.user_id, *f.status,
+                                    f.limit, f.offset);
+            } else if (has_p && has_s) {
+                return conn.execute(sql, *f.problem_id, *f.status,
+                                    f.limit, f.offset);
+            } else if (has_u) {
                 return conn.execute(sql, *f.user_id, f.limit, f.offset);
-            } else if (f.problem_id.has_value()) {
+            } else if (has_p) {
                 return conn.execute(sql, *f.problem_id, f.limit, f.offset);
+            } else if (has_s) {
+                return conn.execute(sql, *f.status, f.limit, f.offset);
             } else {
                 return conn.execute(sql, f.limit, f.offset);
             }
