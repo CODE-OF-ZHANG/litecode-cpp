@@ -37,6 +37,7 @@ add_executable(test_problem_detail    unit/test_problem_detail.cpp)
 add_executable(test_tag_list          unit/test_tag_list.cpp)
 add_executable(test_admin_problem_crud unit/test_admin_problem_crud.cpp)
 add_executable(test_admin_bulk_import unit/test_admin_bulk_import.cpp)
+add_executable(test_docker_client    unit/test_docker_client.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -407,6 +408,7 @@ add_test(NAME problem_detail     COMMAND test_problem_detail)
 add_test(NAME tag_list           COMMAND test_tag_list)
 add_test(NAME admin_problem_crud COMMAND test_admin_problem_crud)
 add_test(NAME admin_bulk_import COMMAND test_admin_bulk_import)
+add_test(NAME docker_client      COMMAND test_docker_client)
 
 # admin_problem_routes.h (Phase 3 ★) — POST/PUT/DELETE
 # /api/v1/admin/problems endpoints (SPEC §5.2, A18/A19/A20/A27).
@@ -479,3 +481,24 @@ target_include_directories(test_problem_revision PRIVATE
 if(MSVC)
     target_compile_options(test_admin_bulk_import PRIVATE /bigobj)
 endif()
+
+# docker_client.h (Phase 4 ★) — thin HTTP wrapper around the Docker
+# Engine API (talked via tecnativa socket proxy). The unit tests
+# cover URL parsing, JSON schema, exception hierarchy, and validators
+# without any daemon. The integration tests spin up a mock httplib
+# server in-process to simulate the proxy, so the binary is fully
+# reproducible without docker installed. Pulls in system_routes.h for
+# HealthService::Probe wiring + config.h for JudgeConfig. system_routes.h
+# transitively includes connection_pool.h (the HealthService make_db_probe
+# factory takes a ConnectionPool*), so we link mysql::concpp for the
+# header path — but no actual SQL is opened.
+target_link_libraries(test_docker_client PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp)
+target_include_directories(test_docker_client PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/judge)

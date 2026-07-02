@@ -5,6 +5,7 @@
 
 #include "auth/password_hash.h"
 #include "config.h"
+#include "judge/docker_client.h"    // Phase 4 ★ docker_client + make_docker_probe
 #include "logger.h"
 #include "middleware/rate_limit.h"
 #include "routes/auth_routes.h"
@@ -162,17 +163,28 @@ int main() {
     // Verify OpenSSL version
     std::cout << "OpenSSL version: " << OpenSSL_version_num() << std::endl;
 
-    // ── /api/v1/health smoke (Phase 1 *) ──────────────────────────────────
+    // ── /api/v1/health smoke (Phase 1 * / Phase 4 ★) ──────────────────────
     // Build a HealthService the way main() will at boot, run it, and
     // print the payload. This catches linker breakage + shape regressions
     // on every smoke build even though we don't bind a real port here.
     {
+        const auto& cfg = litecode::config();
         litecode::HealthService health;
         health.register_probe("db",         litecode::make_db_probe(nullptr));
         health.register_probe("uptime",     litecode::make_uptime_probe());
         health.register_probe("queue_size", litecode::make_queue_size_probe());
         health.register_probe("warm_pool",  litecode::make_warm_pool_probe());
-        health.register_probe("docker",     litecode::make_docker_probe_placeholder());
+
+        // Phase 4 ★ docker probe — wire a live docker::Client from the
+        // judge config so /api/v1/health reflects the socket proxy
+        // (SPEC A31 / §16.1). Empty DOCKER_SOCKET_URL keeps the probe
+        // "down" without throwing, so dev boxes without docker still
+        // boot.
+        auto docker_client =
+            litecode::docker::make_client_from_config(cfg.judge);
+        health.register_probe(
+            "docker",
+            litecode::docker::make_docker_probe(docker_client.get()));
 
         int status = 200;
         const nlohmann::json body = health.build_response(&status);
