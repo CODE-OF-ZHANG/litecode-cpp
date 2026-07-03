@@ -609,6 +609,131 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
 }
 .lc-form-error:empty { display: none; }
 
+/* =====================================================================
+   9b. Password strength meter (Phase 5 ★ 注册页面 密码强度提示)
+   ---------------------------------------------------------------------
+   SPEC §6.3 says the registration page must surface password strength
+   guidance, not just a binary valid/invalid check. We render:
+
+     1) A 4-segment track (one segment per score point) that fills
+        from left to right as the score climbs.
+     2) A text label below the track (请输入密码 / 弱 / 中 / 良 / 强).
+     3) A rule checklist with ✓/○ marks for each of the four required
+        rules (length, letter, digit, confirm-match).
+
+   The track + each filled segment pick up a color from
+   --lc-color-{danger|warning|info|success} based on the strength
+   modifier class on the container (.lc-pw-strength--{weak|fair|good|
+   strong}). The `--empty` modifier keeps the whole row neutral until
+   the user types anything. The bar segments are flex children that
+   grow to fill equal slices of the track; only the lit ones get the
+   `--on` class so the segment-color CSS variable cascades only when
+   the segment is meant to show.
+
+   The confirm-password hint (.lc-pw-confirm-hint) reuses the same
+   ok/bad color vocabulary but stays a single inline span — no need
+   for a full meter on the second field.
+   ===================================================================== */
+
+.lc-pw-strength {
+    margin-top: var(--lc-space-2);
+    display: flex;
+    flex-direction: column;
+    gap: var(--lc-space-2);
+}
+
+.lc-pw-strength-track {
+    display: flex;
+    gap: 4px;
+    width: 100%;
+    height: 6px;
+}
+
+.lc-pw-strength-bar-fill {
+    flex: 1 1 0;
+    background: var(--lc-color-border);
+    border-radius: 3px;
+    transition: background var(--lc-transition-fast);
+}
+
+/* Default unlit state — explicit so a segment never picks up a
+   stale --on from a prior score without the parent class change. */
+.lc-pw-strength-bar-fill--on { background: var(--lc-pw-color, var(--lc-color-text-muted)); }
+
+.lc-pw-strength--empty .lc-pw-strength-bar-fill--on { background: var(--lc-color-border); }
+.lc-pw-strength--weak   { --lc-pw-color: var(--lc-color-danger); }
+.lc-pw-strength--fair   { --lc-pw-color: var(--lc-color-warning); }
+.lc-pw-strength--good   { --lc-pw-color: var(--lc-color-info); }
+.lc-pw-strength--strong { --lc-pw-color: var(--lc-color-success); }
+
+.lc-pw-strength-label {
+    font-size: 12px;
+    color: var(--lc-color-text-muted);
+    transition: color var(--lc-transition-fast);
+}
+.lc-pw-strength--weak   .lc-pw-strength-label { color: var(--lc-color-danger); }
+.lc-pw-strength--fair   .lc-pw-strength-label { color: var(--lc-color-warning); }
+.lc-pw-strength--good   .lc-pw-strength-label { color: var(--lc-color-info); }
+.lc-pw-strength--strong .lc-pw-strength-label { color: var(--lc-color-success); font-weight: 500; }
+
+.lc-pw-rules {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: var(--lc-space-4);
+    row-gap: 4px;
+}
+
+.lc-pw-rule {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--lc-space-2);
+    font-size: 12px;
+    color: var(--lc-color-text-muted);
+    transition: color var(--lc-transition-fast);
+}
+
+.lc-pw-rule-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    background: var(--lc-color-surface-2);
+    color: var(--lc-color-text-muted);
+    transition: background var(--lc-transition-fast),
+                color var(--lc-transition-fast);
+}
+
+.lc-pw-rule--ok { color: var(--lc-color-success); }
+.lc-pw-rule--ok .lc-pw-rule-mark {
+    background: var(--lc-color-success);
+    color: #ffffff;
+}
+
+.lc-pw-rule--bad { color: var(--lc-color-text-muted); }
+
+/* Confirm-password hint — single inline span below password2.
+   States: empty (neutral), ok (green ✓), bad (red ✗). */
+.lc-pw-confirm-hint {
+    display: inline-block;
+    font-size: 12px;
+    color: var(--lc-color-text-muted);
+    transition: color var(--lc-transition-fast);
+}
+.lc-pw-confirm-hint--ok  { color: var(--lc-color-success); }
+.lc-pw-confirm-hint--bad { color: var(--lc-color-danger); }
+
+@media (max-width: 480px) {
+    .lc-pw-rules { grid-template-columns: 1fr; }
+}
+
 /* Badge / pill */
 .lc-pill {
     display: inline-flex;
