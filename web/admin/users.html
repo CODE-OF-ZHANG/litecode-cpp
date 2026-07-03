@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme-chosen>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!--
+      Phase 5 ★ CSP/SRI / SPEC §6.3 + A32
+      Canonical CSP pinned in `web/js/csp.js`. Admin pages don't need
+      any extra origin beyond 'self' + cdn.jsdelivr.net.
+    -->
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
+
+    <title>LiteCode · 用户管理</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div data-nav></div>
+
+    <main class="lc-container">
+        <header class="lc-stack" style="margin-bottom: 24px;">
+            <h1>用户管理（占位）</h1>
+            <p class="lc-form-help">
+                Phase 5 ★ 管理后台 - 用户管理页面将在后续 commit 落地；
+                本占位页只承载 CSP + SRI + 框架接入。
+            </p>
+        </header>
+    </main>
+
+    <!-- Load order is mandatory: csp.js → api.js → app.js. -->
+    <script src="/js/csp.js" defer></script>
+    <script src="/js/api.js" defer></script>
+    <script src="/js/app.js" defer></script>
+
+    <script>
+        litecode.boot.shell({ title: 'LiteCode · 用户管理', requireAdmin: true });
+    </script>
+</body>
+</html>

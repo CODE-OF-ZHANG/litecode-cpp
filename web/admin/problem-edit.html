@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme-chosen>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!--
+      Phase 5 ★ CSP/SRI / SPEC §6.3 + A32
+      Canonical CSP pinned in `web/js/csp.js`. Admin pages don't need
+      any extra origin beyond 'self' + cdn.jsdelivr.net (lazy-markdown
+      for problem-description previews on the edit form).
+    -->
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
+
+    <title>LiteCode · 编辑题目</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div data-nav></div>
+
+    <main class="lc-container">
+        <header class="lc-stack" style="margin-bottom: 24px;">
+            <h1>编辑题目（占位）</h1>
+            <p class="lc-form-help">
+                Phase 5 ★ 管理后台 - 题目编辑页面（新建/编辑表单）将在
+                后续 commit 落地；本占位页只承载 CSP + SRI + 框架接入。
+            </p>
+        </header>
+    </main>
+
+    <!-- Load order is mandatory: csp.js → markdown.js → api.js → app.js. -->
+    <script src="/js/csp.js" defer></script>
+    <script src="/js/markdown.js" defer></script>
+    <script src="/js/api.js" defer></script>
+    <script src="/js/app.js" defer></script>
+
+    <script>
+        // ★ Markdown XSS 净化: the editor's live-preview pane
+        // renders admin-typed Markdown through the same sanitizer
+        // pipeline that problem.html uses for end-user rendering.
+        // Pre-warm so the first keystroke's preview isn't blocked
+        // on a CDN round-trip.
+        litecode.markdown.prewarm();
+        litecode.boot.shell({ title: 'LiteCode · 编辑题目', requireAdmin: true });
+    </script>
+</body>
+</html>

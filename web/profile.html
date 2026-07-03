@@ -4,12 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy"
-          content="default-src 'self';
-                   script-src 'self' https://cdn.jsdelivr.net;
-                   style-src  'self' 'unsafe-inline';
-                   img-src    'self' data:;
-                   connect-src 'self';
-                   frame-ancestors 'none';">
+          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
     <title>LiteCode · 个人主页</title>
     <link rel="stylesheet" href="/css/style.css">
 </head>
@@ -67,10 +62,21 @@
         </section>
     </main>
 
+    <script src="/js/csp.js" defer></script>
+    <script src="/js/markdown.js" defer></script>
     <script src="/js/api.js" defer></script>
     <script src="/js/app.js" defer></script>
 
     <script>
+        // ★ Markdown XSS 净化: profile.html doesn't currently render
+        // any user-supplied Markdown, but a future "user bio" field
+        // (Phase 6) and the admin "view-as-user" preview will.
+        // Pre-warm the sanitizer here so the day the bio field lands
+        // we don't have to add the script tag + prewarm call to two
+        // pages — it's already wired and the SRI hashes are
+        // already pinned.
+        litecode.markdown.prewarm();
+
         window.addEventListener('DOMContentLoaded', function () {
             litecode.boot.shell({ title: 'LiteCode · 个人主页' });
 

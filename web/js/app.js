@@ -7,9 +7,8 @@
 //   - Toast / inline-notification surface wired to `litecode:api-error`
 //   - Dark-mode bootstrap (CSS variable theme; respects user override)
 //   - `litecode.guard.{requireAuth,requireAdmin,requireGuest}` redirect
-//   - Lazy Markdown sanitizer pipeline (DOMPurify + marked) for
-//     problem descriptions — keeps the editor and other pages free of
-//     a 100 KB third-party bundle until it's actually needed.
+//   - Re-exports `litecode.markdown` (owned by markdown.js — see
+//     that file for the SRI-pinned DOMPurify + marked pipeline)
 //
 // All pages should include api.js FIRST and app.js AFTER, then call
 // either:
@@ -494,95 +493,30 @@
     // ────────────────────────────────────────────────────────────────────
     //  Markdown sanitizer — DOMPurify + marked, lazy-loaded on first use.
     //
-    //  Phase 5 ★ 进度: problem.html / profile.html will need this.
-    //  The framework pre-warms it when the page is known to render
-    //  Markdown: `litecode.markdown.prewarm()` from the boot block.
+    //  The sanitizer itself lives in `markdown.js` (single source of
+    //  truth for the XSS allowlist and the SRI-pinned CDN loader). This
+    //  module is a thin re-export so pages that depend on the legacy
+    //  `litecode.markdown` API keep working without churn.
     //
-    //  Third-party CDN plan (SPEC §6.3 requires SRI):
-    //    marked:    https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js
-    //    dompurify: https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js
-    //  We ship the `<script>` tags + integrity hashes via
-    //  litecode.markdown.load() so each page can fetch on demand.
+    //  Load order: csp.js → markdown.js → app.js. csp.js owns the
+    //  canonical page CSP value and the SRI registry; markdown.js owns
+    //  the sanitizer + allowlist. app.js doesn't reach into either —
+    //  it just hands the caller the same `litecode.markdown` object the
+    //  rest of the page already uses.
+    //
+    //  If a page forgets to load markdown.js, the SRI/allowlist
+    //  defaults aren't available and we throw so the misconfiguration
+    //  is loud rather than silently shipping a weakened policy.
     // ────────────────────────────────────────────────────────────────────
 
-    var MARKDED_CDN_URL    = 'https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js';
-    var DOMPURIFY_CDN_URL  = 'https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js';
-    var MARKDED_INTEGRITY  = '';  // see TODO — pin on first deploy with SRI tooling
-    var DOMPURIFY_INTEGRITY = '';
-
-    var markdownState = { loaded: false, loading: null };
-
-    function loadScript(src, integrity) {
-        return new Promise(function (resolve, reject) {
-            var existing = document.querySelector('script[data-lc-markdown="' + src + '"]');
-            if (existing) {
-                if (existing.dataset.loaded === '1') resolve();
-                else existing.addEventListener('load',  function () { resolve(); });
-                existing.addEventListener('error', function () { reject(new Error('failed to load ' + src)); });
-                return;
-            }
-            var s = document.createElement('script');
-            s.src = src;
-            s.defer = true;
-            s.dataset.lcMarkdown = src;
-            if (integrity) {
-                s.integrity = integrity;
-                s.crossOrigin = 'anonymous';
-            }
-            s.addEventListener('load', function () {
-                s.dataset.loaded = '1';
-                resolve();
-            });
-            s.addEventListener('error', function () {
-                reject(new Error('failed to load ' + src));
-            });
-            document.head.appendChild(s);
-        });
+    var markdown = root.litecode && root.litecode.markdown;
+    if (!markdown || typeof markdown.prewarm !== 'function' ||
+        typeof markdown.renderSafe !== 'function') {
+        throw new Error(
+            'litecode.app.js: markdown.js must be loaded before app.js ' +
+            '(defines the XSS sanitizer pipeline)'
+        );
     }
-
-    var markdown = {
-        prewarm: function () {
-            if (markdownState.loaded || markdownState.loading) return markdownState.loading || Promise.resolve();
-            markdownState.loading = Promise.all([
-                loadScript(MARKDED_CDN_URL, MARKDED_INTEGRITY),
-                loadScript(DOMPURIFY_CDN_URL, DOMPURIFY_INTEGRITY),
-            ]).then(function () { markdownState.loaded = true; }).catch(function (e) {
-                console.warn('[litecode.markdown] CDN load failed; falling back to escaped text', e);
-            });
-            return markdownState.loading;
-        },
-
-        renderSafe: function (markdownText) {
-            if (!markdownText) return '';
-            // Synchronous fallback (text-only). Pre-warm asynchronously
-            // so the next call gets full sanitized Markdown.
-            markdown.prewarm();
-            // While the CDN script is pending, escape any HTML the
-            // server might hand us — better than executing it.
-            var div = document.createElement('div');
-            div.textContent = String(markdownText);
-            return div.innerHTML;
-        },
-
-        renderSafeSync: function (markdownText) {
-            // Use only when the libs are guaranteed loaded (i.e. after
-            // `await markdown.prewarm()`).
-            if (!markdownText) return '';
-            if (!markdownState.loaded) return markdown.renderSafe(markdownText);
-            var html = root.marked.parse(String(markdownText), { gfm: true, breaks: true });
-            return root.DOMPurify.sanitize(html, {
-                ALLOWED_TAGS: [
-                    'a','b','blockquote','br','code','em','h1','h2','h3','h4','h5','h6',
-                    'hr','i','img','kbd','li','ol','p','pre','s','small','span','strong',
-                    'sub','sup','table','tbody','td','th','thead','tr','ul',
-                ],
-                ALLOWED_ATTR: ['href','title','alt','src','class'],
-                ALLOW_DATA_ATTR: false,
-            });
-        },
-
-        isReady: function () { return markdownState.loaded; },
-    };
 
     // ────────────────────────────────────────────────────────────────────
     //  Export
@@ -608,5 +542,9 @@
         warn:    function (m, o) { return toast('warn',    m, o); },
     };
     root.litecode.guard   = guard;
+    // Re-export the markdown module so legacy `litecode.markdown.*`
+    // call sites still work. The single source of truth is
+    // `web/js/markdown.js` — app.js does not own a duplicate
+    // implementation.
     root.litecode.markdown = markdown;
 })(window);

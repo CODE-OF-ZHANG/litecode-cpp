@@ -5,20 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
     <!--
-      Phase 5 ★ 前端框架 / SPEC §6.3
-      Hardened CSP matches the Caddyfile header. We keep external sources
-      to a known list (cdn.jsdelivr.net for marked + DOMPurify) and add
-      `style-src 'self' 'unsafe-inline'` so per-page <style> blocks work
-      without forcing a separate stylesheet edit. Everything else is the
-      same-origin 'self' rule.
+      Phase 5 ★ CSP/SRI / SPEC §6.3 + A32
+      Canonical CSP pinned in `web/js/csp.js` (single source of truth).
+      The browser applies both this meta tag AND the matching header
+      from Caddyfile, intersectionally. csp.js runtime-checks this
+      tag against its expected value at load — if a future edit
+      drifts, the browser console logs a clear error.
     -->
     <meta http-equiv="Content-Security-Policy"
-          content="default-src 'self';
-                   script-src 'self' https://cdn.jsdelivr.net;
-                   style-src  'self' 'unsafe-inline';
-                   img-src    'self' data:;
-                   connect-src 'self';
-                   frame-ancestors 'none';">
+          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
 
     <title>LiteCode · 题库</title>
     <link rel="stylesheet" href="/css/style.css">
@@ -62,10 +57,16 @@
     </main>
 
     <!--
-      Frontend framework — api.js MUST come first.
-      The script tags use `defer` so neither runs until after the DOM
-      has parsed the [data-nav] slot.
+      Frontend framework — load order is mandatory:
+        csp.js  → defines the canonical CSP + SRI registry (no deps)
+        api.js  → defines litecode.api (depends on global window only)
+        app.js  → defines litecode.boot / nav / toast / markdown (depends
+                  on both above; markdown loader reads integrity hashes
+                  from litecode.csp.SCRIPTS)
+      All script tags use `defer` so none runs until the DOM has parsed
+      the [data-nav] slot.
     -->
+    <script src="/js/csp.js" defer></script>
     <script src="/js/api.js" defer></script>
     <script src="/js/app.js" defer></script>
 

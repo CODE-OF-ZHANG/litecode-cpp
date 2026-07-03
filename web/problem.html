@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme-chosen>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!--
+      Phase 5 ★ CSP/SRI / SPEC §6.3 + A32
+      Canonical CSP pinned in `web/js/csp.js`. The page MUST stay in
+      lock-step with that value or csp.js logs a clear console error
+      on load. `script-src` allows cdn.jsdelivr.net so problem.html can
+      lazy-load marked + DOMPurify via litecode.markdown.prewarm(); the
+      bundles themselves ship with sha384 integrity hashes so the
+      browser refuses to execute tampered bytes.
+    -->
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
+
+    <title>LiteCode · 刷题</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div data-nav></div>
+
+    <main class="lc-container">
+        <header class="lc-stack" style="margin-bottom: 24px;">
+            <h1>刷题页（占位）</h1>
+            <p class="lc-form-help">
+                Phase 5 ★ 题目详情 + 代码编辑器页面将在后续 commit 落地；
+                本占位页只承载 CSP + SRI + 框架接入，确保后继编辑不会
+                重新发明 header 模板。所有 API 调用走 <code>litecode.api</code>。
+            </p>
+        </header>
+    </main>
+
+    <!--
+      Load order is mandatory: csp.js → api.js → app.js.
+      `defer` keeps every script after the [data-nav] slot is parsed.
+    -->
+    <script src="/js/csp.js" defer></script>
+    <script src="/js/markdown.js" defer></script>
+    <script src="/js/api.js" defer></script>
+    <script src="/js/app.js" defer></script>
+
+    <script>
+        // Phase 5 ★ 前端框架 boots theme + nav + global error wiring.
+        //
+        // ★ Markdown XSS 净化: problem.html is the consumer of
+        // `description` (raw Markdown from /api/v1/problems/:slug).
+        // We prewarm marked + DOMPurify in the background so the
+        // first render of a problem description doesn't pay the CDN
+        // round-trip; the synchronous fallback
+        // `litecode.markdown.renderSafe()` always returns escaped
+        // text when the libs aren't loaded yet, so the page is
+        // XSS-safe even on the cold path.
+        litecode.markdown.prewarm();
+        litecode.boot.shell({ title: 'LiteCode · 刷题' });
+    </script>
+</body>
+</html>
