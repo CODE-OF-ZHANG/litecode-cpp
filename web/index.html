@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme-chosen>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!--
+      Phase 5 ★ 前端框架 / SPEC §6.3
+      Hardened CSP matches the Caddyfile header. We keep external sources
+      to a known list (cdn.jsdelivr.net for marked + DOMPurify) and add
+      `style-src 'self' 'unsafe-inline'` so per-page <style> blocks work
+      without forcing a separate stylesheet edit. Everything else is the
+      same-origin 'self' rule.
+    -->
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self';
+                   script-src 'self' https://cdn.jsdelivr.net;
+                   style-src  'self' 'unsafe-inline';
+                   img-src    'self' data:;
+                   connect-src 'self';
+                   frame-ancestors 'none';">
+
+    <title>LiteCode · 题库</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <!-- Navigation slot — app.js injects the shared nav here. -->
+    <div data-nav></div>
+
+    <main class="lc-container">
+        <header class="lc-stack" style="margin-bottom: 24px;">
+            <h1>题库</h1>
+            <p class="lc-form-help">浏览所有已发布题目；登录后可提交代码。</p>
+        </header>
+
+        <!-- Phase 5 framework — index page demo. Each concrete feature
+             (search / difficulty filter / pagination) is delivered as a
+             separate Phase 5 entry; this shell proves the framework's
+             request + error + nav wiring works end-to-end before those
+             features land. -->
+        <section class="lc-card">
+            <div class="lc-row lc-row--between" style="margin-bottom: 12px;">
+                <strong>健康检查示例</strong>
+                <span id="health-status" class="lc-pill">…</span>
+            </div>
+            <p class="lc-form-help">
+                点击下面的按钮触发一次 <code>GET /api/v1/health</code> 调用。
+                任何错误都会通过 <code>litecode:api-error</code> 事件冒泡，
+                app.js 的 toast 层会把它展示在右下角（401 会自动跳转登录页）。
+            </p>
+            <div class="lc-row" style="margin-top: 16px;">
+                <button type="button" class="lc-btn lc-btn--primary" id="ping-btn">测试 /api/v1/health</button>
+                <button type="button" class="lc-btn lc-btn--ghost"   id="problems-btn">拉取题目列表</button>
+            </div>
+            <pre id="results" style="margin-top: 16px; white-space: pre-wrap; word-break: break-all;"></pre>
+        </section>
+
+        <section class="lc-card" id="problems-section" hidden>
+            <h2>题目列表</h2>
+            <div id="problems-list"></div>
+        </section>
+    </main>
+
+    <!--
+      Frontend framework — api.js MUST come first.
+      The script tags use `defer` so neither runs until after the DOM
+      has parsed the [data-nav] slot.
+    -->
+    <script src="/js/api.js" defer></script>
+    <script src="/js/app.js" defer></script>
+
+    <script>
+        window.addEventListener('DOMContentLoaded', function () {
+            // Boot the shell (theme + nav + global error wiring).
+            litecode.boot.shell({ title: 'LiteCode · 题库' });
+
+            var out = document.getElementById('results');
+            function log(heading, payload) {
+                var body = (payload && typeof payload === 'object')
+                    ? JSON.stringify(payload, null, 2)
+                    : String(payload);
+                out.textContent = '【' + heading + '】\n' + body + '\n\n' + out.textContent;
+            }
+
+            document.getElementById('ping-btn').addEventListener('click', function () {
+                document.getElementById('health-status').textContent = '请求中…';
+                litecode.api.get('/health')
+                    .then(function (resp) {
+                        document.getElementById('health-status').textContent = 'ok';
+                        log('健康检查', resp.data);
+                    })
+                    .catch(function (err) {
+                        document.getElementById('health-status').textContent = 'err';
+                        log('健康检查错误', { status: err.status, code: err.code, message: err.message });
+                    });
+            });
+
+            document.getElementById('problems-btn').addEventListener('click', function () {
+                litecode.api.get('/problems?limit=5')
+                    .then(function (resp) {
+                        log('题目列表（前 5 条）', { total: resp.data.total, items_len: (resp.data.items || []).length });
+                        var section = document.getElementById('problems-section');
+                        var list = document.getElementById('problems-list');
+                        list.innerHTML = '';
+                        (resp.data.items || []).forEach(function (p) {
+                            var row = document.createElement('div');
+                            row.className = 'lc-row lc-row--between';
+                            row.style.padding = '8px 0';
+                            row.style.borderTop = '1px solid var(--lc-color-border)';
+                            row.innerHTML =
+                                '<div class="lc-row" style="gap:8px;">' +
+                                '  <span class="lc-pill lc-pill--' + p.difficulty + '">' + p.difficulty + '</span>' +
+                                '  <a href="/problem.html?slug=' + encodeURIComponent(p.slug) + '">' + p.title + '</a>' +
+                                '</div>' +
+                                '<span class="lc-form-help">' + (p.accepted_count || 0) + ' 通过 / ' + (p.submission_count || 0) + ' 提交</span>';
+                            list.appendChild(row);
+                        });
+                        section.hidden = false;
+                    })
+                    .catch(function (err) {
+                        log('题目列表错误', { status: err.status, code: err.code, message: err.message });
+                    });
+            });
+        });
+    </script>
+</body>
+</html>

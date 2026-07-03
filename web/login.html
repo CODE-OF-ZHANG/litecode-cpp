@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme-chosen>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self';
+                   script-src 'self';
+                   style-src  'self' 'unsafe-inline';
+                   img-src    'self' data:;
+                   connect-src 'self';
+                   frame-ancestors 'none';">
+    <title>LiteCode · 登录</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <!--
+      Login page — guest-only. We deliberately do NOT mount the shared
+      nav here because the page is a single-purpose form (no theme
+      toggle, no profile menu, no nav links). The framework still
+      applies theme preferences via `boot.shell({ guestOnly: true })`,
+      which is enough — a logged-in user is bounced to /index.html
+      before the form ever renders.
+
+      /auth/login failures emit a SPEC §5.7 envelope; litecode.api
+      surfaces it as a LitecodeApiError. The form uses err.code to
+      branch on RATE_LIMITED vs. UNAUTHORIZED, matching SPEC §5.7's
+      behavior matrix.
+    -->
+    <main class="lc-auth-page">
+        <div class="lc-auth-card">
+            <h1>登录 LiteCode</h1>
+            <p class="lc-auth-subtitle">使用账号密码登录。</p>
+
+            <form class="lc-form" id="login-form" novalidate>
+                <div class="lc-form-row">
+                    <label for="username" class="lc-form-label">用户名</label>
+                    <input
+                        type="text"
+                        id="username"
+                        name="username"
+                        class="lc-input"
+                        autocomplete="username"
+                        autocapitalize="off"
+                        autocorrect="off"
+                        spellcheck="false"
+                        required
+                        minlength="3"
+                        maxlength="50">
+                </div>
+                <div class="lc-form-row">
+                    <label for="password" class="lc-form-label">密码</label>
+                    <input
+                        type="password"
+                        id="password"
+                        name="password"
+                        class="lc-input"
+                        autocomplete="current-password"
+                        required
+                        minlength="8"
+                        maxlength="72">
+                </div>
+                <div id="form-error" class="lc-form-error" role="alert" aria-live="polite"></div>
+                <button type="submit" class="lc-btn lc-btn--primary lc-btn--block" id="submit-btn">
+                    登录
+                </button>
+            </form>
+
+            <div class="lc-auth-footer">
+                还没有账号？<a href="/register.html">立即注册</a>
+            </div>
+        </div>
+    </main>
+
+    <script src="/js/api.js" defer></script>
+    <script src="/js/app.js" defer></script>
+
+    <script>
+        window.addEventListener('DOMContentLoaded', function () {
+            // guestOnly: any authed user bounces back to /index.html so
+            // they don't see the login form with a dangling avatar.
+            litecode.boot.shell({ guestOnly: true, title: 'LiteCode · 登录' });
+
+            var form       = document.getElementById('login-form');
+            var submit     = document.getElementById('submit-btn');
+            var errorBox   = document.getElementById('form-error');
+            var next       = new URLSearchParams(window.location.search).get('next') || '/index.html';
+
+            function setError(msg) {
+                errorBox.textContent = msg || '';
+                errorBox.style.display = msg ? 'block' : 'none';
+            }
+
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+                setError('');
+
+                var username = (document.getElementById('username').value || '').trim();
+                var password = document.getElementById('password').value || '';
+
+                if (!username || !password) {
+                    setError('用户名和密码不能为空');
+                    return;
+                }
+
+                submit.disabled = true;
+                submit.textContent = '登录中…';
+
+                litecode.api.auth.login(username, password)
+                    .then(function (data) {
+                        litecode.toast.success('登录成功，欢迎回来 ' + (data.user && data.user.username) + '！');
+                        // Use replace so back-button doesn't replay the form.
+                        window.location.replace(next);
+                    })
+                    .catch(function (err) {
+                        var msg;
+                        switch (err.code) {
+                            case 'RATE_LIMITED':
+                                msg = '登录尝试过于频繁，请稍后再试';
+                                break;
+                            case 'INVALID_INPUT':
+                                msg = err.message || '输入有误';
+                                break;
+                            case 'UNAUTHORIZED':
+                                // Anti-enumeration: same envelope for
+                                // "no such user" and "wrong password".
+                                msg = '用户名或密码错误';
+                                break;
+                            case 'INTERNAL_ERROR':
+                                msg = '服务暂时不可用：' + (err.message || '');
+                                break;
+                            default:
+                                msg = err.message || ('登录失败（HTTP ' + (err.status || 0) + '）');
+                        }
+                        setError(msg);
+                    })
+                    .finally(function () {
+                        submit.disabled = false;
+                        submit.textContent = '登录';
+                    });
+            });
+        });
+    </script>
+</body>
+</html>

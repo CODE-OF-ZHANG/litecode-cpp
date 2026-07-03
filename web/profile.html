@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme-chosen>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self';
+                   script-src 'self' https://cdn.jsdelivr.net;
+                   style-src  'self' 'unsafe-inline';
+                   img-src    'self' data:;
+                   connect-src 'self';
+                   frame-ancestors 'none';">
+    <title>LiteCode · 个人主页</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <!--
+      Profile page — auth-required. Demonstrates the framework's
+      `litecode.guard.requireAuth()` redirect-and-await pattern; if the
+      visitor has no session, the browser is sent to /login.html?next=…
+      BEFORE this page renders anything (the guard promises never
+      resolve on a redirect, so nothing reads the DOM until after a
+      successful fetch).
+
+      F6 / A15: profile shows solved count, attempt stats. The stats
+      endpoints (Phase 6) are not implemented yet, so this page is a
+      minimal /auth/profile shell that demonstrates the framework's
+      wiring. Wire-flesh stays for a follow-up entry in Phase 5★.
+    -->
+    <div data-nav></div>
+
+    <main class="lc-container">
+        <header class="lc-stack" style="margin-bottom: 24px;">
+            <h1 id="page-title">个人主页</h1>
+            <p id="page-subtitle" class="lc-form-help">请稍候…</p>
+        </header>
+
+        <section class="lc-card" id="profile-card" hidden>
+            <div class="lc-row" style="gap: 16px;">
+                <div class="lc-avatar" id="avatar" style="width:64px;height:64px;font-size:24px;"></div>
+                <div>
+                    <h2 id="display-name" style="margin:0 0 4px 0;"></h2>
+                    <div class="lc-row" style="gap:8px;">
+                        <span id="role-badge"></span>
+                        <span class="lc-form-help" id="joined-at"></span>
+                    </div>
+                </div>
+            </div>
+
+            <hr>
+
+            <div class="lc-row lc-row--between">
+                <strong>提交历史</strong>
+                <a href="#" id="view-all" class="lc-form-help">查看全部 →</a>
+            </div>
+            <p class="lc-form-help">
+                完整的历史表格与个人统计（Phase 6）将在后续 Phase 5
+                子条目里补齐；本页面只验证 401 自动跳转登录与
+                <code>litecode.api.auth.fetchProfile()</code> 路径。
+            </p>
+        </section>
+
+        <section class="lc-card" id="profile-error" hidden>
+            <h2 style="color: var(--lc-color-danger);">加载失败</h2>
+            <p class="lc-form-help" id="profile-error-message"></p>
+            <a href="/login.html" class="lc-btn lc-btn--primary">前往登录</a>
+        </section>
+    </main>
+
+    <script src="/js/api.js" defer></script>
+    <script src="/js/app.js" defer></script>
+
+    <script>
+        window.addEventListener('DOMContentLoaded', function () {
+            litecode.boot.shell({ title: 'LiteCode · 个人主页' });
+
+            litecode.guard.requireAuth().then(function (user) {
+                // hydrate via /auth/profile — auth.guard.requireAuth()
+                // already cached it on litecode.auth.currentUser, but
+                // we re-pull here to demo the round-trip and to show
+                // the same shape that stats endpoints will join on.
+                litecode.api.auth.fetchProfile().then(function (profile) {
+                    var card    = document.getElementById('profile-card');
+                    var title   = document.getElementById('page-title');
+                    var subtitle = document.getElementById('page-subtitle');
+
+                    subtitle.textContent = '';
+
+                    var u = profile || user || litecode.api.auth.currentUser || {};
+                    title.textContent = u.username ? (u.username + ' 的主页') : '个人主页';
+                    document.getElementById('display-name').textContent = u.username || '';
+                    document.getElementById('avatar').textContent =
+                        (u.username || '?').charAt(0).toUpperCase();
+
+                    var badge = document.getElementById('role-badge');
+                    if (u.role === 'admin') {
+                        badge.outerHTML = '<span class="lc-pill lc-pill--admin">管理员</span>';
+                    } else {
+                        badge.outerHTML = '<span class="lc-pill">用户</span>';
+                    }
+                    if (u.created_at) {
+                        document.getElementById('joined-at').textContent =
+                            '注册于 ' + String(u.created_at).slice(0, 10);
+                    }
+
+                    card.hidden = false;
+                }).catch(function (err) {
+                    showError(err);
+                });
+            });
+
+            function showError(err) {
+                document.getElementById('profile-card').hidden = true;
+                var box = document.getElementById('profile-error');
+                box.hidden = false;
+                document.getElementById('profile-error-message').textContent =
+                    (err && err.message) ? err.message : ('HTTP ' + (err && err.status));
+            }
+        });
+    </script>
+</body>
+</html>

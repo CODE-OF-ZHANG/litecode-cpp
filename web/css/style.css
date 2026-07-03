@@ -1,0 +1,707 @@
+/* SPDX-License-Identifier: MIT
+   LiteCode-CPP — Frontend base stylesheet (Phase 5 ★ 前端框架)
+
+   What lives here:
+     - CSS custom-property tokens (color / spacing / radius / shadow)
+     - Dark mode toggle via `.dark` class on <html> (A34)
+     - Reduced-motion + prefers-color-scheme fallbacks (SPEC §6.3)
+     - Layout primitives the framework relies on: `.lc-container`,
+       `.lc-stack`, `.lc-row`, `.lc-card`, `.lc-btn`
+     - Phase 5 framework components: nav bar, toasts, menus, forms,
+       theme-toggle button
+     - Mobile breakpoint collapse for the nav and forms (< 768px)
+
+   Component-specific pages (problem list, profile, admin dashboards)
+   can either live in this file as additional sections or split into
+   per-page stylesheet siblings — there is no strict rule, we keep it
+   in one file until a stylesheet hits ~ 25 KB.
+
+   - SPEC §6.3 / A34  Dark mode
+   - SPEC §6.3 / A32  Markdown rendered via `litecode.markdown.renderSafe`
+                       (CSS gives it a sane reading width + no-font-serif
+                       drift)
+   - SPEC §13         Mobile responsive < 768px
+   - A11y            Keyboard focus rings preserved, aria-labels on
+                     icon buttons honored
+*/
+
+/* =====================================================================
+   1. CSS Variables — light theme (default)
+   ===================================================================== */
+
+:root {
+    --lc-color-bg:           #f6f7f9;
+    --lc-color-surface:      #ffffff;
+    --lc-color-surface-2:    #f0f2f5;
+    --lc-color-border:       #e2e6eb;
+    --lc-color-border-2:     #d0d5db;
+    --lc-color-text:         #1f2329;
+    --lc-color-text-2:       #4a525c;
+    --lc-color-text-muted:   #6a7280;
+    --lc-color-link:         #2563eb;
+    --lc-color-link-hover:   #1d4ed8;
+    --lc-color-success:      #16a34a;
+    --lc-color-warning:      #d97706;
+    --lc-color-danger:       #dc2626;
+    --lc-color-info:         #0284c7;
+    --lc-color-focus-ring:   rgba(37, 99, 235, 0.4);
+
+    --lc-radius-sm:   4px;
+    --lc-radius-md:   6px;
+    --lc-radius-lg:  10px;
+    --lc-radius-xl:  14px;
+
+    --lc-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+    --lc-shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+    --lc-shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.12);
+
+    --lc-space-1:  4px;
+    --lc-space-2:  8px;
+    --lc-space-3: 12px;
+    --lc-space-4: 16px;
+    --lc-space-5: 20px;
+    --lc-space-6: 24px;
+    --lc-space-8: 32px;
+    --lc-space-10: 40px;
+
+    --lc-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                    'PingFang SC', 'Microsoft Yahei', system-ui, sans-serif;
+    --lc-font-mono: 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
+
+    --lc-transition-fast:  120ms ease;
+    --lc-transition-base:  180ms ease;
+}
+
+/* Dark theme — toggle by adding `.dark` on <html>.
+   Colors are matched to the light palette for consistent hierarchy. */
+html.dark {
+    --lc-color-bg:           #0e1116;
+    --lc-color-surface:      #161a22;
+    --lc-color-surface-2:    #1f2530;
+    --lc-color-border:       #2a313d;
+    --lc-color-border-2:     #3a4250;
+    --lc-color-text:         #e6e9ee;
+    --lc-color-text-2:       #b6bcc6;
+    --lc-color-text-muted:   #7d8590;
+    --lc-color-link:         #60a5fa;
+    --lc-color-link-hover:   #93c5fd;
+    --lc-color-success:      #4ade80;
+    --lc-color-warning:      #fbbf24;
+    --lc-color-danger:       #f87171;
+    --lc-color-info:         #38bdf8;
+    --lc-color-focus-ring:   rgba(96, 165, 250, 0.45);
+
+    --lc-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --lc-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+    --lc-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+}
+
+/* System preference kicks in only when the user has NOT made an explicit
+   choice.  litecode.js writes `litecode:theme` to localStorage as soon
+   as the toggle is clicked, which blocks this rule on subsequent loads. */
+@media (prefers-color-scheme: dark) {
+    html:not([data-theme-chosen]) {
+        --lc-color-bg:         #0e1116;
+        --lc-color-surface:    #161a22;
+        --lc-color-surface-2:  #1f2530;
+        --lc-color-border:     #2a313d;
+        --lc-color-border-2:   #3a4250;
+        --lc-color-text:       #e6e9ee;
+        --lc-color-text-2:     #b6bcc6;
+        --lc-color-text-muted: #7d8590;
+        --lc-color-link:       #60a5fa;
+        --lc-color-link-hover: #93c5fd;
+    }
+}
+
+/* =====================================================================
+   2. Reset + base typography
+   ===================================================================== */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    padding: 0;
+    min-height: 100%;
+    background: var(--lc-color-bg);
+    color: var(--lc-color-text);
+    font-family: var(--lc-font-sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+a {
+    color: var(--lc-color-link);
+    text-decoration: none;
+    transition: color var(--lc-transition-fast);
+}
+a:hover { color: var(--lc-color-link-hover); }
+a:focus-visible, button:focus-visible, input:focus-visible,
+textarea:focus-visible, select:focus-visible {
+    outline: 2px solid var(--lc-color-focus-ring);
+    outline-offset: 2px;
+    border-radius: var(--lc-radius-sm);
+}
+
+h1, h2, h3, h4 {
+    margin: 0 0 var(--lc-space-3) 0;
+    color: var(--lc-color-text);
+    line-height: 1.25;
+}
+h1 { font-size: 28px; font-weight: 700; }
+h2 { font-size: 22px; font-weight: 600; }
+h3 { font-size: 18px; font-weight: 600; }
+
+p { margin: 0 0 var(--lc-space-3) 0; }
+
+code, pre, kbd, samp {
+    font-family: var(--lc-font-mono);
+    font-size: 0.92em;
+}
+pre {
+    background: var(--lc-color-surface-2);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-md);
+    padding: var(--lc-space-4);
+    overflow-x: auto;
+}
+hr {
+    border: 0;
+    border-top: 1px solid var(--lc-color-border);
+    margin: var(--lc-space-6) 0;
+}
+
+img { max-width: 100%; height: auto; }
+
+::selection {
+    background: var(--lc-color-focus-ring);
+    color: var(--lc-color-text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* =====================================================================
+   3. Layout primitives
+   ===================================================================== */
+
+.lc-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: var(--lc-space-6) var(--lc-space-5);
+    width: 100%;
+}
+
+.lc-container--narrow { max-width: 720px; }
+.lc-container--wide   { max-width: 1440px; }
+
+.lc-stack > * + * { margin-top: var(--lc-space-4); }
+.lc-stack-sm > * + * { margin-top: var(--lc-space-2); }
+.lc-stack-lg > * + * { margin-top: var(--lc-space-6); }
+
+.lc-row {
+    display: flex;
+    align-items: center;
+    gap: var(--lc-space-3);
+    flex-wrap: wrap;
+}
+.lc-row--between { justify-content: space-between; }
+.lc-row--right   { justify-content: flex-end; }
+
+.lc-card {
+    background: var(--lc-color-surface);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-lg);
+    padding: var(--lc-space-6);
+    box-shadow: var(--lc-shadow-sm);
+}
+
+/* =====================================================================
+   4. Buttons
+   ===================================================================== */
+
+.lc-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--lc-space-2);
+    padding: 8px 16px;
+    border-radius: var(--lc-radius-md);
+    border: 1px solid transparent;
+    background: var(--lc-color-surface-2);
+    color: var(--lc-color-text);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background var(--lc-transition-fast),
+                border-color var(--lc-transition-fast),
+                color var(--lc-transition-fast);
+    text-decoration: none;
+    line-height: 1.2;
+}
+.lc-btn:hover { background: var(--lc-color-border); }
+.lc-btn[disabled],
+.lc-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.lc-btn--primary {
+    background: var(--lc-color-link);
+    color: #ffffff;
+    border-color: var(--lc-color-link);
+}
+.lc-btn--primary:hover {
+    background: var(--lc-color-link-hover);
+    border-color: var(--lc-color-link-hover);
+    color: #ffffff;
+}
+.lc-btn--ghost {
+    background: transparent;
+    border-color: var(--lc-color-border);
+    color: var(--lc-color-text-2);
+}
+.lc-btn--ghost:hover {
+    background: var(--lc-color-surface-2);
+    color: var(--lc-color-text);
+}
+.lc-btn--danger {
+    background: var(--lc-color-danger);
+    color: #ffffff;
+    border-color: var(--lc-color-danger);
+}
+.lc-btn--danger:hover {
+    filter: brightness(1.05);
+    color: #ffffff;
+}
+.lc-btn--sm { padding: 4px 10px; font-size: 13px; }
+.lc-btn--lg { padding: 12px 20px; font-size: 16px; }
+.lc-btn--block { display: flex; width: 100%; }
+
+.lc-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--lc-radius-md);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    color: var(--lc-color-text-2);
+    transition: background var(--lc-transition-fast),
+                color var(--lc-transition-fast);
+}
+.lc-icon-btn:hover {
+    background: var(--lc-color-surface-2);
+    color: var(--lc-color-text);
+}
+
+/* =====================================================================
+   5. Forms
+   ===================================================================== */
+
+.lc-form { display: flex; flex-direction: column; gap: var(--lc-space-4); }
+.lc-form-row { display: flex; flex-direction: column; gap: var(--lc-space-1); }
+.lc-form-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--lc-color-text-2);
+}
+.lc-form-help {
+    font-size: 12px;
+    color: var(--lc-color-text-muted);
+}
+.lc-form-error {
+    font-size: 12px;
+    color: var(--lc-color-danger);
+}
+.lc-form-section {
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-lg);
+    padding: var(--lc-space-5);
+    background: var(--lc-color-surface);
+}
+
+.lc-input,
+.lc-input-text,
+.lc-input-password,
+.lc-input-email {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1px solid var(--lc-color-border-2);
+    border-radius: var(--lc-radius-md);
+    background: var(--lc-color-surface);
+    color: var(--lc-color-text);
+    font-size: 14px;
+    font-family: inherit;
+    transition: border-color var(--lc-transition-fast),
+                box-shadow var(--lc-transition-fast);
+}
+.lc-input:focus,
+.lc-input-text:focus,
+.lc-input-password:focus,
+.lc-input-email:focus {
+    border-color: var(--lc-color-link);
+    box-shadow: 0 0 0 3px var(--lc-color-focus-ring);
+    outline: none;
+}
+.lc-input:disabled {
+    background: var(--lc-color-surface-2);
+    color: var(--lc-color-text-muted);
+    cursor: not-allowed;
+}
+
+textarea.lc-input { min-height: 96px; resize: vertical; }
+
+.lc-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--lc-space-2);
+    cursor: pointer;
+    font-size: 14px;
+}
+.lc-checkbox input { margin: 0; }
+
+/* =====================================================================
+   6. Navigation bar (Phase 5 ★)
+   ===================================================================== */
+
+[data-nav] {
+    background: var(--lc-color-surface);
+    border-bottom: 1px solid var(--lc-color-border);
+    position: sticky;
+    top: 0;
+    z-index: 50;
+}
+
+.lc-nav {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 0 var(--lc-space-5);
+    height: 56px;
+    display: flex;
+    align-items: center;
+    gap: var(--lc-space-5);
+}
+
+.lc-nav-brand {
+    font-weight: 700;
+    font-size: 18px;
+    color: var(--lc-color-text);
+    letter-spacing: 0.4px;
+}
+.lc-nav-brand:hover { color: var(--lc-color-link); }
+
+.lc-nav-links {
+    display: flex;
+    gap: var(--lc-space-2);
+    flex: 1;
+    margin-left: var(--lc-space-4);
+}
+
+.lc-nav-link {
+    padding: 6px 12px;
+    border-radius: var(--lc-radius-md);
+    color: var(--lc-color-text-2);
+    font-size: 14px;
+    font-weight: 500;
+    transition: background var(--lc-transition-fast),
+                color var(--lc-transition-fast);
+}
+.lc-nav-link:hover {
+    background: var(--lc-color-surface-2);
+    color: var(--lc-color-text);
+}
+.lc-nav-link--active {
+    background: var(--lc-color-surface-2);
+    color: var(--lc-color-link);
+}
+
+.lc-nav-right {
+    display: flex;
+    align-items: center;
+    gap: var(--lc-space-2);
+}
+
+.lc-nav-user {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--lc-space-2);
+    padding: 4px 10px 4px 4px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background var(--lc-transition-fast);
+}
+.lc-nav-user:hover { background: var(--lc-color-surface-2); }
+
+.lc-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--lc-color-link);
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+.lc-nav-username {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--lc-color-text);
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* =====================================================================
+   7. User menu (popover)
+   ===================================================================== */
+
+.lc-menu {
+    position: absolute;
+    background: var(--lc-color-surface);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-md);
+    box-shadow: var(--lc-shadow-md);
+    min-width: 160px;
+    padding: 4px;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.lc-menu-item {
+    padding: 8px 12px;
+    border-radius: var(--lc-radius-sm);
+    color: var(--lc-color-text);
+    background: none;
+    border: 0;
+    text-align: left;
+    cursor: pointer;
+    font-size: 14px;
+    text-decoration: none;
+    display: block;
+    width: 100%;
+}
+.lc-menu-item:hover { background: var(--lc-color-surface-2); }
+.lc-menu-item--danger { color: var(--lc-color-danger); }
+.lc-menu-sep {
+    height: 1px;
+    background: var(--lc-color-border);
+    margin: 4px 0;
+}
+
+/* =====================================================================
+   8. Toasts
+   ===================================================================== */
+
+.lc-toasts {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 1000;
+    pointer-events: none;
+    max-width: 360px;
+}
+
+.lc-toast {
+    pointer-events: auto;
+    background: var(--lc-color-surface);
+    color: var(--lc-color-text);
+    border-radius: var(--lc-radius-md);
+    border: 1px solid var(--lc-color-border);
+    box-shadow: var(--lc-shadow-md);
+    padding: 10px 14px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--lc-space-3);
+    font-size: 14px;
+    animation: lc-toast-in 0.16s ease-out;
+}
+.lc-toast--leaving {
+    opacity: 0;
+    transition: opacity var(--lc-transition-base);
+}
+
+.lc-toast--success { border-left: 4px solid var(--lc-color-success); }
+.lc-toast--error   { border-left: 4px solid var(--lc-color-danger); }
+.lc-toast--warn    { border-left: 4px solid var(--lc-color-warning); }
+.lc-toast--info    { border-left: 4px solid var(--lc-color-info); }
+
+.lc-toast-msg { flex: 1; }
+
+.lc-toast-close {
+    background: none;
+    border: 0;
+    cursor: pointer;
+    color: var(--lc-color-text-muted);
+    font-size: 18px;
+    line-height: 1;
+    padding: 0;
+}
+.lc-toast-close:hover { color: var(--lc-color-text); }
+
+@keyframes lc-toast-in {
+    from { transform: translateY(8px); opacity: 0; }
+    to   { transform: translateY(0);   opacity: 1; }
+}
+
+/* =====================================================================
+   9. Page-level (login, register, profile, list shells)
+   ===================================================================== */
+
+.lc-auth-page {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--lc-space-8) var(--lc-space-4);
+}
+.lc-auth-card {
+    background: var(--lc-color-surface);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-xl);
+    padding: var(--lc-space-8);
+    box-shadow: var(--lc-shadow-md);
+    width: 100%;
+    max-width: 420px;
+}
+.lc-auth-card h1 {
+    margin-top: 0;
+    margin-bottom: var(--lc-space-2);
+    text-align: center;
+    font-size: 24px;
+}
+.lc-auth-subtitle {
+    text-align: center;
+    color: var(--lc-color-text-muted);
+    margin-bottom: var(--lc-space-6);
+    font-size: 14px;
+}
+.lc-auth-footer {
+    text-align: center;
+    margin-top: var(--lc-space-5);
+    font-size: 14px;
+    color: var(--lc-color-text-2);
+}
+
+/* Badge / pill */
+.lc-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--lc-color-surface-2);
+    color: var(--lc-color-text-2);
+    font-size: 12px;
+    font-weight: 500;
+}
+.lc-pill--easy   { color: var(--lc-color-success); }
+.lc-pill--medium { color: var(--lc-color-warning); }
+.lc-pill--hard   { color: var(--lc-color-danger); }
+.lc-pill--admin  { color: var(--lc-color-info); }
+
+/* Status badge — submission results */
+.lc-status {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: var(--lc-radius-md);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.lc-status--ac      { background: rgba(22, 163, 74, 0.12);  color: var(--lc-color-success); }
+.lc-status--wa      { background: rgba(220, 38, 38, 0.12);  color: var(--lc-color-danger); }
+.lc-status--tle     { background: rgba(217, 119, 6, 0.12);  color: var(--lc-color-warning); }
+.lc-status--mle     { background: rgba(217, 119, 6, 0.12);  color: var(--lc-color-warning); }
+.lc-status--re      { background: rgba(220, 38, 38, 0.12);  color: var(--lc-color-danger); }
+.lc-status--ole     { background: rgba(217, 119, 6, 0.12);  color: var(--lc-color-warning); }
+.lc-status--pe      { background: rgba(217, 119, 6, 0.12);  color: var(--lc-color-warning); }
+.lc-status--ce      { background: rgba(107, 114, 128, 0.18); color: var(--lc-color-text-2); }
+.lc-status--se      { background: rgba(220, 38, 38, 0.18);  color: var(--lc-color-danger); }
+.lc-status--pending { background: rgba(2, 132, 199, 0.12);  color: var(--lc-color-info); }
+.lc-status--running { background: rgba(2, 132, 199, 0.18);  color: var(--lc-color-info); }
+
+/* Markdown rendered surface */
+.lc-markdown {
+    line-height: 1.7;
+    color: var(--lc-color-text);
+    word-wrap: break-word;
+}
+.lc-markdown h1, .lc-markdown h2, .lc-markdown h3 {
+    border-bottom: 1px solid var(--lc-color-border);
+    padding-bottom: 6px;
+    margin-top: var(--lc-space-6);
+}
+.lc-markdown code {
+    background: var(--lc-color-surface-2);
+    padding: 2px 6px;
+    border-radius: var(--lc-radius-sm);
+}
+.lc-markdown pre code {
+    padding: 0;
+    background: none;
+}
+.lc-markdown blockquote {
+    border-left: 4px solid var(--lc-color-border-2);
+    color: var(--lc-color-text-2);
+    padding-left: var(--lc-space-4);
+    margin: var(--lc-space-3) 0;
+}
+.lc-markdown table {
+    border-collapse: collapse;
+    margin: var(--lc-space-3) 0;
+}
+.lc-markdown th, .lc-markdown td {
+    border: 1px solid var(--lc-color-border);
+    padding: 6px 10px;
+}
+
+/* =====================================================================
+   10. Mobile / responsive (SPEC §6.3)
+   ===================================================================== */
+
+@media (max-width: 768px) {
+    .lc-container { padding: var(--lc-space-5) var(--lc-space-4); }
+    .lc-nav { padding: 0 var(--lc-space-4); gap: var(--lc-space-2); height: 52px; }
+    .lc-nav-links { margin-left: var(--lc-space-2); flex-wrap: wrap; overflow-x: auto; }
+    .lc-nav-link { padding: 4px 10px; font-size: 13px; }
+    .lc-nav-username { display: none; }
+
+    .lc-auth-card { padding: var(--lc-space-6); }
+    .lc-toasts { left: 12px; right: 12px; max-width: none; }
+
+    h1 { font-size: 24px; }
+    h2 { font-size: 19px; }
+}
+
+@media (max-width: 480px) {
+    .lc-nav-links {
+        gap: 0;
+        overflow-x: auto;
+        white-space: nowrap;
+        scrollbar-width: none;
+    }
+    .lc-nav-links::-webkit-scrollbar { display: none; }
+}

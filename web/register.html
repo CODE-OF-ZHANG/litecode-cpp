@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme-chosen>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self';
+                   script-src 'self';
+                   style-src  'self' 'unsafe-inline';
+                   img-src    'self' data:;
+                   connect-src 'self';
+                   frame-ancestors 'none';">
+    <title>LiteCode · 注册</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <!--
+      Register page — guest-only. Mirrors login.html's structure but
+      with the SPEC §15.1 password strength rule:
+
+        8 ≤ length ≤ 72
+        1+ letter
+        1+ digit
+
+      The frontend enforces the same rule as auth_routes.h's
+      validate_password_strength, so users get instant feedback before
+      the round-trip to the backend. The backend still re-validates;
+      SPEC §6.3 says "前端校验，后端二次校验".
+    -->
+    <main class="lc-auth-page">
+        <div class="lc-auth-card">
+            <h1>注册 LiteCode 账号</h1>
+            <p class="lc-auth-subtitle">新用户默认角色为 <code>user</code>。</p>
+
+            <form class="lc-form" id="register-form" novalidate>
+                <div class="lc-form-row">
+                    <label for="username" class="lc-form-label">用户名</label>
+                    <input
+                        type="text"
+                        id="username"
+                        name="username"
+                        class="lc-input"
+                        autocomplete="username"
+                        autocapitalize="off"
+                        autocorrect="off"
+                        spellcheck="false"
+                        required
+                        minlength="3"
+                        maxlength="50"
+                        pattern="[A-Za-z0-9_.-]+"
+                        aria-describedby="username-help">
+                    <span id="username-help" class="lc-form-help">
+                        3-50 字符，允许字母、数字、下划线、点、中划线。
+                    </span>
+                </div>
+
+                <div class="lc-form-row">
+                    <label for="email" class="lc-form-label">邮箱（可选）</label>
+                    <input
+                        type="email"
+                        id="email"
+                        name="email"
+                        class="lc-input"
+                        autocomplete="email"
+                        aria-describedby="email-help">
+                    <span id="email-help" class="lc-form-help">
+                        用于重置密码 / 通知；选填，但不可重复。
+                    </span>
+                </div>
+
+                <div class="lc-form-row">
+                    <label for="password" class="lc-form-label">密码</label>
+                    <input
+                        type="password"
+                        id="password"
+                        name="password"
+                        class="lc-input"
+                        autocomplete="new-password"
+                        minlength="8"
+                        maxlength="72"
+                        required
+                        aria-describedby="password-help">
+                    <span id="password-help" class="lc-form-help">
+                        8-72 字符，必须包含字母和数字（bcrypt 上限 72）。
+                    </span>
+                </div>
+
+                <div class="lc-form-row">
+                    <label for="password2" class="lc-form-label">确认密码</label>
+                    <input
+                        type="password"
+                        id="password2"
+                        name="password2"
+                        class="lc-input"
+                        autocomplete="new-password"
+                        minlength="8"
+                        maxlength="72"
+                        required>
+                </div>
+
+                <div id="form-error" class="lc-form-error" role="alert" aria-live="polite"></div>
+                <button type="submit" class="lc-btn lc-btn--primary lc-btn--block" id="submit-btn">
+                    注册
+                </button>
+            </form>
+
+            <div class="lc-auth-footer">
+                已有账号？<a href="/login.html">直接登录</a>
+            </div>
+        </div>
+    </main>
+
+    <script src="/js/api.js" defer></script>
+    <script src="/js/app.js" defer></script>
+
+    <script>
+        window.addEventListener('DOMContentLoaded', function () {
+            litecode.boot.shell({ guestOnly: true, title: 'LiteCode · 注册' });
+
+            var form     = document.getElementById('register-form');
+            var submit   = document.getElementById('submit-btn');
+            var errorBox = document.getElementById('form-error');
+
+            var USERNAME_RE = /^[A-Za-z0-9_.-]{3,50}$/;
+            var EMAIL_RE    = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            var PW_RE       = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]{8,72}$/;
+
+            function setError(msg, field) {
+                errorBox.textContent = msg || '';
+                errorBox.style.display = msg ? 'block' : 'none';
+                if (field) {
+                    var el = document.getElementById(field);
+                    if (el) el.focus();
+                }
+            }
+
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+                setError('');
+
+                var username = (document.getElementById('username').value || '').trim();
+                var email    = (document.getElementById('email').value || '').trim();
+                var password = document.getElementById('password').value || '';
+                var password2 = document.getElementById('password2').value || '';
+
+                if (!USERNAME_RE.test(username)) {
+                    setError('用户名须为 3-50 字符，仅含字母、数字、下划线、点、中划线', 'username');
+                    return;
+                }
+                if (email && !EMAIL_RE.test(email)) {
+                    setError('邮箱格式不正确', 'email');
+                    return;
+                }
+                if (!PW_RE.test(password)) {
+                    setError('密码须为 8-72 字符，至少包含一个字母和一个数字', 'password');
+                    return;
+                }
+                if (password !== password2) {
+                    setError('两次输入的密码不一致', 'password2');
+                    return;
+                }
+
+                submit.disabled = true;
+                submit.textContent = '注册中…';
+
+                litecode.api.auth.register(username, password, email || null)
+                    .then(function (data) {
+                        litecode.toast.success('注册成功，欢迎加入！');
+                        window.location.replace('/index.html');
+                    })
+                    .catch(function (err) {
+                        var field = (err.details && err.details.field) || null;
+                        var msg;
+                        switch (err.code) {
+                            case 'RATE_LIMITED':
+                                msg = '注册请求过于频繁，请稍后再试';
+                                break;
+                            case 'INVALID_INPUT':
+                                msg = err.message || '输入有误';
+                                break;
+                            case 'CONFLICT':
+                                msg = (field === 'username')
+                                    ? '该用户名已被占用'
+                                    : (field === 'email')
+                                        ? '该邮箱已被注册'
+                                        : '该账号已存在';
+                                break;
+                            case 'INTERNAL_ERROR':
+                                msg = '服务暂时不可用：' + (err.message || '');
+                                break;
+                            default:
+                                msg = err.message || ('注册失败（HTTP ' + (err.status || 0) + '）');
+                        }
+                        setError(msg, field);
+                    })
+                    .finally(function () {
+                        submit.disabled = false;
+                        submit.textContent = '注册';
+                    });
+            });
+        });
+    </script>
+</body>
+</html>
