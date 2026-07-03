@@ -139,6 +139,64 @@ struct RateLimitConfig {
     int bulk_import_per_hour               = 5;
 };
 
+// ────────────────────────────────────────────────────────────────────────────
+//  CookieConfig (Phase 5 ★ — SPEC §6.3, §15.1, §15.3 token storage)
+//
+//  The refresh token is delivered to the browser as an HttpOnly cookie
+//  so document-side JavaScript (and any injected <script> via XSS) can
+//  never read it; only the Web server's /auth/refresh endpoint sees it
+//  via the Cookie header. The access token, in contrast, stays in
+//  JavaScript memory only — short-lived (default 2h) and tolerable to
+//  lose on tab close.
+//
+//  The attributes enforced here are the SPEC §6.3 + §15.3 baseline:
+//      HttpOnly   — set true always; the JS layer can't reach the
+//                   refresh token regardless of XSS
+//      Secure     — true in production (HTTPS only); default false in
+//                   dev so a plain http://localhost flow can still
+//                   receive the cookie. Auto-flipped when the env
+//                   detects a `production` / `prod` flag, so an
+//                   operator who forgets to set SECURE_COOKIES in a
+//                   prod-style deployment gets the safer default.
+//      SameSite   — "Strict" per SPEC §6.3; "Lax" / "None" are
+//                   supported for operators who want the refresh to
+//                   survive an OAuth-style cross-site bounce.
+//      Path       — "/api/v1/auth" by default so the cookie is only
+//                   attached to /api/v1/auth/* requests; safer surface
+//                   than the site root and matches the SPEC §15.1
+//                   "refresh + blacklist" endpoint cluster.
+//      Max-Age    — refresh_ttl_seconds by default (7d) so the cookie
+//                   dies in lock-step with the JWT exp. The /refresh
+//                   rotation issues a fresh Set-Cookie with the new
+//                   pair's TTL.
+//      Name       — "lc_refresh" by default; short, project-scoped,
+//                   avoids clashing with anything else on the host.
+// ────────────────────────────────────────────────────────────────────────────
+
+struct CookieConfig {
+    bool        enabled             = true;   // master switch (dev can flip to false)
+    bool        http_only           = true;   // SPEC §6.3 / §15.3 — never readable from JS
+    bool        secure              = false;  // true in prod (HTTPS); false in dev (HTTP localhost)
+    std::string same_site           = "Strict"; // SPEC §6.3
+    std::string path                = "/api/v1/auth";
+    std::string name                = "lc_refresh";
+    int         max_age_seconds     = 0;     // 0 ⇒ "follow refresh_ttl_seconds at handler time"
+    bool        allow_body_fallback = true;  // /refresh also accepts refresh_token in body (dev/test)
+
+    static CookieConfig insecure_dev_defaults() {
+        CookieConfig c;
+        c.enabled  = true;
+        c.http_only = true;
+        c.secure    = false;             // http://localhost doesn't need Secure
+        c.same_site = "Strict";
+        c.path      = "/api/v1/auth";
+        c.name      = "lc_refresh";
+        c.max_age_seconds = 0;           // follow refresh_ttl_seconds
+        c.allow_body_fallback = true;
+        return c;
+    }
+};
+
 struct AdminBootstrapConfig {
     // When both username + password are set, the bootstrap routine creates
     // an admin account at startup if one with that username doesn't exist.
@@ -157,6 +215,7 @@ struct AppConfig {
     LoggingConfig          logging;
     CorsConfig             cors;
     RateLimitConfig        rate_limit;
+    CookieConfig           cookie;
     AdminBootstrapConfig   admin_bootstrap;
 
     std::string env_file_path = ".env";      // last-loaded file (for diagnostics)
@@ -513,6 +572,53 @@ inline AppConfig load_config(const std::string& env_file_path = ".env",
             throw ConfigError("rate-limit quotas must be >= 1");
     }
 
+    // ── Cookie (Phase 5 ★ — SPEC §6.3 / §15.1 / §15.3) ────────────────────
+    //
+    // Defaults follow SPEC §6.3: HttpOnly; Secure; SameSite=Strict.
+    // We honor an explicit COOKIE_SECURE flag, but auto-flip Secure=true
+    // in `production` environments so an operator who forgets to set
+    // COOKIE_SECURE in a prod deploy still gets the safer default
+    // (their browser will silently drop the cookie over plain HTTP, which
+    // is the right failure mode — better than sending it in the clear).
+    cfg.cookie.enabled    = detail::getenv_bool_or("COOKIE_ENABLED", true);
+    cfg.cookie.http_only  = detail::getenv_bool_or("COOKIE_HTTP_ONLY", true);
+    cfg.cookie.secure     = detail::getenv_bool_or(
+        "COOKIE_SECURE",
+        detail::getenv_or("LITECODE_ENV", "") == "production");
+    cfg.cookie.same_site  = detail::getenv_or("COOKIE_SAME_SITE", cfg.cookie.same_site);
+    cfg.cookie.path       = detail::getenv_or("COOKIE_PATH",      cfg.cookie.path);
+    cfg.cookie.name       = detail::getenv_or("COOKIE_NAME",      cfg.cookie.name);
+    cfg.cookie.max_age_seconds =
+        detail::getenv_int_or<int>("COOKIE_MAX_AGE_SECONDS", 0);
+    cfg.cookie.allow_body_fallback =
+        detail::getenv_bool_or("COOKIE_ALLOW_BODY_FALLBACK", true);
+
+    // Normalize SameSite to its three legal spellings (case-insensitive).
+    {
+        std::string ss;
+        ss.reserve(cfg.cookie.same_site.size());
+        for (char c : cfg.cookie.same_site)
+            ss.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        if (ss != "strict" && ss != "lax" && ss != "none")
+            throw ConfigError("COOKIE_SAME_SITE must be Strict, Lax, or None");
+        if (ss == "none" && !cfg.cookie.secure)
+            throw ConfigError("COOKIE_SAME_SITE=None requires COOKIE_SECURE=true "
+                              "(browsers reject SameSite=None without Secure)");
+        cfg.cookie.same_site = ss;
+        // Capitalize for HTTP header friendliness.
+        cfg.cookie.same_site[0] = static_cast<char>(
+            std::toupper(static_cast<unsigned char>(cfg.cookie.same_site[0])));
+    }
+    if (cfg.cookie.path.empty() || cfg.cookie.path[0] != '/')
+        throw ConfigError("COOKIE_PATH must start with '/'");
+    if (cfg.cookie.name.empty() ||
+        cfg.cookie.name.find_first_of(" ;,=\"") != std::string::npos)
+        throw ConfigError("COOKIE_NAME must be a non-empty token "
+                          "(no spaces / ; , = or quotes)");
+    if (cfg.cookie.max_age_seconds < 0)
+        throw ConfigError("COOKIE_MAX_AGE_SECONDS must be >= 0 (0 means: "
+                          "follow refresh_ttl_seconds at handler time)");
+
     // ── Admin bootstrap (SPEC §4.1 — first admin via env) ──────────────────
     cfg.admin_bootstrap.username = detail::getenv_or("ADMIN_USERNAME", "");
     cfg.admin_bootstrap.password = detail::getenv_or("ADMIN_PASSWORD", "");
@@ -631,6 +737,16 @@ inline std::string redacted_dump(const AppConfig& cfg) {
        << " submit="                  << cfg.rate_limit.submission_per_minute_per_user << "/min"
        << " admin="                   << cfg.rate_limit.admin_write_per_minute << "/min"
        << " import="                  << cfg.rate_limit.bulk_import_per_hour << "/hour\n"
+       << "  cookie.enabled="         << (cfg.cookie.enabled ? "true" : "false")
+       << " cookie.name="             << cfg.cookie.name
+       << " cookie.path="             << cfg.cookie.path
+       << " HttpOnly="                << (cfg.cookie.http_only ? "yes" : "no")
+       << " Secure="                  << (cfg.cookie.secure ? "yes" : "no")
+       << " SameSite="                << cfg.cookie.same_site
+       << " Max-Age="                 << (cfg.cookie.max_age_seconds == 0
+                                            ? "<follow refresh_ttl>"
+                                            : std::to_string(cfg.cookie.max_age_seconds) + "s")
+       << " body_fallback="           << (cfg.cookie.allow_body_fallback ? "yes" : "no") << "\n"
        << "  admin_bootstrap="        << (cfg.admin_bootstrap.enabled ? cfg.admin_bootstrap.username : "<disabled>") << "\n"
        << "  env_file="               << (cfg.env_file_path.empty() ? "<none>" : cfg.env_file_path) << "\n"
        << "}";

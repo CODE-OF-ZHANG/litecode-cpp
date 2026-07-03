@@ -603,6 +603,11 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     font-size: 14px;
     color: var(--lc-color-text-2);
 }
+.lc-auth-footer-sep {
+    margin: 0 var(--lc-space-2);
+    color: var(--lc-color-text-muted);
+}
+.lc-form-error:empty { display: none; }
 
 /* Badge / pill */
 .lc-pill {

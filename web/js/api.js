@@ -1,28 +1,45 @@
 // SPDX-License-Identifier: MIT
 //
-// LiteCode-CPP — Frontend API wrapper (Phase 5 ★ 前端框架 / A32)
+// LiteCode-CPP — Frontend API wrapper (Phase 5 ★ 前端框架 + ★ Token 存储)
 //
 // One-file module that owns every cross-cutting HTTP concern Phase 5
 // promises:
 //   1. `litecode.api.{get,post,put,delete}` — opinionated fetch wrapper
 //   2. `litecode.api.rawFetch(...)`         — escape hatch for SSE / multipart
-//   3. Bearer-token attachment from sessionStorage
-//   4. Single-flight refresh-on-401 with one-shot retry, hard-redirect
-//      to /login.html when refresh also fails
+//   3. Bearer-token attachment from in-memory only (no storage layer —
+//      an XSS that steals the access token still has to wait for the
+//      refresh to expire OR the user to log out before it can renew)
+//   4. Single-flight refresh-on-401 with one-shot retry. /auth/refresh
+//      itself relies on the HttpOnly cookie sent by the browser; the
+//      JS layer never sees the refresh value.
 //   5. SPEC §5.7 unified error envelope surfacing — `LitecodeApiError`
 //      subclass with `{status, code, message, details, request_id}`
 //   6. `DispatchEvent` on `document`: `litecode:api-error` /
 //      `litecode:api-unauthorized` so the toast layer (app.js) can
 //      react without touching every call site
 //
-// Storage strategy (Phase 5 ★ vs. SPEC §6.3):
-//   SPEC §6.3 wants access in memory + refresh in HttpOnly Secure cookie.
-//   /api/v1/auth/login returns JSON only today; no Set-Cookie. Until the
-//   backend starts issuing a HttpOnly cookie and /refresh learns to read
-//   from it, the frontend stores BOTH tokens in sessionStorage
-//   (tab-scope). Both are wiped on tab close, which is a downgrade from
-//   the SPEC §6.3 ideal but acceptable for the MVP SPA. Migration is a
-//   future Phase 5/6 follow-up — see TODO at the bottom of this file.
+// Token storage strategy (Phase 5 ★ Token 存储, SPEC §6.3 / §15.3):
+//   - access_token: in-memory only (the `accessToken` module variable).
+//     NOT in sessionStorage / localStorage — a refresh of the page
+//     wipes it. The /auth/refresh call (cookie path) rehydrates it.
+//   - refresh_token: NOT stored in JS at all. /api/v1/auth/login +
+//     /api/v1/auth/register + /api/v1/auth/refresh respond with
+//     `Set-Cookie: lc_refresh=...; HttpOnly; Secure; SameSite=Strict;
+//     Path=/api/v1/auth; Max-Age=...` and the browser stores / sends
+//     it transparently. JS reads `document.cookie` and sees nothing
+//     because of HttpOnly. /api/v1/auth/logout responds with the
+//     same name at Max-Age=0 to delete the cookie server-side.
+//
+// What this gives us:
+//   - XSS that exfiltrates localStorage can no longer grab a refresh
+//     token (the value isn't there). Even if it grabs the access
+//     token, the 2h TTL is the maximum damage window — there's no
+//     way for the attacker to renew without the HttpOnly cookie.
+//   - Page reload: in-memory access token is gone. The SPA's
+//     `litecode.boot.shell(...)` issues a /auth/refresh on load.
+//     The browser automatically attaches the cookie; the server
+//     mints a fresh access token (cookie also rotated). No user
+//     interaction required unless the cookie has expired.
 //
 // Public API:
 //   litecode.api.baseUrl          — string, defaults to '/api/v1'
@@ -34,15 +51,25 @@
 //   litecode.api.sse(path, onEvent, onError)
 //                                  → EventSource wrapper with Bearer query
 //
-//   litecode.auth.getAccessToken()        — string|null
-//   litecode.auth.getRefreshToken()       — string|null
-//   litecode.auth.setTokens(access, refresh, user?)
-//   litecode.auth.clear()                 — drop both tokens + cached user
+//   litecode.auth.getAccessToken()        — string|null (memory only)
+//   litecode.auth.hasRefreshCookie()      — boolean (heuristic — checks
+//                                           that the cookie's *name* was
+//                                           sent on a recent request;
+//                                           cannot read the HttpOnly value)
+//   litecode.auth.setAccessToken(token, user?)
+//                                           — set on login/register/refresh
+//   litecode.auth.clear()                 — drop access token + cached user
 //   litecode.auth.fetchProfile()          — GET /auth/profile, cache result
 //   litecode.auth.currentUser             — {id, username, role, ...} | null
 //   litecode.auth.isLoggedIn              — bool
 //   litecode.auth.isAdmin                 — bool
 //   litecode.auth.onUnauthorized(cb)      — listener for forced sign-out
+//   litecode.auth.onAuthChanged(cb)       — listener for any auth state change
+//
+//   litecode.auth.tryRefresh()            — Promise<{access_token,user}>
+//                                           → POST /auth/refresh (cookie
+//                                           path); returns the new access
+//                                           token + user; throws on failure
 //
 //   litecode.api.onError(cb)              — listener for any API error toast
 //
@@ -51,7 +78,7 @@
 //   document.addEventListener('litecode:api-error',        e => ...)
 //   document.addEventListener('litecode:auth-changed',     e => ...)
 //
-// Last review: Phase 5 ★ 前端框架 deliverable.
+// Last review: Phase 5 ★ Token 存储 deliverable (cookie path).
 
 (function (root) {
     'use strict';
@@ -60,15 +87,19 @@
     //  Constants
     // ────────────────────────────────────────────────────────────────────
 
-    var STORAGE_KEY_ACCESS  = 'litecode:access_token';
-    var STORAGE_KEY_REFRESH = 'litecode:refresh_token';
-    var STORAGE_KEY_USER    = 'litecode:user';
-    var LOGIN_PATH          = '/login.html';
+    // Refresh cookie NAME — kept in lock-step with the backend's
+    // CookieConfig default (`lc_refresh`). The JS layer does NOT read
+    // the value (it's HttpOnly) but it CAN detect that the cookie was
+    // sent at all via a sentinel fetch with the path /api/v1/auth/*
+    // — see hasRefreshCookie() below.
+    var REFRESH_COOKIE_NAME    = 'lc_refresh';
+    var STORAGE_KEY_USER       = 'litecode:user';
+    var LOGIN_PATH             = '/login.html';
 
-    var DEFAULT_BASE_URL    = '/api/v1';
-    var DEFAULT_TIMEOUT_MS  = 20000;            // submit/refresh = 30s, see below
-    var SUBMIT_TIMEOUT_MS   = 30000;
-    var REFRESH_TIMEOUT_MS  = 30000;
+    var DEFAULT_BASE_URL       = '/api/v1';
+    var DEFAULT_TIMEOUT_MS     = 20000;            // submit/refresh = 30s, see below
+    var SUBMIT_TIMEOUT_MS      = 30000;
+    var REFRESH_TIMEOUT_MS     = 30000;
 
     // ────────────────────────────────────────────────────────────────────
     //  LitecodeApiError — surfaced to callers; matches SPEC §5.7 envelope.
@@ -101,8 +132,31 @@
     }
 
     // ────────────────────────────────────────────────────────────────────
-    //  Storage layer — sessionStorage only. Tokens are wiped on tab close.
+    //  Access token storage — IN-MEMORY ONLY (Phase 5 ★ Token 存储)
+    //
+    //  We deliberately do NOT use sessionStorage / localStorage for the
+    //  access token. A page reload wipes `accessToken` (variable below),
+    //  forcing the SPA to call /auth/refresh (cookie path) on its next
+    //  user-facing action — and that rehydrates a fresh access token
+    //  without any user interaction.
+    //
+    //  Cached user (id/username/role) DOES survive reload via
+    //  sessionStorage, because:
+    //   - It contains no secret material
+    //   - The nav bar needs to render BEFORE /auth/refresh completes
+    //   - Stale data here only causes a wrong avatar/menu, never a
+    //     privilege escalation — the access token's role claim is
+    //     authoritative on every request
     // ────────────────────────────────────────────────────────────────────
+
+    var accessToken = null;                  // Phase 5 ★: in-memory ONLY.
+
+    function getAccessToken()  { return accessToken; }
+
+    // Note: there is no `setRefreshToken` — the refresh is owned by
+    // the browser's cookie jar. Calling code that thinks it has a
+    // refresh token is now wrong; we delete the API surface so the
+    // migration is grep-able.
 
     function storageGet(key) {
         try { return window.sessionStorage.getItem(key); }
@@ -117,16 +171,18 @@
         catch (_) { /* same */ }
     }
 
-    function getAccessToken()  { return storageGet(STORAGE_KEY_ACCESS); }
-    function getRefreshToken() { return storageGet(STORAGE_KEY_REFRESH); }
-
-    function setTokens(access, refresh, user) {
-        if (access)  storageSet(STORAGE_KEY_ACCESS, access);
-        if (refresh) storageSet(STORAGE_KEY_REFRESH, refresh);
+    function setAccessToken(access, user) {
+        accessToken = access || null;
         if (user !== undefined) {
-            if (user === null) storageRemove(STORAGE_KEY_USER);
-            else storageSet(STORAGE_KEY_USER, JSON.stringify(user));
+            writeCachedUser(user);
         }
+        emitAuthChanged();
+    }
+
+    function clearAuthLocal() {
+        accessToken = null;
+        storageRemove(STORAGE_KEY_USER);
+        cachedUser = null;
         emitAuthChanged();
     }
 
@@ -144,6 +200,17 @@
         if (user) storageSet(STORAGE_KEY_USER, JSON.stringify(user));
         else      storageRemove(STORAGE_KEY_USER);
     }
+
+    // Heuristic: did the browser actually send the refresh cookie on
+    // the last /auth/refresh we made? We can't read the HttpOnly value,
+    // but the backend's failure modes all return 401 — if the cookie
+    // was sent AND valid, we got 200. Track the most recent outcome
+    // and expose it via this getter. Used by `litecode.guard.requireAuth`
+    // (in app.js) to decide whether to bounce the user to /login.html
+    // BEFORE making a profile call.
+    var lastRefreshSucceeded = false;
+    function markRefreshSucceeded(ok) { lastRefreshSucceeded = !!ok; }
+    function hasRefreshCookie()      { return lastRefreshSucceeded; }
 
     // ────────────────────────────────────────────────────────────────────
     //  Event helper — CustomEvent with a `detail` payload. Wrappers below
@@ -165,6 +232,11 @@
     //  retries at a time; every other 401 attaches to the same promise.
     //  This prevents a stale token + a race from triggering N refreshes
     //  in a 100ms window (which the backend happily rate-limits).
+    //
+    //  Phase 5 ★: /auth/refresh itself takes NO body — the refresh
+    //  token arrives via the HttpOnly cookie automatically. We still
+    //  send `credentials: 'same-origin'` so the browser knows to
+    //  include cookies on the cross-origin-friendly fetch.
     // ────────────────────────────────────────────────────────────────────
 
     var inflightRefresh = null;
@@ -173,19 +245,22 @@
     function refreshTokens() {
         if (inflightRefresh) return inflightRefresh;
 
-        var refresh = getRefreshToken();
-        if (!refresh) return Promise.reject(new Error('no refresh token'));
-
         var ctrl = new AbortController();
         var timer = setTimeout(function () { ctrl.abort(); }, REFRESH_TIMEOUT_MS);
 
+        // Phase 5 ★: body is empty. The HttpOnly cookie is the only
+        // refresh source. We send credentials: 'same-origin' so the
+        // browser attaches it; CORS preflight on /api/v1 already
+        // permits credentials via the server's CORS policy.
         inflightRefresh = fetch(joinUrl(baseUrl(), '/auth/refresh'), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Accept':       'application/json',
             },
-            body: JSON.stringify({ refresh_token: refresh }),
+            // Body intentionally omitted — the cookie carries the
+            // refresh. We used to send `{refresh_token: refresh}` here
+            // (Phase 2 storage in sessionStorage); Phase 5 deletes that.
             credentials: 'same-origin',
             signal: ctrl.signal,
         }).then(function (resp) {
@@ -194,17 +269,23 @@
                 var parsed = null;
                 try { parsed = body ? JSON.parse(body) : null; } catch (_) {}
                 if (!resp.ok || !parsed || !parsed.data || !parsed.data.access_token) {
+                    markRefreshSucceeded(false);
                     throw LitecodeApiError(resp.status, parsed, parsed && parsed.request_id);
                 }
                 var data = parsed.data;
-                setTokens(data.access_token, data.refresh_token || refresh, data.user || undefined);
+                // Set-Cookie was already written by the browser (we
+                // can't see it from JS, but it's there). The body
+                // ALSO carries a refresh_token — the server sends it
+                // for back-compat with COOKIE_ALLOW_BODY_FALLBACK=true;
+                // we deliberately ignore it here because the cookie
+                // is the canonical source.
+                setAccessToken(data.access_token, data.user || undefined);
+                markRefreshSucceeded(true);
                 return data.access_token;
             });
         }).catch(function (err) {
             clearTimeout(timer);
-            // Clear refresh token on any refresh failure — next 401
-            // will hard-redirect instead of looping forever.
-            storageRemove(STORAGE_KEY_REFRESH);
+            markRefreshSucceeded(false);
             inflightRefresh = null;
             throw err;
         }).then(function (token) {
@@ -246,8 +327,10 @@
         var fetchInit = Object.assign({}, init || {});
         fetchInit.signal = (init && init.signal) || (ctrl && ctrl.signal) || null;
 
-        // Always include credentials so refresh-cookie migration (future)
-        // can flip `same-origin` → `include` without touching call sites.
+        // Always include credentials so the HttpOnly refresh cookie is
+        // attached on every same-origin fetch. This is mandatory for
+        // the cookie path to work — without it, /auth/refresh won't
+        // see the cookie and we'll always 401.
         if (!fetchInit.credentials) fetchInit.credentials = 'same-origin';
 
         // Honour caller-supplied headers, but layer Authorization LAST so
@@ -310,7 +393,7 @@
 
     // ────────────────────────────────────────────────────────────────────
     //  Auth-aware fetch — wraps doFetch() with single-flight 401 retry.
-    //  If the refresh itself fails (or there is no refresh token), the
+    //  If the refresh itself fails (or there is no refresh cookie), the
     //  module clears storage, fires `litecode:api-unauthorized`, and
     //  hard-redirects to /login.html. The original caller's promise
     //  rejects with a LitecodeApiError either way.
@@ -331,13 +414,6 @@
         }, 50);
     }
 
-    function clearAuthLocal() {
-        storageRemove(STORAGE_KEY_ACCESS);
-        storageRemove(STORAGE_KEY_REFRESH);
-        writeCachedUser(null);
-        emitAuthChanged();
-    }
-
     function fetchWithAutoRefresh(path, init, opts) {
         return doFetch(path, init, opts).catch(function (err) {
             var is401 = err && err.status === 401;
@@ -350,11 +426,14 @@
             // Try the refresh exactly once.
             return refreshTokens().then(function () {
                 // Replay the original request; the new access token is
-                // already in storage so doFetch picks it up.
+                // already in memory so doFetch picks it up.
                 var replayInit = Object.assign({}, init || {});
                 return doFetch(path, replayInit, opts);
             }).catch(function (refreshErr) {
-                // Refresh failed → force sign-out.
+                // Refresh failed → force sign-out. This is the path
+                // where the refresh cookie is missing / expired / revoked
+                // — there is literally no way to recover without the
+                // user logging in again.
                 forceSignOut({
                     reason: 'refresh-failed',
                     original_status: err.status,
@@ -459,9 +538,9 @@
     // ────────────────────────────────────────────────────────────────────
 
     var auth = {
-        getAccessToken:  getAccessToken,
-        getRefreshToken: getRefreshToken,
-        setTokens:       setTokens,
+        getAccessToken: getAccessToken,
+        hasRefreshCookie: hasRefreshCookie,
+        setAccessToken: setAccessToken,
         clear:           clearAuthLocal,
 
         currentUser:     null,                 // populated lazily
@@ -484,6 +563,23 @@
                     emitAuthChanged();
                     return user;
                 });
+        },
+
+        // Phase 5 ★ tryRefresh() — issue a single /auth/refresh call
+        // (cookie path). Returns the new access token + user; throws
+        // LitecodeApiError on failure (no cookie, cookie expired,
+        // cookie revoked, etc). Useful for boot-time rehydration:
+        //
+        //   litecode.boot.shell = function () {
+        //     return litecode.auth.tryRefresh()
+        //       .then(function () { return litecode.auth.fetchProfile(); })
+        //       .catch(function () { /* not signed in; show guest nav */ });
+        //   };
+        //
+        tryRefresh: function () {
+            return refreshTokens().then(function (token) {
+                return { access_token: token };
+            });
         },
 
         // Listener for forced sign-out (token-stolen, refresh-broken, etc.).
@@ -510,9 +606,14 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
+                credentials: 'same-origin',
             }, { noRetryOn401: true }).then(function (resp) {
                 var d = resp.data || {};
-                setTokens(d.access_token || null, d.refresh_token || null, d.user || null);
+                // The server stamped Set-Cookie lc_refresh=<refresh>; we
+                // can't read it from JS, but it's now in the cookie jar.
+                // We only need to stash the access token + user.
+                setAccessToken(d.access_token || null, d.user || null);
+                markRefreshSucceeded(true);
                 return d;
             });
         },
@@ -522,28 +623,39 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username: username, password: password }),
+                credentials: 'same-origin',
             }, { noRetryOn401: true }).then(function (resp) {
                 var d = resp.data || {};
-                setTokens(d.access_token || null, d.refresh_token || null, d.user || null);
+                setAccessToken(d.access_token || null, d.user || null);
+                markRefreshSucceeded(true);
                 return d;
             });
         },
 
         logout: function () {
-            var rt = getRefreshToken();
-            // Best-effort: ask the server to revoke. We swallow network
-            // errors; the local clear+redirect runs regardless.
+            // Best-effort: ask the server to revoke + clear the cookie.
+            // We swallow network errors; the local clear+redirect runs
+            // regardless. credentials: 'same-origin' so the cookie jar
+            // is sent (though /auth/logout is Bearer-gated, not cookie-
+            // gated, the cookie's Max-Age=0 is emitted by the server in
+            // response to ANY authenticated request and we want the
+            // browser to honor it).
             var p = Promise.resolve();
-            if (rt) {
+            var token = getAccessToken();
+            if (token) {
                 p = fetch(joinUrl(baseUrl(), '/auth/logout'), {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ refresh_token: rt }),
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token,
+                    },
+                    body: JSON.stringify({}),   // body unused — refresh in cookie
                     credentials: 'same-origin',
                 }).catch(function () { /* swallow */ });
             }
             return p.then(function () {
                 clearAuthLocal();
+                markRefreshSucceeded(false);
                 emitUnauthorized({ reason: 'logout' });
                 return true;
             });
@@ -552,6 +664,8 @@
 
     // Hydrate currentUser from storage so the nav can render an avatar
     // IMMEDIATELY on the next page render before fetchProfile() returns.
+    // Note: accessToken is NOT hydrated — that's the whole point of
+    // Phase 5 ★; the SPA issues tryRefresh() on boot to mint a fresh one.
     try { auth.currentUser = readCachedUser(); } catch (_) { auth.currentUser = null; }
 
     ns.auth = auth;
@@ -559,16 +673,22 @@
     root.litecode.api = ns;
 
     // ────────────────────────────────────────────────────────────────────
-    //  TODO — Phase 5/6 follow-ups not in scope of "前端框架" deliverable:
-    //   1. Move refresh to HttpOnly; Secure; SameSite=Strict cookie.
-    //      Needs backend:
-    //        (a) /auth/login + /auth/register response: Set-Cookie header
-    //        (b) /auth/refresh: read refresh_token from cookie OR body
-    //        (c) /auth/logout: clear the cookie
-    //   2. Wire SSE auth: today EventSource can't set Authorization; the
-    //      openSse() helper above uses a query-string fallback which the
-    //      backend does NOT currently accept.
-    //   3. Multi-tab sync via the `storage` event so a logout in one tab
-    //      signs out the others. Handled today by the eventual redirect.
+    //  Removed APIs (Phase 5 ★ migration notes):
+    //
+    //  - litecode.auth.getRefreshToken / setTokens with refresh arg
+    //    were deleted. The refresh token is no longer in JS — it's
+    //    only in the HttpOnly cookie. Any pre-Phase-5 caller that did
+    //    `api.auth.getRefreshToken()` will now get `null`; replace
+    //    with `api.auth.tryRefresh()` (returns the access token +
+    //    user, throws on failure).
+    //
+    //  - `STORAGE_KEY_REFRESH` (`litecode:refresh_token` in
+    //    sessionStorage) is no longer written. Existing entries from
+    //    pre-Phase-5 sessions are inert — the server ignores the
+    //    body.refresh_token when the cookie is present (Phase 5 ★
+    //    cookie has priority), so the stale sessionStorage value is
+    //    harmless. We don't delete them to avoid touching unrelated
+    //    browser state; they'll be GC'd when the user clears site
+    //    data.
     // ────────────────────────────────────────────────────────────────────
 })(window);

@@ -43,6 +43,7 @@ add_executable(test_warm_pool        unit/test_warm_pool.cpp)
 add_executable(test_judge_scheduler  unit/test_judge_scheduler.cpp)
 add_executable(test_submission       unit/test_submission.cpp)
 add_executable(test_submission_sse   unit/test_submission_sse.cpp)
+add_executable(test_auth_cookie_storage unit/test_auth_cookie_storage.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -619,4 +620,32 @@ target_include_directories(test_submission_sse PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/db
     ${CMAKE_SOURCE_DIR}/src/judge)
+# Phase 5 ★ v1.2.21: cookie_utils.h + auth_routes.h updates added
+# inline Set-Cookie plumbing which — combined with submission_routes.h +
+# judge_notifier.h — pushes test_submission_sse over MSVC's COFF
+# section limit (C1128). /bigobj is the documented workaround.
+# Same fix as test_submission / test_admin_problem_crud / test_admin_bulk_import.
+if(MSVC)
+    target_compile_options(test_submission_sse PRIVATE /bigobj)
+endif()
 add_test(NAME submission_sse      COMMAND test_submission_sse)
+
+# cookie_utils.h + auth_routes.h Phase 5 ★ Token 存储: Set-Cookie
+# issuance on login/register/refresh + Cookie reading on refresh +
+# Max-Age=0 clear on logout. The unit tests cover the parser/builder
+# with no MySQL; the integration tests drive the full HttpServer +
+# ConnectionPool stack and assert the wire shape of every Set-Cookie
+# header. Same link set as test_auth_refresh.
+target_link_libraries(test_auth_cookie_storage PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    jwt-cpp::jwt-cpp
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp
+    litecode_bcrypt)
+target_include_directories(test_auth_cookie_storage PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+add_test(NAME auth_cookie_storage  COMMAND test_auth_cookie_storage)

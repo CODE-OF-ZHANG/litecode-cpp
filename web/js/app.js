@@ -247,25 +247,41 @@
     }
 
     function hydrateUser() {
-        // If we have a session, fetch profile in the background. We
-        // don't gate nav-render on this so first paint stays fast.
-        if (!api.auth.isLoggedIn()) {
-            navState.user = null;
-            renderNav(null);
-            return Promise.resolve(null);
-        }
-        return api.auth.fetchProfile().then(function (user) {
-            navState.user = user || null;
-            // navState.user might be null when 401-driven redirect is
-            // about to fire; forceSignOut will handle the rest.
-            renderNav(navState.user);
-            return navState.user;
-        }).catch(function (err) {
-            // If the user was deleted server-side, /profile returns 401
-            // and api.js triggers a redirect. Nothing else to do.
-            renderNav(null);
-            return null;
-        });
+        // Phase 5 ★ Token 存储:
+        //   The access token is in MEMORY ONLY — a page reload wipes it.
+        //   To detect "is this user signed in?" we have to ask the
+        //   server (via /auth/refresh, which reads the HttpOnly cookie).
+        //   If the cookie is present + valid → fresh access token +
+        //   user → logged-in nav. If not → guest nav.
+        //
+        //   We don't gate nav-render on this — the cached user from
+        //   sessionStorage gives us an immediate render with the
+        //   right avatar/menu, then the refresh either confirms it
+        //   (auth-changed listener re-renders) or fires the 401
+        //   sign-out path (event listener clears nav).
+        //
+        //   tryRefresh() is fire-and-forget here — failures are
+        //   expected when the cookie is absent (logged-out user) and
+        //   must not throw to the caller. We swallow into a guest
+        //   nav render.
+        navState.user = api.auth.currentUser || null;
+        renderNav(navState.user);
+
+        return api.auth.tryRefresh()
+            .then(function () { return api.auth.fetchProfile(); })
+            .then(function (user) {
+                navState.user = user || null;
+                renderNav(navState.user);
+                return navState.user;
+            })
+            .catch(function () {
+                // Cookie missing / expired / revoked → guest nav.
+                // No redirect: page-level guard.requireAuth() will
+                // bounce to /login.html if the page actually needs auth.
+                navState.user = null;
+                renderNav(null);
+                return null;
+            });
     }
 
     // ────────────────────────────────────────────────────────────────────

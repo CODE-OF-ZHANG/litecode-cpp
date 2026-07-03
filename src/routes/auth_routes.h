@@ -4,12 +4,42 @@
 //
 // SPEC §5.1 / §11 Phase 2 / §15.1 / A1, A2, A3, A22 acceptance:
 //   - POST /api/v1/auth/register     — public, 5/min/IP, returns 201 + tokens
+//                                       (refresh in HttpOnly cookie,
+//                                       access in body)
 //   - POST /api/v1/auth/login        — public, 10/min/IP, returns 200 + tokens
-//                                       + per-username failure audit
-//                                       (every 5th attempt → audit_logs)
-//   - POST /api/v1/auth/refresh      — public (valid refresh), no rate limit
-//   - POST /api/v1/auth/logout       — auth required
+//                                       (refresh in HttpOnly cookie,
+//                                       access in body) + per-username
+//                                       failure audit (every 5th attempt
+//                                       → audit_logs)
+//   - POST /api/v1/auth/refresh      — public (valid refresh), no rate limit.
+//                                       Reads refresh from HttpOnly cookie
+//                                       (preferred, SPEC §6.3) OR from body
+//                                       when COOKIE_ALLOW_BODY_FALLBACK=true
+//                                       (dev/test back-compat). Always sets
+//                                       a fresh Set-Cookie on rotation.
+//   - POST /api/v1/auth/logout       — auth required; revokes the presented
+//                                       refresh + clears the cookie
+//                                       (Set-Cookie Max-Age=0)
 //   - GET  /api/v1/auth/profile      — auth required
+//
+// Phase 5 ★ token storage (this file, on top of Phase 2 ★):
+//   - register_handler / login_handler / refresh_handler now stamp a
+//     Set-Cookie response header carrying the refresh token. The
+//     cookie attributes come from CookieConfig (HttpOnly always;
+//     Secure + SameSite=Strict configurable via env: COOKIE_SECURE /
+//     COOKIE_SAME_SITE / COOKIE_PATH / COOKIE_NAME). The access
+//     token stays in the JSON response body so the JS layer can
+//     hold it in memory only.
+//   - refresh_handler now reads the refresh from the Cookie header
+//     first; if empty AND CookieConfig::allow_body_fallback is true
+//     (default in dev for back-compat with the Phase 2 test suite),
+//     it falls back to the body's `refresh_token` field. In prod
+//     we recommend COOKIE_ALLOW_BODY_FALLBACK=false so the refresh
+//     never crosses the wire in a readable field.
+//   - logout_handler clears the cookie (Set-Cookie ...; Max-Age=0)
+//     in addition to revoking the presented refresh. The browser
+//     drops the cookie on receipt; the server blacklist guarantees
+//     even an attacker who captured the value can no longer rotate.
 //
 // Phase 2 ★ refresh coverage (this file):
 //   - refresh_handler — verify+rotate via rotate_token_pair (blacklist check
@@ -94,7 +124,7 @@
 #include "../auth/jwt_utils.h"           // sign_access / sign_refresh
 #include "../auth/password_hash.h"       // hash_password / PasswordPolicyError
 #include "../auth/refresh_token.h"       // issue_token_pair / TokenPair
-#include "../config.h"                   // AppConfig / JwtConfig / RateLimitConfig
+#include "../config.h"                   // AppConfig / JwtConfig / RateLimitConfig / CookieConfig
 #include "../db/audit_log_repo.h"        // audit_log_repo::record_login_failure
 #include "../db/connection_pool.h"       // ConnectionPool
 #include "../db/user_repo.h"             // user_repo::create_user / find_by_username
@@ -102,6 +132,7 @@
 #include "../middleware/auth_middleware.h" // require_authentication (Phase 2 ★ logout)
 #include "../middleware/rate_limit.h"    // consume_rate_limit / RateLimiter / auth_register_quota
 #include "../server.h"                   // HttpServer / send_error / send_created / ErrorCode
+#include "../utils/cookie_utils.h"       // build_set_cookie_header / get_cookie_value (Phase 5 ★)
 #include "../utils/uuid.h"               // (kept for parity with future logout handler)
 
 namespace litecode {
@@ -295,6 +326,69 @@ struct RefreshRequest {
 };
 
 namespace detail {
+
+// ────────────────────────────────────────────────────────────────────────────
+//  Cookie plumbing (Phase 5 ★ — SPEC §6.3 / §15.1 / §15.3 token storage)
+//
+//  set_refresh_cookie(res, jwt_cfg, value)
+//      Stamps Set-Cookie on `res` for the refresh token, using
+//      jwt_cfg.refresh_ttl_seconds as the Max-Age and the configured
+//      CookieConfig attributes from config().cookie.
+//
+//      Behavior when config().cookie.enabled is false: no-op.
+//      Useful for a dev console that prefers localStorage flow.
+//
+//  clear_refresh_cookie(res)
+//      Sets a Set-Cookie ...; Max-Age=0 with the same name + path so
+//      the browser drops the cookie on receipt. Used by /auth/logout.
+//
+//  extract_refresh_token(req, cfg, body_refresh)
+//      Returns the refresh token to verify, in this priority:
+//          1) HttpOnly cookie (the canonical Phase 5 path)
+//          2) If cfg.allow_body_fallback AND body is present:
+//             body.refresh_token (legacy / curl)
+//          3) Empty string
+//
+//  All three live in the SAME `namespace detail` block as
+//  parse_refresh_request / parse_logout_request so the auth_routes
+//  translation unit only has to include "routes/auth_routes.h" and
+//  nothing else needs to know about the cookie plumbing.
+// ────────────────────────────────────────────────────────────────────────────
+
+// Append a Set-Cookie header (httplib concatenates successive set_header
+// calls with the same key into multiple Set-Cookie headers, which is the
+// behavior we want when /logout needs both clear-cookie + (none here)).
+inline void set_refresh_cookie(httplib::Response& res,
+                               const JwtConfig&   jwt_cfg,
+                               std::string_view   refresh_token) {
+    if (refresh_token.empty()) return;
+    const auto& cfg = config().cookie;
+    if (!cfg.enabled) return;
+    res.set_header("Set-Cookie",
+        build_set_cookie_header(cfg, refresh_token, jwt_cfg.refresh_ttl_seconds));
+}
+
+inline void clear_refresh_cookie(httplib::Response& res) {
+    const auto& cfg = config().cookie;
+    if (!cfg.enabled) return;
+    res.set_header("Set-Cookie", build_clear_cookie_header(cfg));
+}
+
+// Look up the refresh in the Cookie header first; fall back to body
+// only if the cookie is empty AND the dev-mode allow_body_fallback is on.
+// Returns the presented refresh (empty if neither is present).
+inline std::string extract_refresh_token(const httplib::Request& req,
+                                         const CookieConfig&      cfg,
+                                         const std::optional<
+                                             RefreshRequest>&     body) {
+    const std::string cookie_name = cfg.name;
+    // req.get_header_value returns a const char* (httplib API).
+    const std::string cookie_value =
+        get_cookie_value(req.get_header_value("Cookie"), cookie_name);
+    if (!cookie_value.empty()) return cookie_value;
+    if (cfg.allow_body_fallback && body.has_value()) return body->refresh_token;
+    return std::string();
+}
 
 // parse_refresh_request — extract a RefreshRequest from JSON. Returns
 // std::nullopt and writes a 400 envelope when the body is malformed.
@@ -491,6 +585,13 @@ inline void register_handler(httplib::Response&     res,
              {{"user_id",  std::to_string(new_id)},
               {"username", row.username}});
 
+    // Phase 5 ★: deliver the refresh token via HttpOnly cookie so
+    // JavaScript can never read it (SPEC §6.3 + §15.3). The access
+    // token is intentionally NOT in a cookie — the JS layer holds it
+    // in memory only and a reload triggers /auth/refresh (cookie path)
+    // to mint a fresh access token.
+    detail::set_refresh_cookie(res, jwt_cfg, tokens.refresh_token);
+
     send_created(res, {
         {"user", {
             {"id",         new_id},
@@ -499,7 +600,15 @@ inline void register_handler(httplib::Response&     res,
             {"email",      row.email ? nlohmann::json(*row.email)
                                      : nlohmann::json(nullptr)},
         }},
+        // access_token stays in the body — the JS layer stores it in
+        // memory only (refresh lost = re-login, not silent reissue).
         {"access_token",  tokens.access_token},
+        // refresh_token stays in the body too, for two reasons:
+        //   1) COOKIE_ALLOW_BODY_FALLBACK (dev/test back-compat) lets
+        //      callers without cookie support still rotate.
+        //   2) The body value is the same one we just stamped into the
+        //      cookie — convenient for clients that want to verify the
+        //      cookie path by diffing.
         {"refresh_token", tokens.refresh_token},
         {"token_type",    "Bearer"},
         {"expires_in",    tokens.access_expires_in_seconds(
@@ -756,6 +865,11 @@ inline void login_handler(httplib::Response&                 res,
               {"username", row->username},
               {"role",     row->role}});
 
+    // Phase 5 ★: deliver the refresh token via HttpOnly cookie so
+    // JavaScript can never read it (SPEC §6.3 + §15.3). The access
+    // token stays in the body for in-memory storage by the SPA.
+    detail::set_refresh_cookie(res, jwt_cfg, tokens.refresh_token);
+
     send_success(res, {
         {"user", {
             {"id",       row->id},
@@ -814,11 +928,50 @@ inline void refresh_handler(httplib::Response&                 res,
                              RefreshTokenStore&                 store,
                              const JwtConfig&                   jwt_cfg,
                              std::string_view                   client_ip) {
+    // Phase 5 ★ cookie-aware refresh extraction.
+    //
+    // We always parse the JSON body when present (so a missing/empty
+    // body can still 400 on a body-only caller), but the authoritative
+    // source of the presented refresh is the HttpOnly cookie. The body
+    // is consulted ONLY if (a) the cookie is absent AND (b)
+    // CookieConfig::allow_body_fallback is true.
+    //
+    // The parsing deliberately stays tolerant: a request that arrives
+    // with ONLY a cookie (no body) is the canonical Phase 5 path and
+    // must NOT 400. parse_refresh_request requires a non-empty
+    // refresh_token field, so we don't call it when the body is empty
+    // or has no refresh_token.
     auto j = parse_json_body(req, res);
-    if (!j) return;                                  // 400 already on the wire
+    // j may be std::nullopt if the body is missing or invalid JSON.
+    // For the cookie path that's fine — we ignore the body entirely.
 
-    auto parsed = detail::parse_refresh_request(*j, res);
-    if (!parsed) return;                             // 400 already on the wire
+    std::optional<RefreshRequest> body_parsed;
+    if (j) {
+        // Only attempt to parse if the body actually contains a
+        // refresh_token field — keeps an empty body or unrelated body
+        // (e.g. {"foo": 1}) from triggering a 400 envelope on the
+        // cookie path.
+        if (j->contains("refresh_token")) {
+            body_parsed = detail::parse_refresh_request(*j, res);
+            if (!body_parsed) return;  // 400 already on the wire
+        }
+    }
+
+    const CookieConfig& cookie_cfg = config().cookie;
+    const std::string presented_refresh = detail::extract_refresh_token(
+        req, cookie_cfg, body_parsed);
+
+    if (presented_refresh.empty()) {
+        // Neither cookie nor body (or body_fallback disabled). The
+        // caller's intent is "rotate my refresh" — we have nothing to
+        // verify. 401 with the unified anti-enumeration envelope.
+        LOG_WARN("refresh: no refresh token (no cookie, no body)",
+                 {{"ip", std::string(client_ip)},
+                  {"body_fallback", cookie_cfg.allow_body_fallback ? "yes" : "no"}});
+        send_error(res, 401, ErrorCode::UNAUTHORIZED,
+                   "invalid or expired refresh token");
+        return;
+    }
 
     // 3) Verify the refresh token to recover the sub + jti + exp.
     //    We do this BEFORE the user lookup so a malformed / wrong-kind
@@ -826,7 +979,7 @@ inline void refresh_handler(httplib::Response&                 res,
     //    a revoked token would (anti-enumeration).
     Claims claims;
     try {
-        claims = verify(parsed->refresh_token,
+        claims = verify(presented_refresh,
                          jwt_cfg.secret, jwt_cfg.issuer,
                          TokenKind::Refresh);
     } catch (const JwtError& e) {
@@ -901,7 +1054,7 @@ inline void refresh_handler(httplib::Response&                 res,
             store,
             jwt_cfg.secret,
             jwt_cfg.issuer,
-            parsed->refresh_token,
+            presented_refresh,
             row->username,
             row->role,
             jwt_cfg.access_ttl_seconds,
@@ -939,7 +1092,15 @@ inline void refresh_handler(httplib::Response&                 res,
     LOG_INFO("auth: refresh",
              {{"user_id",  std::to_string(row->id)},
               {"username", row->username},
-              {"role",     row->role}});
+              {"role",     row->role},
+              {"src",      body_parsed ? "body_or_cookie" : "cookie"}});
+
+    // Phase 5 ★: rotate the cookie alongside the token pair. The
+    // browser drops the old cookie on receipt and adopts the new one
+    // with the new TTL. The body's refresh_token is unchanged in
+    // shape (we still emit it for back-compat) but the Set-Cookie
+    // header is the canonical delivery mechanism.
+    detail::set_refresh_cookie(res, jwt_cfg, tokens.refresh_token);
 
     // 6) Same envelope shape as login / register so the front-end can
     //    share its "store tokens + user" code across all three.
@@ -1080,6 +1241,16 @@ inline void logout_handler(httplib::Response&                 res,
     //    The "revoked" field lets the front-end distinguish a clean
     //    logout (true) from a no-op logout (false: token was already
     //    invalid). Both are non-error outcomes from the API's POV.
+    //
+    // Phase 5 ★: clear the HttpOnly cookie too, so the browser drops
+    // it on receipt. Even if the JS layer forgets to call clear(),
+    // the cookie is gone — closing the XSS-steal window where an
+    // attacker who already has a stolen refresh could keep using it
+    // until natural expiry. We send the clear BEFORE the body so a
+    // concurrent /refresh that raced in can't mint a cookie we then
+    // immediately delete (httplib sends headers before body either way).
+    detail::clear_refresh_cookie(res);
+
     send_success(res, {
         {"logged_out", true},
         {"revoked",    outcome.revoked},
