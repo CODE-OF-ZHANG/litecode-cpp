@@ -2447,3 +2447,100 @@ html.dark .lc-gauge--danger {
 @media (prefers-reduced-motion: reduce) {
     .lc-md-editor__preview { scroll-behavior: auto; }
 }
+
+/* ════════════════════════════════════════════════════════════════
+   §19  Admin dashboard — 系统概览 (Phase 5 ★ 管理后台 - 系统概览页面)
+
+   The dashboard reuses a lot of generic primitives (stat-card,
+   gauge, admin-table, bar-row). This section adds three new
+   affordances that don't have a public-side analog:
+
+     1. .lc-health-strip    — 3 horizontal cells inside the health
+                              card. Each cell holds a label + pill.
+                              Same grid tokens as lc-stat-grid so
+                              the visual rhythm matches the KPI
+                              block above.
+     2. .lc-health-cell     — single health probe row (label +
+                              pill). `data-probe` carries the probe
+                              name ("overall" / "db" / "docker")
+                              so future CSS can colour-code specific
+                              probes without touching the HTML.
+     3. .lc-pill--{ok,warning,down,muted}  — small health-status
+                              pills. Reuses .lc-pill geometry but
+                              swaps the colour. The dashboard is
+                              the first place we need an "ok" pill
+                              (other pages only need easy/medium/
+                              hard + admin), so the variants live
+                              here instead of next to the original
+                              .lc-pill block.
+
+   The auto-refresh chip reuses .lc-sse-status from the problem
+   editor (v1.2.28) — both pages have a 1-of-3 status dot + text
+   pattern, so the existing dot colour modifiers are reused
+   directly. No new selectors needed for that. */
+
+.lc-health-strip {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--lc-space-3);
+}
+
+.lc-health-cell {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lc-space-2);
+    padding: var(--lc-space-3) var(--lc-space-4);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-md);
+    background: var(--lc-color-surface-2);
+}
+
+.lc-health-cell__label {
+    font-size: 12px;
+    color: var(--lc-color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+}
+
+/* Health status pills. The dashboard is the only consumer today
+   but the variants are kept distinct so future surfaces (status
+   banner, banner notification, etc.) can drop them in without
+   introducing a separate "status-pill" class hierarchy. */
+.lc-pill--ok      {
+    background: rgba(22, 163, 74, 0.12);
+    color: var(--lc-color-success);
+}
+.lc-pill--warning {
+    background: rgba(217, 119, 6, 0.14);
+    color: var(--lc-color-warning);
+}
+.lc-pill--down    {
+    background: rgba(220, 38, 38, 0.14);
+    color: var(--lc-color-danger);
+}
+.lc-pill--muted   {
+    background: rgba(107, 114, 128, 0.18);
+    color: var(--lc-color-text-2);
+}
+
+html.dark .lc-pill--ok {
+    background: rgba(74, 222, 128, 0.18);
+}
+html.dark .lc-pill--warning {
+    background: rgba(251, 191, 36, 0.18);
+}
+html.dark .lc-pill--down {
+    background: rgba(248, 113, 113, 0.18);
+}
+html.dark .lc-pill--muted {
+    background: rgba(156, 163, 175, 0.18);
+}
+
+@media (max-width: 768px) {
+    /* On phone widths the 3-cell health strip collapses to a
+       single column so the pills wrap with comfortable spacing. */
+    .lc-health-strip {
+        grid-template-columns: 1fr;
+    }
+}

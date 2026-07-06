@@ -7,7 +7,7 @@
     <!--
       Phase 5 ★ CSP/SRI / SPEC §6.3 + A32
       Canonical CSP pinned in `web/js/csp.js`. Admin pages don't need
-      any extra origin beyond 'self' + cdn.jsdelivr.net (lazy-markdown).
+      any extra origin beyond 'self' + cdn.jsdelivr.net.
     -->
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
@@ -19,14 +19,359 @@
     <div data-nav></div>
 
     <main class="lc-container">
-        <header class="lc-stack" style="margin-bottom: 24px;">
-            <h1>系统概览（占位）</h1>
-            <p class="lc-form-help">
-                Phase 5 ★ 管理后台 - 系统概览页面将在后续 commit 落地；
-                本占位页只承载 CSP + SRI + 框架接入。后续内容会读取
-                <code>GET /api/v1/admin/stats</code>。
-            </p>
+        <!--
+          Page header. Phase 5 ★ 管理后台 - 系统概览页面 — admin
+          landing page. Five responsibilities:
+            1. Show the high-level site health at a glance.
+            2. Surface queue / warm-pool state so admins can spot
+               back-pressure before users start complaining.
+            3. Surface submission distribution so anomalies (sudden
+               CE / SE spike) are visible.
+            4. Show the most recent N submissions for fast triage.
+            5. Auto-refresh every 10s while the page is visible
+               (paused on document.hidden).
+
+          Header actions: a manual "刷新" button (no auto-refresh
+          spinner kept on — the auto-refresh indicator is the
+          small pulsing dot next to the "实时" label) and the
+          "实时/已暂停" status chip that reflects whether the
+          polling loop is active.
+
+          API contract (Phase 6 ★ 管理员系统统计 API + Phase 4
+          /api/v1/health already live):
+            GET /api/v1/admin/stats  → { data: { ... } }
+              problems      : { total, by_difficulty: { easy, medium, hard } }
+              users         : { total, admins }
+              submissions   : { total, last_24h,
+                                by_status: { ac, wa, tle, mle, re,
+                                             ole, pe, ce, se, pending, running } }
+              queue         : { size, max_size, max_concurrent, running }
+              warm_pool     : { size, max }
+              uptime_seconds: number
+              recent_submissions: [ SubmissionRow, ... ]   // last 8
+            GET /api/v1/health      → top-level: { status, db, docker,
+                                queue_size, warm_pool, uptime_seconds, checks }
+            GET /api/v1/submissions?limit=N
+                                → { data: { items: [...], total, limit, offset } }
+                                  (used as a fallback when /admin/stats
+                                   isn't implemented yet — Phase 6 still pending)
+
+          All three endpoints are admin-gated (Phase 6). When the
+          dedicated stats endpoint returns 404 the page gracefully
+          falls back to the live health endpoint + a recent-submissions
+          panel sourced from /api/v1/submissions, so the dashboard is
+          useful TODAY even before Phase 6 lands.
+        -->
+        <header class="lc-row lc-row--between"
+                style="margin-bottom: var(--lc-space-5);">
+            <div class="lc-stack-sm">
+                <h1>系统概览</h1>
+                <p class="lc-form-help" id="header-summary">
+                    服务健康、判题队列、提交分布 — 一屏看全。
+                </p>
+            </div>
+            <div class="lc-row" style="gap: var(--lc-space-2);">
+                <!-- Auto-refresh status chip. Pulses green while the
+                     polling loop is running, sits idle (gray dot)
+                     when the tab is hidden or polling was paused. -->
+                <span class="lc-sse-status"
+                      id="auto-refresh-chip"
+                      data-mode="polling"
+                      title="每 10 秒自动刷新；切到后台标签时自动暂停">
+                    <span class="lc-sse-status__dot lc-sse-status__dot--polling"
+                          aria-hidden="true"></span>
+                    <span id="auto-refresh-label">实时</span>
+                </span>
+                <button type="button" class="lc-btn"
+                        id="reload-btn"
+                        title="立即刷新一次">
+                    刷新
+                </button>
+            </div>
         </header>
+
+        <!--
+          Container that swaps between four top-level states:
+            - loading  : spinner + "加载中…"
+            - error    : red banner + 重试 button
+            - pending  : "endpoint pending" (Phase 6 ★ 管理员系统统计 API
+                         not shipped yet). Page still renders health +
+                         recent submissions from public /health and
+                         /submissions, so admins have something useful
+                         in the meantime.
+            - content  : the actual dashboard.
+
+          Each block is hidden by default; showState() flips one
+          to visible. This mirrors the /admin/users.html state
+          machine so admins get a consistent mental model.
+        -->
+        <section aria-label="系统概览内容" id="dashboard-root">
+
+            <!-- Error state. -->
+            <div class="lc-error" id="error-state" hidden role="alert">
+                <p class="lc-error__title">加载失败</p>
+                <p class="lc-form-help" id="error-message"></p>
+                <button type="button" class="lc-btn lc-btn--primary lc-btn--sm"
+                        id="retry-btn">重试</button>
+            </div>
+
+            <!-- Pending state — Phase 6 ★ /admin/stats not shipped. -->
+            <div class="lc-empty" id="pending-state" hidden>
+                <p class="lc-empty__title">管理员系统统计 API 尚未发布</p>
+                <p class="lc-form-help">
+                    Phase 6 ★ <code>GET /api/v1/admin/stats</code> 仍在排期中。
+                    当前页面会回退到已发布的
+                    <code>GET /api/v1/health</code> + 最近的提交列表 —
+                    管理员可以照常监控服务健康与最新动态。Phase 6
+                    API 就绪后无需改动即可展示完整 KPI / 分布统计。
+                </p>
+            </div>
+
+            <!-- Loading state. -->
+            <div class="lc-loading" id="loading-state" hidden
+                 aria-live="polite">
+                <span class="lc-spinner" aria-hidden="true"></span>
+                <span>加载中…</span>
+            </div>
+
+            <!--
+              The actual dashboard content. Each section is a
+              .lc-card so the visual rhythm matches the rest of
+              the admin pages (users / problems). Sections are
+              wrapped in a single .lc-stack-lg so the spacing
+              between them stays consistent.
+            -->
+            <div class="lc-stack-lg" id="dashboard-content" hidden>
+
+                <!--
+                  Section 1 — KPI grid. Six numbers admins check first:
+                    题目总数 / 用户总数 / 提交总数 / 队列长度 / 预热池大小 / 在线时长
+                  Cards collapse to 3-col at narrow widths (already
+                  handled by .lc-stat-grid auto-fit).
+                -->
+                <section class="lc-stack-sm" aria-label="核心指标">
+                    <h2 class="lc-section-title" style="margin-top: 0;">核心指标</h2>
+                    <div class="lc-stat-grid">
+                        <div class="lc-stat-card" data-kpi="problems">
+                            <span class="lc-stat-card__value"
+                                  id="kpi-problems-total">—</span>
+                            <span class="lc-stat-card__label">题目总数</span>
+                            <span class="lc-stat-card__sub"
+                                  id="kpi-problems-sub">—</span>
+                        </div>
+                        <div class="lc-stat-card" data-kpi="users">
+                            <span class="lc-stat-card__value"
+                                  id="kpi-users-total">—</span>
+                            <span class="lc-stat-card__label">用户总数</span>
+                            <span class="lc-stat-card__sub"
+                                  id="kpi-users-sub">—</span>
+                        </div>
+                        <div class="lc-stat-card" data-kpi="submissions">
+                            <span class="lc-stat-card__value"
+                                  id="kpi-submissions-total">—</span>
+                            <span class="lc-stat-card__label">提交总数</span>
+                            <span class="lc-stat-card__sub"
+                                  id="kpi-submissions-sub">—</span>
+                        </div>
+                        <div class="lc-stat-card" data-kpi="queue">
+                            <span class="lc-stat-card__value"
+                                  id="kpi-queue-size">—</span>
+                            <span class="lc-stat-card__label">队列长度</span>
+                            <span class="lc-stat-card__sub"
+                                  id="kpi-queue-sub">—</span>
+                        </div>
+                        <div class="lc-stat-card" data-kpi="warm-pool">
+                            <span class="lc-stat-card__value"
+                                  id="kpi-warm-pool">—</span>
+                            <span class="lc-stat-card__label">预热池大小</span>
+                            <span class="lc-stat-card__sub"
+                                  id="kpi-warm-pool-sub">—</span>
+                        </div>
+                        <div class="lc-stat-card" data-kpi="uptime">
+                            <span class="lc-stat-card__value"
+                                  id="kpi-uptime">—</span>
+                            <span class="lc-stat-card__label">在线时长</span>
+                            <span class="lc-stat-card__sub"
+                                  id="kpi-uptime-sub">—</span>
+                        </div>
+                    </div>
+                </section>
+
+                <!--
+                  Section 2 — service health card. Three probe rows
+                  (DB / Docker / 整体), each green / amber / red
+                  pill. The /health endpoint already provides these
+                  fields so the page renders correctly even before
+                  /admin/stats lands.
+                -->
+                <section class="lc-card" aria-label="服务健康">
+                    <header class="lc-row lc-row--between"
+                            style="margin-bottom: var(--lc-space-3);">
+                        <h2 class="lc-section-title" style="margin: 0;">服务健康</h2>
+                        <span class="lc-form-help" id="health-updated">
+                            —
+                        </span>
+                    </header>
+                    <div class="lc-health-strip">
+                        <div class="lc-health-cell" data-probe="overall">
+                            <span class="lc-health-cell__label">整体</span>
+                            <span class="lc-pill" id="health-overall">—</span>
+                        </div>
+                        <div class="lc-health-cell" data-probe="db">
+                            <span class="lc-health-cell__label">数据库</span>
+                            <span class="lc-pill" id="health-db">—</span>
+                        </div>
+                        <div class="lc-health-cell" data-probe="docker">
+                            <span class="lc-health-cell__label">Docker</span>
+                            <span class="lc-pill" id="health-docker">—</span>
+                        </div>
+                    </div>
+                    <p class="lc-form-help"
+                       style="margin-top: var(--lc-space-3);">
+                        <a href="/api/v1/health" target="_blank" rel="noopener">
+                            查看 /api/v1/health 原始响应
+                        </a>
+                        ·
+                        docker-compose 健康检查使用同一端点
+                    </p>
+                </section>
+
+                <!--
+                  Section 3 — judge system gauges. Two gauges:
+                    队列利用率 (queue_size / max_queue_size) — a
+                      fill bar; 0% = idle, 100% = full. Admin can
+                      see at a glance whether the scheduler is
+                      back-pressured.
+                    预热池占比 (warm_pool / max_warm_pool) — same
+                      shape. If the pool drops below K, the refill
+                      thread should bring it back; a sustained
+                      shortfall signals a Docker problem.
+                  Both fields are sourced from /api/v1/health
+                  (queue_size + warm_pool). The "max" denominators
+                  come from /admin/stats (Phase 6 ★) — when that
+                  endpoint is missing we render "-- / --" instead
+                  of the gauge fill.
+                -->
+                <section class="lc-card" aria-label="判题系统">
+                    <h2 class="lc-section-title" style="margin: 0 0 var(--lc-space-3) 0;">
+                        判题系统
+                    </h2>
+                    <div class="lc-gauge">
+                        <div class="lc-gauge__head">
+                            <span class="lc-gauge__label">队列利用率</span>
+                            <span class="lc-gauge__value" id="queue-gauge-value">
+                                <strong>—</strong>
+                                <span class="lc-gauge__max">/ —</span>
+                            </span>
+                        </div>
+                        <div class="lc-gauge__track" aria-hidden="true">
+                            <div class="lc-gauge__fill"
+                                 id="queue-gauge-fill"
+                                 style="width: 0%;"></div>
+                        </div>
+                        <p class="lc-form-help" id="queue-gauge-help"
+                           style="margin-top: var(--lc-space-1);">
+                            等待中 + 运行中任务
+                        </p>
+                    </div>
+                    <div class="lc-gauge" style="margin-top: var(--lc-space-3);">
+                        <div class="lc-gauge__head">
+                            <span class="lc-gauge__label">预热池占比</span>
+                            <span class="lc-gauge__value" id="warm-gauge-value">
+                                <strong>—</strong>
+                                <span class="lc-gauge__max">/ —</span>
+                            </span>
+                        </div>
+                        <div class="lc-gauge__track" aria-hidden="true">
+                            <div class="lc-gauge__fill"
+                                 id="warm-gauge-fill"
+                                 style="width: 0%;"></div>
+                        </div>
+                        <p class="lc-form-help" id="warm-gauge-help"
+                           style="margin-top: var(--lc-space-1);">
+                            idle 容器数量；过低时后台线程自动补齐
+                        </p>
+                    </div>
+                </section>
+
+                <!--
+                  Section 4 — submission status distribution. 11 bars,
+                  one per status. Sorted by count DESC so the most
+                  common status sits on top. 0-count statuses render
+                  with a 2px min-width stub + "0" label so admins
+                  still see the full list.
+
+                  Source: /admin/stats.submissions.by_status
+                  (Phase 6 ★). When unavailable (404), hide the
+                  section rather than show empty bars — admins
+                  shouldn't have to wonder whether "AC 0 / WA 0"
+                  means a real outage or a missing endpoint.
+                -->
+                <section class="lc-card"
+                         aria-label="提交状态分布"
+                         id="status-distribution-card">
+                    <header class="lc-row lc-row--between"
+                            style="margin-bottom: var(--lc-space-3);">
+                        <h2 class="lc-section-title" style="margin: 0;">提交状态分布</h2>
+                        <span class="lc-form-help" id="status-distribution-sub">
+                            全站累计
+                        </span>
+                    </header>
+                    <div class="lc-breakdown" id="status-distribution">
+                        <!-- Bars rendered by JS. -->
+                    </div>
+                </section>
+
+                <!--
+                  Section 5 — recent submissions table. Reuses the
+                  shared .lc-admin-table from /admin/problems.html +
+                  /admin/users.html. Limited to RECENT_LIMIT = 8 rows
+                  (a small number keeps the page lightweight and
+                  signals "this is a glance, not a queue monitor"
+                  — for the full history admin drills into the
+                  dedicated page when it ships).
+
+                  When /admin/stats is missing we fall back to
+                  /api/v1/submissions?limit=8 (admin can read
+                  anyone's submissions; see SPEC §5.3 — admin
+                  override of the user_id filter).
+
+                  Actions column is intentionally omitted — recent
+                  submissions are read-only here. Drill-in for
+                  per-row triage is a Phase 6 ★ concern
+                  (audit-log / submission detail page).
+                -->
+                <section class="lc-stack-sm" aria-label="最近提交">
+                    <header class="lc-row lc-row--between">
+                        <h2 class="lc-section-title" style="margin: 0;">最近提交</h2>
+                        <span class="lc-form-help" id="recent-submissions-sub">
+                            最近 8 条
+                        </span>
+                    </header>
+                    <div class="lc-admin-table-wrap">
+                        <table class="lc-admin-table" id="recent-table"
+                               aria-label="最近提交" hidden>
+                            <thead>
+                                <tr>
+                                    <th scope="col">#</th>
+                                    <th scope="col">状态</th>
+                                    <th scope="col">用户</th>
+                                    <th scope="col">题目</th>
+                                    <th scope="col">语言</th>
+                                    <th scope="col">耗时</th>
+                                    <th scope="col">提交时间</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recent-tbody"></tbody>
+                        </table>
+                    </div>
+                    <div class="lc-empty" id="recent-empty-state" hidden>
+                        <p class="lc-empty__title">暂无提交记录</p>
+                    </div>
+                </section>
+
+            </div>
+        </section>
     </main>
 
     <!-- Load order is mandatory: csp.js → api.js → app.js. -->
@@ -35,9 +380,678 @@
     <script src="/js/app.js" defer></script>
 
     <script>
-        // Admin guard: non-admin gets redirected to /index.html with a
-        // toast — see litecode.boot.shell({ requireAdmin: true }).
-        litecode.boot.shell({ title: 'LiteCode · 系统概览', requireAdmin: true });
+    // ────────────────────────────────────────────────────────────────────
+    //  Admin Dashboard Page (Phase 5 ★ 管理后台 - 系统概览页面)
+    //
+    //  Responsibilities:
+    //    1) Admin guard via litecode.boot.shell({ requireAdmin: true })
+    //       — non-admin → redirect home (handled by app.js).
+    //    2) Render four top-level states: loading / error / pending /
+    //       content. Mirrors /admin/users.html's showState() pattern.
+    //    3) Try the canonical Phase 6 endpoint GET /admin/stats
+    //       first. If it returns 404, fall back to a composite
+    //       view: GET /api/v1/health + GET /api/v1/submissions?limit=8.
+    //       If /admin/stats itself errors with anything else, show
+    //       a retryable error state.
+    //    4) Auto-refresh every 10 s while the tab is visible
+    //       (visibilitychange pauses the timer when the admin
+    //       switches tabs — the dashboard isn't a hard real-time
+    //       monitor).
+    //    5) XSS-safe: every user-supplied value goes through
+    //       textContent / setAttribute, never innerHTML. Status
+    //       strings are whitelisted into CSS classes — even a
+    //       hostile status value can't inject markup.
+    //
+    //  State machine for the four top-level states:
+    //    loading → content         (success)
+    //    loading → error           (network / 5xx / non-404 4xx)
+    //    loading → pending         (stats endpoint 404; page
+    //                               still renders health + recent)
+    //    loading → error → content (retry button → content)
+    //
+    //  Test hooks (`__lcTest`): the production block checks
+    //  `typeof __lcTest !== 'undefined'` at the end of the IIFE
+    //  and exports pure helpers. The production code path does
+    //  not touch this object — the check is `typeof` so the
+    //  bundle stays minimal.
+    // ────────────────────────────────────────────────────────────────────
+    (function () {
+        'use strict';
+
+        // ── Constants ────────────────────────────────────────────────
+        var REFRESH_INTERVAL_MS = 10 * 1000;     // 10 s
+        var RECENT_LIMIT = 8;
+        var PROFILE_URL = '/profile.html?u=';
+        var PROBLEM_URL = '/problem.html?slug=';
+
+        var STATUS_ORDER = [
+            'ac', 'wa', 'tle', 'mle', 're', 'ole',
+            'pe', 'ce', 'se', 'pending', 'running'
+        ];
+        var STATUS_LABEL = {
+            ac: '通过 AC', wa: '答案错 WA', tle: '超时 TLE',
+            mle: '超内存 MLE', re: '运行错 RE', ole: '输出超限 OLE',
+            pe: '格式错 PE', ce: '编译错 CE', se: '系统错 SE',
+            pending: '排队中', running: '判题中'
+        };
+        var LANG_LABEL = { c: 'C', cpp: 'C++' };
+
+        // ── State ───────────────────────────────────────────────────
+        var state = {
+            refreshTimer: null,
+            paused: false,
+            inflight: 0,
+            statsAvailable: false,
+        };
+        var lastStats = null;
+
+        // ── DOM helpers (mirror the el() pattern used elsewhere) ─────
+        function $(id) { return document.getElementById(id); }
+        function el(tag, attrs, children) {
+            var node = document.createElement(tag);
+            if (attrs) {
+                Object.keys(attrs).forEach(function (k) {
+                    if (k === 'class')      node.className = attrs[k];
+                    else if (k === 'text')  node.textContent = attrs[k];
+                    else if (k === 'dataset') {
+                        Object.keys(attrs[k]).forEach(function (dk) {
+                            node.dataset[dk] = attrs[k][dk];
+                        });
+                    } else if (k.charAt(0) === 'o' && k.charAt(1) === 'n') {
+                        node.addEventListener(k.slice(2).toLowerCase(), attrs[k]);
+                    } else {
+                        node.setAttribute(k, attrs[k]);
+                    }
+                });
+            }
+            if (children !== undefined && children !== null) {
+                (Array.isArray(children) ? children : [children]).forEach(function (c) {
+                    if (c === null || c === undefined) return;
+                    if (typeof c === 'string') node.appendChild(document.createTextNode(c));
+                    else node.appendChild(c);
+                });
+            }
+            return node;
+        }
+
+        // ── Number / time formatters (zh-CN) ─────────────────────────
+        function fmtInt(n) {
+            if (n === null || n === undefined || !Number.isFinite(n)) return '—';
+            return String(Math.floor(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        }
+
+        function fmtPercent(num, denom) {
+            if (!Number.isFinite(num) || !Number.isFinite(denom) || denom <= 0) {
+                return null;
+            }
+            return Math.round((num / denom) * 1000) / 10;     // one decimal
+        }
+
+        function fmtUptime(seconds) {
+            if (!Number.isFinite(seconds) || seconds < 0) return '—';
+            var d = Math.floor(seconds / 86400);
+            var h = Math.floor((seconds % 86400) / 3600);
+            var m = Math.floor((seconds % 3600) / 60);
+            if (d > 0) return d + ' 天 ' + h + ' 小时';
+            if (h > 0) return h + ' 小时 ' + m + ' 分钟';
+            if (m > 0) return m + ' 分钟';
+            return Math.floor(seconds) + ' 秒';
+        }
+
+        function relTime(iso) {
+            if (!iso) return '—';
+            var t = Date.parse(String(iso).replace(' ', 'T') + 'Z');
+            if (!Number.isFinite(t)) return String(iso);
+            var diff = Math.floor((Date.now() - t) / 1000);
+            if (diff < 0)         return String(iso);
+            if (diff < 60)        return diff + ' 秒前';
+            if (diff < 3600)      return Math.floor(diff / 60) + ' 分钟前';
+            if (diff < 86400)     return Math.floor(diff / 3600) + ' 小时前';
+            if (diff < 30 * 86400) return Math.floor(diff / 86400) + ' 天前';
+            return String(iso);
+        }
+
+        // ── Health probe rendering ───────────────────────────────────
+        // /health returns "ok" | "down" | "n/a". We map to pill class
+        // + label. Anything else falls back to muted gray.
+        function probeBadgeClass(status) {
+            if (status === 'ok') return 'lc-pill lc-pill--ok';
+            if (status === 'down') return 'lc-pill lc-pill--down';
+            return 'lc-pill lc-pill--muted';
+        }
+        function probeLabel(status) {
+            if (status === 'ok') return '正常';
+            if (status === 'down') return '异常';
+            if (status === 'n/a') return '未配置';
+            return status || '—';
+        }
+
+        // ── Section renderers ────────────────────────────────────────
+
+        // KPI cards — pure function over a normalized stats object.
+        // `stats` is the union of /admin/stats fields and /health
+        // fields, with /admin/stats winning where both exist.
+        function renderKpis(stats) {
+            // problems
+            var pTotal = stats.problems && typeof stats.problems.total === 'number'
+                ? stats.problems.total : null;
+            var pEasy = stats.problems && stats.problems.by_difficulty
+                ? (stats.problems.by_difficulty.easy || 0) : null;
+            var pMedium = stats.problems && stats.problems.by_difficulty
+                ? (stats.problems.by_difficulty.medium || 0) : null;
+            var pHard = stats.problems && stats.problems.by_difficulty
+                ? (stats.problems.by_difficulty.hard || 0) : null;
+            $('kpi-problems-total').textContent = fmtInt(pTotal);
+            if (pEasy !== null || pMedium !== null || pHard !== null) {
+                $('kpi-problems-sub').textContent =
+                    '简单 ' + fmtInt(pEasy) + ' · 中等 ' + fmtInt(pMedium) +
+                    ' · 困难 ' + fmtInt(pHard);
+            } else {
+                $('kpi-problems-sub').textContent = 'Phase 6 数据待接入';
+            }
+
+            // users
+            var uTotal = stats.users && typeof stats.users.total === 'number'
+                ? stats.users.total : null;
+            var uAdmins = stats.users && typeof stats.users.admins === 'number'
+                ? stats.users.admins : null;
+            $('kpi-users-total').textContent = fmtInt(uTotal);
+            if (uAdmins !== null) {
+                $('kpi-users-sub').textContent = '管理员 ' + fmtInt(uAdmins);
+            } else {
+                $('kpi-users-sub').textContent = 'Phase 6 数据待接入';
+            }
+
+            // submissions
+            var sTotal = stats.submissions && typeof stats.submissions.total === 'number'
+                ? stats.submissions.total : null;
+            var sLast24 = stats.submissions && typeof stats.submissions.last_24h === 'number'
+                ? stats.submissions.last_24h : null;
+            $('kpi-submissions-total').textContent = fmtInt(sTotal);
+            if (sLast24 !== null) {
+                $('kpi-submissions-sub').textContent = '最近 24 小时 ' + fmtInt(sLast24);
+            } else {
+                $('kpi-submissions-sub').textContent = 'Phase 6 数据待接入';
+            }
+
+            // queue
+            var qSize = (typeof stats.queue_size === 'number') ? stats.queue_size
+                : (stats.queue && typeof stats.queue.size === 'number') ? stats.queue.size
+                : null;
+            var qMax = stats.queue && typeof stats.queue.max_size === 'number'
+                ? stats.queue.max_size : null;
+            var qRunning = stats.queue && typeof stats.queue.running === 'number'
+                ? stats.queue.running : null;
+            $('kpi-queue-size').textContent = fmtInt(qSize);
+            if (qRunning !== null && qMax !== null) {
+                $('kpi-queue-sub').textContent =
+                    '运行中 ' + fmtInt(qRunning) + ' / 上限 ' + fmtInt(qMax);
+            } else if (qMax !== null) {
+                $('kpi-queue-sub').textContent = '上限 ' + fmtInt(qMax);
+            } else if (qSize !== null) {
+                $('kpi-queue-sub').textContent = '等待 + 运行中任务';
+            } else {
+                $('kpi-queue-sub').textContent = '—';
+            }
+
+            // warm pool
+            var wpSize = (typeof stats.warm_pool === 'number') ? stats.warm_pool
+                : (stats.warm && typeof stats.warm.size === 'number') ? stats.warm.size
+                : null;
+            var wpMax = stats.warm && typeof stats.warm.max === 'number'
+                ? stats.warm.max : null;
+            $('kpi-warm-pool').textContent = fmtInt(wpSize);
+            if (wpMax !== null) {
+                $('kpi-warm-pool-sub').textContent = '目标 ' + fmtInt(wpMax);
+            } else {
+                $('kpi-warm-pool-sub').textContent = '后台自动补齐';
+            }
+
+            // uptime
+            var up = typeof stats.uptime_seconds === 'number'
+                ? stats.uptime_seconds : null;
+            $('kpi-uptime').textContent = up !== null ? fmtUptime(up) : '—';
+            $('kpi-uptime-sub').textContent = up !== null
+                ? '进程启动至今' : '—';
+        }
+
+        // Health card — three pills: 整体 / 数据库 / Docker.
+        function renderHealth(stats) {
+            var overall = stats.status || 'unknown';
+            var db = stats.db || 'unknown';
+            var docker = stats.docker || 'unknown';
+
+            // Overall pill is "正常" only when every known probe
+            // is healthy. /health reports top-level "ok" / "degraded";
+            // we trust that signal rather than re-deriving from
+            // individual probes — the server already did the work.
+            var overallLabel;
+            var overallCls;
+            if (overall === 'ok') {
+                overallLabel = '正常';
+                overallCls = 'lc-pill lc-pill--ok';
+            } else if (overall === 'degraded') {
+                overallLabel = '降级';
+                overallCls = 'lc-pill lc-pill--warning';
+            } else {
+                overallLabel = '未知';
+                overallCls = 'lc-pill lc-pill--muted';
+            }
+            var overallEl = $('health-overall');
+            overallEl.className = overallCls;
+            overallEl.textContent = overallLabel;
+
+            var dbEl = $('health-db');
+            dbEl.className = probeBadgeClass(db);
+            dbEl.textContent = probeLabel(db);
+
+            var dockerEl = $('health-docker');
+            dockerEl.className = probeBadgeClass(docker);
+            dockerEl.textContent = probeLabel(docker);
+
+            var updated = stats.fetched_at
+                ? ('更新于 ' + relTime(stats.fetched_at))
+                : (stats.uptime_seconds !== undefined
+                    ? ('更新于 ' + fmtUptime(stats.uptime_seconds) + '前')
+                    : '—');
+            $('health-updated').textContent = updated;
+        }
+
+        // Gauges — width = size / max * 100, clipped to 100%.
+        // Color severity: <80% info, 80-100% warning, >=100% danger.
+        function renderGauge(valueEl, maxEl, fillEl, value, max) {
+            if (!Number.isFinite(value) || !Number.isFinite(max) || max <= 0) {
+                valueEl.querySelector('strong').textContent = '—';
+                maxEl.textContent = '/ —';
+                fillEl.style.width = '0%';
+                fillEl.parentElement.parentElement.classList.remove(
+                    'lc-gauge--warning', 'lc-gauge--danger');
+                return;
+            }
+            var pct = Math.max(0, Math.min(100, (value / max) * 100));
+            valueEl.querySelector('strong').textContent = fmtInt(value);
+            maxEl.textContent = '/ ' + fmtInt(max);
+            fillEl.style.width = pct.toFixed(1) + '%';
+            var wrap = fillEl.parentElement.parentElement;
+            wrap.classList.remove('lc-gauge--warning', 'lc-gauge--danger');
+            if (pct >= 100)      wrap.classList.add('lc-gauge--danger');
+            else if (pct >= 80)  wrap.classList.add('lc-gauge--warning');
+        }
+
+        function renderGauges(stats) {
+            var qSize = (typeof stats.queue_size === 'number') ? stats.queue_size
+                : (stats.queue && typeof stats.queue.size === 'number') ? stats.queue.size
+                : null;
+            var qMax = stats.queue && typeof stats.queue.max_size === 'number'
+                ? stats.queue.max_size : null;
+            renderGauge(
+                $('queue-gauge-value'), $('queue-gauge-value').querySelector('.lc-gauge__max'),
+                $('queue-gauge-fill'),
+                qSize, qMax
+            );
+
+            var wpSize = (typeof stats.warm_pool === 'number') ? stats.warm_pool
+                : (stats.warm && typeof stats.warm.size === 'number') ? stats.warm.size
+                : null;
+            var wpMax = stats.warm && typeof stats.warm.max === 'number'
+                ? stats.warm.max : null;
+            renderGauge(
+                $('warm-gauge-value'), $('warm-gauge-value').querySelector('.lc-gauge__max'),
+                $('warm-gauge-fill'),
+                wpSize, wpMax
+            );
+        }
+
+        // Status distribution bars. Hidden when by_status is absent
+        // (Phase 6 fallback mode) — admins see one less card instead
+        // of an empty bar chart that implies a real outage.
+        function renderStatusDistribution(stats) {
+            var card = $('status-distribution-card');
+            var byStatus = stats.submissions && stats.submissions.by_status;
+            if (!byStatus || typeof byStatus !== 'object') {
+                card.hidden = true;
+                return;
+            }
+            card.hidden = false;
+            var pairs = STATUS_ORDER.map(function (s) {
+                var v = byStatus[s];
+                return { status: s, count: Number.isFinite(v) ? v : 0 };
+            });
+            pairs.sort(function (a, b) { return b.count - a.count; });
+            var maxCount = 0;
+            pairs.forEach(function (p) { if (p.count > maxCount) maxCount = p.count; });
+
+            var total = pairs.reduce(function (acc, p) { return acc + p.count; }, 0);
+            var ac = (byStatus.ac || 0);
+            $('status-distribution-sub').textContent =
+                '全站累计 ' + fmtInt(total) +
+                ' · 通过率 ' + (fmtPercent(ac, total) === null
+                    ? '—' : fmtPercent(ac, total) + '%');
+
+            var box = $('status-distribution');
+            while (box.firstChild) box.removeChild(box.firstChild);
+
+            pairs.forEach(function (p) {
+                var pct = maxCount > 0 ? (p.count / maxCount) * 100 : 0;
+                var row = el('div', { class: 'lc-bar-row' });
+                row.appendChild(el('span', {
+                    class: 'lc-bar-row__label',
+                    text: STATUS_LABEL[p.status] || p.status,
+                }));
+                var track = el('div', { class: 'lc-bar-track' });
+                var fill = el('div', {
+                    class: 'lc-bar-fill lc-bar-fill--' + (p.status === 'ac' ? 'ac'
+                        : (p.status === 'pending' || p.status === 'running') ? 'muted'
+                        : 'muted'),
+                });
+                fill.style.width = pct.toFixed(1) + '%';
+                track.appendChild(fill);
+                row.appendChild(track);
+                row.appendChild(el('span', {
+                    class: 'lc-bar-row__count',
+                    text: fmtInt(p.count),
+                    title: p.count + ' 条 · 占全站 ' +
+                        (fmtPercent(p.count, total) === null
+                            ? '—' : fmtPercent(p.count, total) + '%'),
+                }));
+                box.appendChild(row);
+            });
+        }
+
+        // Recent submissions table. Each row: id / status / user /
+        // problem slug / language / time used / submitted.
+        // `recent` is `stats.recent_submissions` (Phase 6) or
+        // `/api/v1/submissions` items (fallback path).
+        function renderRecentTable(recent) {
+            var table = $('recent-table');
+            var tbody = $('recent-tbody');
+            var empty = $('recent-empty-state');
+            while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+
+            if (!Array.isArray(recent) || recent.length === 0) {
+                table.hidden = true;
+                empty.hidden = false;
+                return;
+            }
+            empty.hidden = true;
+            table.hidden = false;
+            recent.slice(0, RECENT_LIMIT).forEach(function (row) {
+                if (!row) return;
+                var status = String(row.status || '');
+                var tr = el('tr');
+                // ID
+                tr.appendChild(el('td', null, [
+                    el('span', {
+                        class: 'lc-form-help',
+                        text: '#' + String(row.id || '—'),
+                        title: 'submission id=' + row.id,
+                    })
+                ]));
+                // Status badge — class is whitelisted to lc-status--<known>
+                var safeStatus = STATUS_ORDER.indexOf(status) !== -1 ? status : 'pending';
+                tr.appendChild(el('td', null, [
+                    el('span', {
+                        class: 'lc-status lc-status--' + safeStatus,
+                        text: STATUS_LABEL[safeStatus] || status || '—',
+                    })
+                ]));
+                // User (link to profile; null-safe)
+                var user = row.username || (row.user_id != null ? '#' + row.user_id : '—');
+                if (row.username) {
+                    tr.appendChild(el('td', null, [
+                        el('a', {
+                            href: PROFILE_URL + encodeURIComponent(row.username),
+                            text: row.username,
+                            target: '_blank',
+                            rel: 'noopener',
+                            title: '查看个人主页',
+                        })
+                    ]));
+                } else {
+                    tr.appendChild(el('td', null, [
+                        el('span', { class: 'lc-form-help', text: String(user) })
+                    ]));
+                }
+                // Problem slug (link to /problem.html)
+                var slug = row.problem_slug || row.slug;
+                if (slug) {
+                    tr.appendChild(el('td', null, [
+                        el('a', {
+                            href: PROBLEM_URL + encodeURIComponent(slug),
+                            text: slug,
+                            target: '_blank',
+                            rel: 'noopener',
+                            title: '查看题目详情',
+                        })
+                    ]));
+                } else if (row.problem_id != null) {
+                    tr.appendChild(el('td', null, [
+                        el('span', { class: 'lc-form-help',
+                                     text: '#' + row.problem_id })
+                    ]));
+                } else {
+                    tr.appendChild(el('td', null, [
+                        el('span', { class: 'lc-form-help', text: '—' })
+                    ]));
+                }
+                // Language
+                tr.appendChild(el('td', null, [
+                    el('span', {
+                        class: 'lc-pill',
+                        text: LANG_LABEL[row.language] || row.language || '—',
+                    })
+                ]));
+                // Time used
+                tr.appendChild(el('td', null, [
+                    el('span', {
+                        class: 'lc-form-help',
+                        text: (typeof row.time_used === 'number')
+                            ? (row.time_used + ' ms') : '—',
+                    })
+                ]));
+                // Submitted at
+                tr.appendChild(el('td', null, [
+                    el('span', {
+                        class: 'lc-form-help',
+                        text: relTime(row.created_at),
+                        title: row.created_at ? (row.created_at + ' UTC') : '',
+                    })
+                ]));
+                tbody.appendChild(tr);
+            });
+        }
+
+        // ── Top-level state machine ──────────────────────────────────
+        function showState(name) {
+            ['loading-state', 'error-state', 'pending-state',
+             'dashboard-content'].forEach(function (id) {
+                $(id).hidden = true;
+            });
+            if (name === 'loading')      $('loading-state').hidden = false;
+            else if (name === 'error')    $('error-state').hidden = false;
+            else if (name === 'pending')  $('pending-state').hidden = false;
+            else                          $('dashboard-content').hidden = false;
+        }
+
+        function showHeaderStatus(mode, label) {
+            var chip = $('auto-refresh-chip');
+            var dot = chip.querySelector('.lc-sse-status__dot');
+            if (dot) {
+                dot.className = 'lc-sse-status__dot lc-sse-status__dot--' + mode;
+            }
+            chip.dataset.mode = mode;
+            $('auto-refresh-label').textContent = label;
+        }
+
+        // ── Data fetch — Phase 6 canonical path + fallback ──────────
+        // Normalizes responses from /admin/stats and /api/v1/health
+        // into a single `stats` shape that the renderers consume.
+        // The two are not exclusive — when /admin/stats is live, we
+        // overlay its richer fields on top of /health's probe info
+        // so the gauges stay correct even if stats omits queue_size.
+        function normalize(stats, health) {
+            var out = Object.assign({}, health || {}, stats || {});
+            out.fetched_at = new Date().toISOString();
+            return out;
+        }
+
+        function loadStats() {
+            var token = ++state.inflight;
+            showState('loading');
+            showHeaderStatus('polling', '刷新中…');
+
+            // Kick off the two requests in parallel. /admin/stats
+            // is the canonical source; /health is the fallback
+            // scaffolding so the page renders even before Phase 6.
+            var statsP = litecode.api.get('/admin/stats')
+                .then(function (resp) {
+                    return (resp && resp.data) ? resp.data : null;
+                })
+                .catch(function (err) {
+                    if (err && err.status === 404) {
+                        // Phase 6 endpoint not shipped yet — return
+                        // null so we know to fall through.
+                        return null;
+                    }
+                    throw err;
+                });
+
+            var healthP = litecode.api.get('/health')
+                .then(function (resp) { return (resp && resp.data) ? resp.data : null; })
+                .catch(function () { return null; });
+
+            var recentP = litecode.api.get('/submissions?limit=' + RECENT_LIMIT)
+                .then(function (resp) {
+                    return (resp && resp.data && Array.isArray(resp.data.items))
+                        ? resp.data.items : [];
+                })
+                .catch(function () { return []; });
+
+            Promise.all([statsP, healthP, recentP]).then(function (parts) {
+                if (token !== state.inflight) return;
+                var stats = parts[0];
+                var health = parts[1];
+                var recent = parts[2];
+
+                if (!stats && !health) {
+                    // Both endpoints failed (network down?). Show
+                    // the retry state — admin can hit 重试.
+                    showState('error');
+                    $('error-message').textContent =
+                        '无法连接到服务，请检查网络或稍后重试';
+                    showHeaderStatus('timeout', '已暂停');
+                    return;
+                }
+
+                // If stats is null but health is alive, render in
+                // fallback mode. /submissions?limit=N provides the
+                // recent rows; everything else comes from /health.
+                var recentFromStats = (stats && Array.isArray(stats.recent_submissions))
+                    ? stats.recent_submissions : recent;
+                var normalized = normalize(stats, health);
+
+                // Tag whether /admin/stats was reachable so the
+                // pending hint appears on first render only.
+                state.statsAvailable = !!stats;
+                if (!stats) {
+                    showState('pending');
+                } else {
+                    showState('content');
+                }
+                $('dashboard-content').hidden = false;
+
+                renderKpis(normalized);
+                renderHealth(normalized);
+                renderGauges(normalized);
+                renderStatusDistribution(normalized);
+                renderRecentTable(recentFromStats);
+
+                lastStats = normalized;
+                showHeaderStatus('polling', '实时');
+            }).catch(function (err) {
+                if (token !== state.inflight) return;
+                showState('error');
+                var msg = (err && err.message)
+                    ? err.message : '网络错误，请稍后重试';
+                $('error-message').textContent = msg;
+                showHeaderStatus('timeout', '已暂停');
+                if (err && err.status === 403) {
+                    // Defensive: app.js's requireAdmin should have
+                    // caught this. Show a clear message instead of
+                    // the generic "加载失败".
+                    $('error-message').textContent = '您没有访问管理后台的权限';
+                } else if (err && err.status === 401) {
+                    // Auto-redirect path will fire from api.js.
+                    $('error-message').textContent = '登录状态已过期';
+                }
+            });
+        }
+
+        // ── Auto-refresh loop ────────────────────────────────────────
+        function startAutoRefresh() {
+            stopAutoRefresh();
+            state.refreshTimer = setInterval(function () {
+                if (state.paused) return;
+                loadStats();
+            }, REFRESH_INTERVAL_MS);
+        }
+        function stopAutoRefresh() {
+            if (state.refreshTimer) {
+                clearInterval(state.refreshTimer);
+                state.refreshTimer = null;
+            }
+        }
+        function onVisibilityChange() {
+            if (document.hidden) {
+                state.paused = true;
+                showHeaderStatus('timeout', '已暂停');
+            } else {
+                state.paused = false;
+                showHeaderStatus('polling', '实时');
+                // Resume: refresh immediately so the dashboard
+                // doesn't show stale data right after the admin
+                // comes back to the tab.
+                loadStats();
+            }
+        }
+
+        // ── Boot ────────────────────────────────────────────────────
+        document.addEventListener('DOMContentLoaded', function () {
+            litecode.boot.shell({
+                title: 'LiteCode · 系统概览',
+                requireAdmin: true,
+            }).then(function () {
+                $('retry-btn').addEventListener('click', function () { loadStats(); });
+                $('reload-btn').addEventListener('click', function () { loadStats(); });
+                document.addEventListener('visibilitychange', onVisibilityChange);
+
+                loadStats();
+                startAutoRefresh();
+            });
+        });
+
+        // Test hooks — exported only when running under the harness.
+        if (typeof __lcTest !== 'undefined') {
+            __lcTest.dashboard = {
+                STATUS_ORDER: STATUS_ORDER,
+                STATUS_LABEL: STATUS_LABEL,
+                LANG_LABEL: LANG_LABEL,
+                RECENT_LIMIT: RECENT_LIMIT,
+                REFRESH_INTERVAL_MS: REFRESH_INTERVAL_MS,
+                fmtInt: fmtInt,
+                fmtPercent: fmtPercent,
+                fmtUptime: fmtUptime,
+                relTime: relTime,
+                probeBadgeClass: probeBadgeClass,
+                probeLabel: probeLabel,
+                normalize: normalize,
+                renderKpis: renderKpis,
+                renderGauges: renderGauges,
+                renderStatusDistribution: renderStatusDistribution,
+                renderRecentTable: renderRecentTable,
+            };
+        }
+    })();
     </script>
 </body>
 </html>
