@@ -72,10 +72,13 @@
 
     // Canonical CSP value. Keep whitespace minimal — browsers normalize
     // it but humans diff-ing HTML will appreciate the consistency.
+    // `style-src` mirrors `script-src` (both `self` + cdn.jsdelivr.net)
+    // because problem.html ships CodeMirror's stylesheet from the
+    // CDN with sha384 integrity (see STYLESHEETS below).
     var CSP_VALUE =
         "default-src 'self'; " +
         "script-src 'self' https://cdn.jsdelivr.net; " +
-        "style-src 'self' 'unsafe-inline'; " +
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
         "img-src 'self' data:; " +
         "font-src 'self'; " +
         "connect-src 'self'; " +
@@ -86,7 +89,7 @@
 
     // CDN scripts — the only scripts the SPA loads off-site. Pin
     // version + integrity so a compromised CDN or transparent proxy
-    // can't swap the bytes. Both sha384 values were generated from
+    // can't swap the bytes. All sha384 values were generated from
     // the bytes served by cdn.jsdelivr.net on the pinned version;
     // see the comment at the top of this file for the recompute steps.
     var SCRIPTS = {
@@ -104,6 +107,46 @@
             integrity:  'sha384-+VfUPEb0PdtChMwmBcBmykRMDd+v6D/oFmB3rZM/puCMDYcIvF968OimRh4KQY9a',
             crossOrigin:'anonymous',
             size:       21496,
+        },
+        // CodeMirror 5.65.16 — problem.html loads it dynamically so
+        // the editor gets syntax highlighting + line numbers without
+        // shipping ~250 KB of JS inline. Pinned to 5.x (not 6.x) for
+        // two reasons: (a) 5.x is a UMD bundle that works without
+        // ES-module shenanigans, (b) 6.x's split bundles don't have
+        // a single canonical sha384 to pin. See problem.html /
+        // editor-bootstrap for the load sequence.
+        codemirror: {
+            url:        'https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.js',
+            integrity:  'sha384-CtBuRlcKITyrd+aBeTPNFB1/T8+kvtNQiWMCLtiGvD6NpLOJAdt8e8PpJJ2Gn1D0',
+            crossOrigin:'anonymous',
+            size:       173953,
+        },
+        // C/C++ mode for CodeMirror 5. 'clike' is the upstream name
+        // for the C-like-family tokenizer (C / C++ / Java / JS / etc.).
+        'codemirror-clike': {
+            url:        'https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/clike/clike.min.js',
+            integrity:  'sha384-ZS86VwH8VodbCs4EeYNX2wCKSJpCZfGlrTWe2cFgaqyafruHBCCuZcP2vfCz+V9Q',
+            crossOrigin:'anonymous',
+            size:       21368,
+        },
+    };
+
+    // CDN stylesheets — same SRI discipline as scripts. Used by
+    // problem.html to load CodeMirror's stylesheet dynamically so the
+    // editor inherits the right gutter / cursor / selection colors
+    // and follows the page's dark-mode toggle.
+    //
+    // The stylesheet is loaded programmatically (not via a static
+    // <link rel="stylesheet" href=... integrity=...> tag) so a single
+    // csp.js change can rotate the hash without touching every page.
+    // Browsers DO honor `integrity` on <link> elements; the load
+    // fails closed if the bytes drift.
+    var STYLESHEETS = {
+        codemirror: {
+            url:        'https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.css',
+            integrity:  'sha384-phfEUVAmRZV1Pzn/Xgxc3NH6zPMDuer0wHU9jRQKhNBBLyV4MP1gaBY1sxfxxPRT',
+            crossOrigin:'anonymous',
+            size:       6378,
         },
     };
 
@@ -167,6 +210,23 @@
         return s;
     }
 
+    // Build a <link rel="stylesheet"> element with SRI integrity
+    // attributes. Mirrors makeScript() for the stylesheet use case
+    // (CodeMirror's editor.css). The browser refuses to apply the
+    // stylesheet if the bytes drift. Returns the element so callers
+    // can wire load/error listeners.
+    function makeStylesheet(spec) {
+        if (!spec || !spec.url) throw new Error('litecode.csp.makeStylesheet: spec.url required');
+        var l = document.createElement('link');
+        l.rel = 'stylesheet';
+        l.href = spec.url;
+        if (spec.integrity) {
+            l.integrity = spec.integrity;
+            l.crossOrigin = spec.crossOrigin || 'anonymous';
+        }
+        return l;
+    }
+
     // ────────────────────────────────────────────────────────────────────
     //  Module surface
     // ────────────────────────────────────────────────────────────────────
@@ -174,9 +234,11 @@
     var ns = {
         CSP_VALUE:    CSP_VALUE,
         SCRIPTS:      SCRIPTS,
+        STYLESHEETS:  STYLESHEETS,
         findMetaCsp:  findMetaCsp,
         assertMetaMatchesCanonical: assertMetaMatchesCanonical,
         makeScript:   makeScript,
+        makeStylesheet: makeStylesheet,
         // Convenience accessors — keep `app.js` terse.
         marked:       SCRIPTS.marked,
         dompurify:    SCRIPTS.dompurify,

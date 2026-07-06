@@ -8,13 +8,18 @@
       Phase 5 ★ CSP/SRI / SPEC §6.3 + A32
       Canonical CSP pinned in `web/js/csp.js`. The page MUST stay in
       lock-step with that value or csp.js logs a clear console error
-      on load. `script-src` allows cdn.jsdelivr.net so problem.html can
-      lazy-load marked + DOMPurify via litecode.markdown.prewarm(); the
-      bundles themselves ship with sha384 integrity hashes so the
-      browser refuses to execute tampered bytes.
+      on load. `script-src` and `style-src` both allow cdn.jsdelivr.net
+      so problem.html can lazy-load marked + DOMPurify + CodeMirror via
+      litecode.csp; bundles themselves ship with sha384 integrity
+      hashes so the browser refuses to execute tampered bytes.
+
+      The base /css/style.css is the only stylesheet loaded
+      statically; CodeMirror's stylesheet is injected by the
+      page-local script using csp.STYLESHEETS so its sha384 is
+      enforced the same way as the JS bundles.
     -->
     <meta http-equiv="Content-Security-Policy"
-          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
+          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
 
     <title>LiteCode · 刷题</title>
     <link rel="stylesheet" href="/css/style.css">
@@ -22,20 +27,124 @@
 <body>
     <div data-nav></div>
 
-    <main class="lc-container">
-        <header class="lc-stack" style="margin-bottom: 24px;">
-            <h1>刷题页（占位）</h1>
+    <main class="lc-container lc-container--wide">
+        <div id="loading-state" class="lc-loading" aria-live="polite">
+            <span class="lc-spinner" aria-hidden="true"></span>
+            <span>加载题目中…</span>
+        </div>
+
+        <div id="not-found-state" class="lc-empty" hidden>
+            <p class="lc-empty__title">题目不存在</p>
             <p class="lc-form-help">
-                Phase 5 ★ 题目详情 + 代码编辑器页面将在后续 commit 落地；
-                本占位页只承载 CSP + SRI + 框架接入，确保后继编辑不会
-                重新发明 header 模板。所有 API 调用走 <code>litecode.api</code>。
+                该 slug 没有对应的题目（可能已删除或被管理员隐藏）。<br>
+                <a href="/index.html">返回题库</a>
             </p>
-        </header>
+        </div>
+
+        <div id="error-state" class="lc-error" hidden role="alert">
+            <p class="lc-error__title">加载失败</p>
+            <p class="lc-form-help" id="error-message"></p>
+            <button type="button" class="lc-btn lc-btn--primary lc-btn--sm"
+                    id="retry-btn">重试</button>
+        </div>
+
+        <!--
+          Two-column problem + editor layout (LeetCode-style).
+
+          Left column  : 题目描述 / 样例 / 标签 / 通过率
+          Right column : 代码编辑器 + 提交 + 结果
+
+          Both columns scroll independently on wide viewports; on
+          narrow viewports (<= 1024px) the layout collapses to a
+          single column with the problem on top.
+        -->
+        <div id="problem-pane" class="lc-problem-layout" hidden>
+            <article class="lc-problem-pane" aria-label="题目描述">
+                <header class="lc-problem-pane__header">
+                    <div class="lc-row lc-problem-pane__title-row">
+                        <h1 id="problem-title" class="lc-problem-pane__title">…</h1>
+                        <span id="problem-difficulty" class="lc-pill">…</span>
+                    </div>
+                    <div class="lc-problem-pane__meta">
+                        <span class="lc-form-help">
+                            时间限制 <strong id="problem-time">…</strong> ms
+                            &nbsp;·&nbsp;
+                            内存限制 <strong id="problem-mem">…</strong> MB
+                        </span>
+                        <span class="lc-form-help" id="problem-stats">…</span>
+                    </div>
+                    <div id="problem-tags" class="lc-tag-chips lc-problem-pane__tags"
+                         aria-label="标签"></div>
+                </header>
+
+                <section class="lc-problem-pane__description lc-markdown"
+                         id="problem-description" aria-label="题目描述正文">
+                    <!-- Markdown → sanitized HTML injected by JS. -->
+                </section>
+
+                <section id="problem-samples" class="lc-problem-pane__samples"
+                         aria-label="样例" hidden>
+                    <h2>示例</h2>
+                    <ol class="lc-samples" id="samples-list"></ol>
+                </section>
+            </article>
+
+            <aside class="lc-editor-pane" aria-label="代码编辑与提交">
+                <div class="lc-editor-pane__toolbar">
+                    <label class="lc-editor-pane__lang">
+                        <span class="lc-form-label">语言</span>
+                        <select id="lang-select" class="lc-input lc-editor-pane__select">
+                            <option value="cpp" selected>C++ (g++ 12)</option>
+                            <option value="c">C (gcc)</option>
+                        </select>
+                    </label>
+                    <div class="lc-editor-pane__toolbar-actions">
+                        <button type="button" class="lc-btn lc-btn--ghost lc-btn--sm"
+                                id="reset-code-btn" title="恢复默认模板">重置代码</button>
+                        <button type="button" class="lc-btn lc-btn--ghost lc-btn--sm"
+                                id="clear-draft-btn" title="清除本机草稿">清除草稿</button>
+                    </div>
+                </div>
+
+                <div class="lc-editor-shell" id="editor-shell">
+                    <textarea id="code-textarea" spellcheck="false" autocomplete="off"
+                              autocapitalize="off" autocorrect="off"
+                              aria-label="代码编辑器"></textarea>
+                </div>
+
+                <div class="lc-editor-pane__submit-row">
+                    <span id="draft-status" class="lc-form-help"
+                          aria-live="polite"></span>
+                    <div class="lc-row" style="gap: 8px;">
+                        <button type="button" class="lc-btn lc-btn--primary"
+                                id="submit-btn">提交</button>
+                    </div>
+                </div>
+
+                <section id="result-panel" class="lc-result-panel" hidden
+                         aria-live="polite" aria-label="判题结果">
+                    <div class="lc-result-panel__status-row">
+                        <span id="result-status-badge" class="lc-status">…</span>
+                        <span id="result-message" class="lc-form-help"></span>
+                    </div>
+                    <dl class="lc-result-panel__metrics" id="result-metrics"></dl>
+                    <details id="result-failed-case" class="lc-result-panel__details"
+                             hidden>
+                        <summary>查看失败测试点</summary>
+                        <pre id="result-failed-case-body"></pre>
+                    </details>
+                    <a id="result-link" class="lc-form-help"
+                       href="#" hidden>查看完整提交详情 →</a>
+                </section>
+            </aside>
+        </div>
     </main>
 
     <!--
-      Load order is mandatory: csp.js → api.js → app.js.
+      Load order is mandatory: csp.js → markdown.js → api.js → app.js.
       `defer` keeps every script after the [data-nav] slot is parsed.
+      csp.js is loaded first so api.js / app.js / markdown.js can
+      reference the SRI registry (litecode.csp.SCRIPTS) at boot.
     -->
     <script src="/js/csp.js" defer></script>
     <script src="/js/markdown.js" defer></script>
@@ -43,18 +152,664 @@
     <script src="/js/app.js" defer></script>
 
     <script>
-        // Phase 5 ★ 前端框架 boots theme + nav + global error wiring.
-        //
-        // ★ Markdown XSS 净化: problem.html is the consumer of
-        // `description` (raw Markdown from /api/v1/problems/:slug).
-        // We prewarm marked + DOMPurify in the background so the
-        // first render of a problem description doesn't pay the CDN
-        // round-trip; the synchronous fallback
-        // `litecode.markdown.renderSafe()` always returns escaped
-        // text when the libs aren't loaded yet, so the page is
-        // XSS-safe even on the cold path.
-        litecode.markdown.prewarm();
-        litecode.boot.shell({ title: 'LiteCode · 刷题' });
+    // ────────────────────────────────────────────────────────────────────
+    //  Problem detail + code editor (Phase 5 ★ 题目详情 + 代码编辑器)
+    //
+    //  Responsibilities:
+    //    1) Parse ?slug=… from the URL. 404 + redirect-hint if absent.
+    //    2) GET /api/v1/problems/:slug → render description (via
+    //       litecode.markdown.renderSafeAsync, which falls back to
+    //       escaped text if marked/DOMPurify failed to load) + tags +
+    //       samples.
+    //    3) Lazy-load CodeMirror (CSS + JS + C/C++ mode) via the
+    //       csp.STYLESHEETS / csp.SCRIPTS registries. Each load is
+    //       sha384-pinned; an integrity failure logs and falls back
+    //       to a plain <textarea>.
+    //    4) Boot CodeMirror with the selected language, restore the
+    //       localStorage draft keyed by `<slug>:<language>`, and
+    //       auto-save on every change (debounced 300ms).
+    //    5) POST /api/v1/submissions on submit → poll
+    //       GET /api/v1/submissions/:id every 1.5s until status is
+    //       terminal → render the result panel.
+    //    6) On AC, the draft is cleared (per SPEC §11 "提交成功后清除").
+    //       On WA / TLE / etc. the draft is kept so the user can
+    //       iterate without losing work.
+    //
+    //  Out of scope (later commits):
+    //    - SSE push (the server has /submissions/sse/:id v1.2.17; the
+    //      front-end can switch to it when we want lower latency).
+    //    - CodeMirror 6 / Monaco (the bundled CodeMirror 5 covers the
+    //      "LeetCode 风格" requirement; 6/7 are drop-in upgrades
+    //      behind the same `litecode.editor` surface).
+    // ────────────────────────────────────────────────────────────────────
+    (function () {
+        'use strict';
+
+        // ── Constants ────────────────────────────────────────────────
+        var DRAFT_PREFIX = 'litecode:draft:';   // key = DRAFT_PREFIX + slug + ':' + lang
+        var POLL_INTERVAL_MS = 1500;
+        var POLL_MAX_MS = 30 * 1000;            // hard cap; bail after 30s
+        var DRAFT_SAVE_DEBOUNCE = 300;
+        var SAMPLE_MAX_LINE = 24;               // pre-truncate long sample I/O in display
+
+        var DEFAULT_TEMPLATES = {
+            cpp: [
+                '#include <bits/stdc++.h>',
+                'using namespace std;',
+                '',
+                'int main() {',
+                '    ios::sync_with_stdio(false);',
+                '    cin.tie(nullptr);',
+                '    // TODO: 实现题目逻辑',
+                '    return 0;',
+                '}',
+                '',
+            ].join('\n'),
+            c: [
+                '#include <stdio.h>',
+                '#include <stdlib.h>',
+                '',
+                'int main(void) {',
+                '    // TODO: 实现题目逻辑',
+                '    return 0;',
+                '}',
+                '',
+            ].join('\n'),
+        };
+
+        var LANG_MODE = { c: 'text/x-c', cpp: 'text/x-c++src' };
+        var LANG_LABEL = { c: 'C', cpp: 'C++' };
+
+        // Status badge mapping (matches the existing .lc-status--* tokens
+        // in style.css; kept in lock-step here so a server-side status
+        // string always maps to a defined class).
+        var STATUS_LABEL = {
+            pending: '排队中',
+            running: '运行中',
+            ac:      'AC',
+            wa:      'WA',
+            tle:     'TLE',
+            mle:     'MLE',
+            re:      'RE',
+            ole:     'OLE',
+            pe:      'PE',
+            ce:      'CE',
+            se:      'SE',
+        };
+        var TERMINAL_STATUSES = { ac:1, wa:1, tle:1, mle:1, re:1, ole:1, pe:1, ce:1, se:1 };
+
+        // ── URL state ──────────────────────────────────────────────
+        function getSlug() {
+            var sp = new URLSearchParams(window.location.search);
+            return (sp.get('slug') || '').trim();
+        }
+
+        // ── DOM helpers ────────────────────────────────────────────
+        function $(id) { return document.getElementById(id); }
+        function el(tag, attrs, children) {
+            var node = document.createElement(tag);
+            if (attrs) {
+                Object.keys(attrs).forEach(function (k) {
+                    if (k === 'class') node.className = attrs[k];
+                    else if (k === 'text') node.textContent = attrs[k];
+                    else if (k === 'dataset') {
+                        Object.keys(attrs[k]).forEach(function (dk) {
+                            node.dataset[dk] = attrs[k][dk];
+                        });
+                    } else if (k.charAt(0) === 'o' && k.charAt(1) === 'n') {
+                        node.addEventListener(k.slice(2).toLowerCase(), attrs[k]);
+                    } else {
+                        node.setAttribute(k, attrs[k]);
+                    }
+                });
+            }
+            if (children !== undefined && children !== null) {
+                (Array.isArray(children) ? children : [children]).forEach(function (c) {
+                    if (c === null || c === undefined) return;
+                    if (typeof c === 'string') node.appendChild(document.createTextNode(c));
+                    else node.appendChild(c);
+                });
+            }
+            return node;
+        }
+
+        function showState(name) {
+            ['loading-state', 'not-found-state', 'error-state', 'problem-pane'].forEach(function (id) {
+                $(id).hidden = true;
+            });
+            if (name) $(name).hidden = false;
+        }
+
+        function truncate(s, max) {
+            s = String(s == null ? '' : s);
+            if (s.length <= max) return s;
+            return s.slice(0, max) + '\n… (已截断)';
+        }
+
+        // ── Render: problem header + description + samples ─────────
+        function renderProblem(p) {
+            // Title
+            $('problem-title').textContent = p.title || '(无题名)';
+
+            // Difficulty pill
+            var diffEl = $('problem-difficulty');
+            diffEl.textContent = p.difficulty || '?';
+            diffEl.className = 'lc-pill lc-pill--' + (p.difficulty || '');
+
+            // Limits
+            $('problem-time').textContent = p.time_limit;
+            $('problem-mem').textContent  = p.memory_limit;
+
+            // AC率 + 提交数
+            var ac = Number(p.accepted_count)   || 0;
+            var sub = Number(p.submission_count) || 0;
+            var rate = sub > 0 ? ((ac / sub) * 100).toFixed(1) + '%' : '—';
+            $('problem-stats').textContent =
+                '通过率 ' + rate + ' · ' + ac + ' / ' + sub + ' 通过';
+
+            // Tags
+            var tagsEl = $('problem-tags');
+            while (tagsEl.firstChild) tagsEl.removeChild(tagsEl.firstChild);
+            (p.tags || []).forEach(function (t) {
+                if (!t || !t.name) return;
+                tagsEl.appendChild(el('a', {
+                    class: 'lc-tag-chip',
+                    href: '/index.html?tag_id=' + encodeURIComponent(t.id),
+                    text: t.name,
+                    title: '查看所有 "' + t.name + '" 标签的题目',
+                }));
+            });
+
+            // Description — render Markdown safely. prewarm() in the
+            // background; renderSafe() always returns escaped text if
+            // the libs aren't ready yet.
+            var descEl = $('problem-description');
+            if (window.litecode && litecode.markdown) {
+                descEl.innerHTML = litecode.markdown.renderSafe(p.description || '');
+                // re-prewarm in case the user landed here without going
+                // through the prior page that already prewarmed.
+                litecode.markdown.renderSafeAsync(p.description || '').then(function (html) {
+                    descEl.innerHTML = html;
+                }).catch(function () { /* keep escaped fallback */ });
+            } else {
+                descEl.textContent = p.description || '';
+            }
+
+            // Samples
+            var samples = p.samples || [];
+            var wrap = $('problem-samples');
+            var list = $('samples-list');
+            while (list.firstChild) list.removeChild(list.firstChild);
+            if (!samples.length) {
+                wrap.hidden = true;
+            } else {
+                wrap.hidden = false;
+                samples.forEach(function (s, i) {
+                    var li = el('li', { class: 'lc-sample' });
+                    li.appendChild(el('div', { class: 'lc-sample__caption', text: '示例 ' + (i + 1) }));
+                    var input = el('div', { class: 'lc-sample__io' });
+                    input.appendChild(el('div', { class: 'lc-sample__label', text: '输入' }));
+                    input.appendChild(el('pre', {
+                        class: 'lc-sample__pre',
+                        text: truncate(s.input, SAMPLE_MAX_LINE * 80),
+                    }));
+                    li.appendChild(input);
+                    var out = el('div', { class: 'lc-sample__io' });
+                    out.appendChild(el('div', { class: 'lc-sample__label', text: '输出' }));
+                    out.appendChild(el('pre', {
+                        class: 'lc-sample__pre',
+                        text: truncate(s.output, SAMPLE_MAX_LINE * 80),
+                    }));
+                    li.appendChild(out);
+                    list.appendChild(li);
+                });
+            }
+        }
+
+        // ── Editor bootstrap (CodeMirror 5, SRI-pinned) ─────────────
+        var editor = {
+            cm: null,            // CodeMirror instance (or null if load failed)
+            textarea: null,      // <textarea> fallback
+            ready: false,
+        };
+
+        function loadCodemirror() {
+            if (!window.litecode || !litecode.csp) {
+                console.warn('[editor] csp.js not loaded; falling back to <textarea>');
+                return Promise.resolve(false);
+            }
+            // CSS first so the editor mounts with proper gutter colors
+            // when the JS bundle finishes loading.
+            var cssSpec = litecode.csp.STYLESHEETS && litecode.csp.STYLESHEETS.codemirror;
+            var jsSpec  = litecode.csp.SCRIPTS     && litecode.csp.SCRIPTS.codemirror;
+            var modeSpec = litecode.csp.SCRIPTS    && litecode.csp.SCRIPTS['codemirror-clike'];
+
+            function loadStyle(spec) {
+                return new Promise(function (resolve, reject) {
+                    if (!spec) { reject(new Error('no stylesheet spec')); return; }
+                    var existing = document.querySelector(
+                        'link[data-lc-cm-css="' + spec.url + '"]'
+                    );
+                    if (existing) { resolve(existing); return; }
+                    var l = litecode.csp.makeStylesheet(spec);
+                    l.dataset.lcCmCss = spec.url;
+                    l.addEventListener('load',  function () { resolve(l); });
+                    l.addEventListener('error', function () { reject(new Error('css load failed')); });
+                    document.head.appendChild(l);
+                });
+            }
+            function loadJs(spec) {
+                return new Promise(function (resolve, reject) {
+                    if (!spec) { reject(new Error('no script spec')); return; }
+                    var existing = document.querySelector(
+                        'script[data-lc-cm-src="' + spec.url + '"]'
+                    );
+                    if (existing && existing.dataset.loaded === '1') { resolve(); return; }
+                    if (existing) {
+                        existing.addEventListener('load',  function () { resolve(); });
+                        existing.addEventListener('error', function () { reject(new Error('js load failed')); });
+                        return;
+                    }
+                    var s = litecode.csp.makeScript(spec);
+                    s.dataset.lcCmSrc = spec.url;
+                    s.addEventListener('load',  function () { s.dataset.loaded = '1'; resolve(); });
+                    s.addEventListener('error', function () { reject(new Error('js load failed')); });
+                    document.head.appendChild(s);
+                });
+            }
+
+            return loadStyle(cssSpec)
+                .then(function () { return loadJs(jsSpec); })
+                .then(function () { return loadJs(modeSpec); })
+                .then(function () { return true; })
+                .catch(function (err) {
+                    console.warn('[editor] CodeMirror load failed, using <textarea> fallback', err);
+                    return false;
+                });
+        }
+
+        function mountEditor(initialCode, lang) {
+            editor.textarea = $('code-textarea');
+            if (window.CodeMirror && editor.textarea) {
+                editor.cm = window.CodeMirror.fromTextArea(editor.textarea, {
+                    mode: LANG_MODE[lang] || LANG_MODE.cpp,
+                    lineNumbers: true,
+                    indentUnit: 4,
+                    tabSize: 4,
+                    indentWithTabs: false,
+                    smartIndent: true,
+                    lineWrapping: true,
+                    matchBrackets: true,
+                    autoCloseBrackets: true,
+                    styleActiveLine: true,
+                    // Built-in themes from the CodeMirror 5.65.16 core
+                    // bundle (no extra SRI load needed). We override
+                    // theme colors via .CodeMirror overrides in
+                    // style.css to match the page's --lc-color-*
+                    // tokens, so the editor feels native.
+                    theme: document.documentElement.classList.contains('dark')
+                        ? 'monokai' : 'default',
+                });
+                // Re-sync theme when the page's dark mode toggles.
+                var origToggle = window.litecode && litecode.theme && litecode.theme.toggle;
+                if (origToggle) {
+                    litecode.theme.toggle = function () {
+                        origToggle();
+                        if (editor.cm) {
+                            editor.cm.setOption('theme',
+                                document.documentElement.classList.contains('dark')
+                                    ? 'monokai' : 'default');
+                        }
+                    };
+                }
+                editor.cm.setValue(initialCode || '');
+                editor.ready = true;
+            } else {
+                // Fallback: plain textarea. We still keep a few niceties
+                // (tab inserts spaces; shift+tab reverses) so a failed
+                // CDN load doesn't make the editor unusable.
+                editor.textarea.value = initialCode || '';
+                editor.textarea.addEventListener('keydown', function (e) {
+                    if (e.key !== 'Tab') return;
+                    e.preventDefault();
+                    var ta = e.target;
+                    var start = ta.selectionStart, end = ta.selectionEnd;
+                    var v = ta.value;
+                    if (e.shiftKey) {
+                        // Outdent current line by 4 spaces.
+                        var lineStart = v.lastIndexOf('\n', start - 1) + 1;
+                        var line = v.slice(lineStart, end);
+                        var dedented = line.replace(/^( {1,4})/gm, '');
+                        ta.value = v.slice(0, lineStart) + dedented + v.slice(end);
+                        ta.selectionStart = lineStart;
+                        ta.selectionEnd = lineStart + dedented.length;
+                    } else {
+                        ta.value = v.slice(0, start) + '    ' + v.slice(end);
+                        ta.selectionStart = ta.selectionEnd = start + 4;
+                    }
+                });
+                editor.ready = true;
+            }
+        }
+
+        function getEditorValue() {
+            if (editor.cm) return editor.cm.getValue();
+            if (editor.textarea) return editor.textarea.value;
+            return '';
+        }
+        function setEditorValue(v) {
+            if (editor.cm) editor.cm.setValue(v || '');
+            else if (editor.textarea) editor.textarea.value = v || '';
+        }
+        function onEditorChange(cb) {
+            if (editor.cm) editor.cm.on('change', cb);
+            else if (editor.textarea) editor.textarea.addEventListener('input', cb);
+        }
+
+        // ── Draft persistence (localStorage, scoped to slug+lang) ──
+        var draftTimer = null;
+        var lastSavedDraft = '';
+        function draftKey(slug, lang) { return DRAFT_PREFIX + slug + ':' + lang; }
+        function loadDraft(slug, lang) {
+            try { return window.localStorage.getItem(draftKey(slug, lang)) || ''; }
+            catch (_) { return ''; }
+        }
+        function saveDraft(slug, lang, code) {
+            try { window.localStorage.setItem(draftKey(slug, lang), code); }
+            catch (_) { /* quota / private mode; drop */ }
+        }
+        function clearDraft(slug, lang) {
+            try { window.localStorage.removeItem(draftKey(slug, lang)); }
+            catch (_) {}
+        }
+        function updateDraftStatus(msg) {
+            var el = $('draft-status');
+            if (el) el.textContent = msg || '';
+        }
+        function startDraftAutoSave(slug, lang) {
+            onEditorChange(function () {
+                if (draftTimer) clearTimeout(draftTimer);
+                draftTimer = setTimeout(function () {
+                    var code = getEditorValue();
+                    if (code === lastSavedDraft) return;
+                    saveDraft(slug, lang, code);
+                    lastSavedDraft = code;
+                    updateDraftStatus('草稿已自动保存 · ' + new Date().toLocaleTimeString());
+                }, DRAFT_SAVE_DEBOUNCE);
+            });
+        }
+
+        // ── Submit + polling ───────────────────────────────────────
+        var pollTimer = null;
+        var pollDeadline = 0;
+        var lastSubmissionId = 0;
+
+        function setSubmitting(submitting) {
+            var btn = $('submit-btn');
+            if (!btn) return;
+            btn.disabled = !!submitting;
+            btn.textContent = submitting ? '提交中…' : '提交';
+        }
+
+        function renderResult(row) {
+            var panel = $('result-panel');
+            panel.hidden = false;
+
+            var status = (row && row.status) || 'pending';
+            var badge = $('result-status-badge');
+            badge.className = 'lc-status lc-status--' + status;
+            badge.textContent = STATUS_LABEL[status] || status.toUpperCase();
+
+            $('result-message').textContent = status === 'ac'
+                ? '所有测试点通过 🎉'
+                : (status === 'ce' ? '编译错误' :
+                   status === 'se' ? '系统错误，请稍后重试' :
+                   status === 'pending' ? '排队中…' :
+                   status === 'running' ? '正在判题…' :
+                   '部分测试点未通过');
+
+            // Metrics
+            var metrics = $('result-metrics');
+            while (metrics.firstChild) metrics.removeChild(metrics.firstChild);
+            function metric(label, value) {
+                if (value == null || value === '') return;
+                var dt = el('dt', { class: 'lc-result-panel__metric-label', text: label });
+                var dd = el('dd', { class: 'lc-result-panel__metric-value', text: value });
+                metrics.appendChild(dt);
+                metrics.appendChild(dd);
+            }
+            if (row.time_used != null)   metric('耗时',   row.time_used + ' ms');
+            if (row.memory_used != null) metric('内存',   row.memory_used + ' KB');
+            if (row.created_at)          metric('提交于', row.created_at);
+            if (row.finished_at)         metric('完成于', row.finished_at);
+
+            // Failed case body
+            var failed = $('result-failed-case');
+            var failedBody = $('result-failed-case-body');
+            if (row.error_message) {
+                failed.hidden = false;
+                failedBody.textContent = row.error_message;
+            } else {
+                failed.hidden = true;
+                failedBody.textContent = '';
+            }
+
+            // Link to full submission (future page)
+            var link = $('result-link');
+            if (lastSubmissionId > 0) {
+                link.href = '/problem.html?slug=' + encodeURIComponent(state.slug)
+                    + '#submission-' + lastSubmissionId;
+                link.hidden = false;
+            } else {
+                link.hidden = true;
+            }
+        }
+
+        function isTerminal(status) { return !!TERMINAL_STATUSES[status]; }
+
+        function pollResult() {
+            if (lastSubmissionId <= 0) return;
+            if (Date.now() > pollDeadline) {
+                setSubmitting(false);
+                updateDraftStatus('判题超时，请稍后重试');
+                return;
+            }
+            litecode.api.get('/submissions/' + lastSubmissionId)
+                .then(function (resp) {
+                    var row = (resp && resp.data) || null;
+                    if (!row) return;
+                    renderResult(row);
+                    if (isTerminal(row.status)) {
+                        setSubmitting(false);
+                        if (row.status === 'ac') {
+                            // SPEC §11: "提交成功后清除"
+                            clearDraft(state.slug, state.lang);
+                            updateDraftStatus('已通过 · 草稿已清除');
+                        } else {
+                            updateDraftStatus('判题完成 · 草稿已保留，可继续修改');
+                        }
+                        return;
+                    }
+                    // Not terminal yet — schedule next poll.
+                    pollTimer = setTimeout(pollResult, POLL_INTERVAL_MS);
+                })
+                .catch(function (err) {
+                    setSubmitting(false);
+                    updateDraftStatus('查询失败：' + (err && err.message || '未知错误'));
+                });
+        }
+
+        function submit() {
+            if (!state.problem || !state.problem.id) return;
+            var code = getEditorValue();
+            if (!code || !code.trim()) {
+                updateDraftStatus('请先编写代码');
+                return;
+            }
+            if (code.length > 15 * 1024 * 1024) {
+                updateDraftStatus('代码超过 15 MB 上限');
+                return;
+            }
+            setSubmitting(true);
+            updateDraftStatus('提交中…');
+            litecode.api.post('/submissions', {
+                problem_id: state.problem.id,
+                language:   state.lang,
+                code:       code,
+            }).then(function (resp) {
+                var data = (resp && resp.data) || {};
+                lastSubmissionId = Number(data.submission_id) || 0;
+                if (!lastSubmissionId) {
+                    setSubmitting(false);
+                    updateDraftStatus('提交失败：未拿到 submission_id');
+                    return;
+                }
+                updateDraftStatus('已提交 · 等待判题（id=' + lastSubmissionId + '）');
+                renderResult({ status: 'pending' });
+                pollDeadline = Date.now() + POLL_MAX_MS;
+                pollResult();
+            }).catch(function (err) {
+                setSubmitting(false);
+                if (err && err.status === 401) {
+                    updateDraftStatus('请先登录后再提交');
+                } else if (err && err.status === 429) {
+                    updateDraftStatus('提交过于频繁，请稍后再试');
+                } else if (err && err.status === 503) {
+                    updateDraftStatus('判题队列已满，请稍后再试');
+                } else {
+                    updateDraftStatus('提交失败：' + (err && err.message || '未知错误'));
+                }
+            });
+        }
+
+        // ── State + load problem ───────────────────────────────────
+        var state = { slug: '', problem: null, lang: 'cpp' };
+
+        function loadProblem() {
+            var slug = getSlug();
+            if (!slug) {
+                showState('not-found-state');
+                return;
+            }
+            state.slug = slug;
+            showState('loading-state');
+
+            litecode.api.get('/problems/' + encodeURIComponent(slug))
+                .then(function (resp) {
+                    state.problem = (resp && resp.data) || null;
+                    if (!state.problem) {
+                        showState('not-found-state');
+                        return;
+                    }
+                    renderProblem(state.problem);
+                    // Initialize editor with the draft (if any) or the
+                    // default template, then wire up auto-save.
+                    var lang = $('lang-select').value || 'cpp';
+                    state.lang = lang;
+                    var draft = loadDraft(slug, lang);
+                    var initial = draft || DEFAULT_TEMPLATES[lang];
+                    lastSavedDraft = initial;
+                    setEditorValue(initial);
+                    startDraftAutoSave(slug, lang);
+                    updateDraftStatus(draft ? '已恢复本机草稿' : '');
+                    // Default page title.
+                    document.title = (state.problem.title || '题目') + ' · LiteCode';
+                    showState('problem-pane');
+                })
+                .catch(function (err) {
+                    if (err && err.status === 404) {
+                        showState('not-found-state');
+                    } else {
+                        $('error-message').textContent = (err && err.message)
+                            ? err.message
+                            : '网络错误，请稍后重试';
+                        showState('error-state');
+                    }
+                });
+        }
+
+        // ── Event wiring ───────────────────────────────────────────
+        document.addEventListener('DOMContentLoaded', function () {
+            // Phase 5 framework: theme + nav + global error wiring.
+            litecode.boot.shell({ title: 'LiteCode · 刷题' });
+            // Prewarm markdown + sanitizer in the background. By the
+            // time the problem detail is rendered, renderSafeAsync()
+            // resolves immediately.
+            if (window.litecode && litecode.markdown) {
+                litecode.markdown.prewarm();
+            }
+
+            // Retry button
+            $('retry-btn').addEventListener('click', function () { loadProblem(); });
+
+            // Language switch: keep a separate draft per language. The
+            // current editor contents are saved into the OUTGOING lang
+            // before we swap, so the user never loses code.
+            $('lang-select').addEventListener('change', function () {
+                var prev = state.lang;
+                var next = $('lang-select').value;
+                if (next === prev) return;
+                // Persist current editor into prev's draft
+                if (state.slug) {
+                    saveDraft(state.slug, prev, getEditorValue());
+                }
+                state.lang = next;
+                var draft = loadDraft(state.slug, next) || DEFAULT_TEMPLATES[next];
+                lastSavedDraft = draft;
+                setEditorValue(draft);
+                if (editor.cm) {
+                    editor.cm.setOption('mode', LANG_MODE[next] || LANG_MODE.cpp);
+                }
+                updateDraftStatus(draft ? '已切换语言并恢复草稿' : '已切换语言');
+            });
+
+            // Reset code: overwrite editor + draft with default template.
+            $('reset-code-btn').addEventListener('click', function () {
+                if (!state.slug) return;
+                if (!window.confirm('确定要重置为默认模板吗？当前编辑内容会丢失（草稿仍可在 localStorage 找回）。')) {
+                    return;
+                }
+                var tpl = DEFAULT_TEMPLATES[state.lang] || '';
+                setEditorValue(tpl);
+                saveDraft(state.slug, state.lang, tpl);
+                lastSavedDraft = tpl;
+                updateDraftStatus('已重置为默认模板');
+            });
+
+            // Clear draft: remove from localStorage but keep the editor
+            // content visible so the user can copy-paste out if needed.
+            $('clear-draft-btn').addEventListener('click', function () {
+                if (!state.slug) return;
+                clearDraft(state.slug, state.lang);
+                lastSavedDraft = '';
+                updateDraftStatus('草稿已清除（编辑器内容保留）');
+            });
+
+            // Submit
+            $('submit-btn').addEventListener('click', submit);
+
+            // Keyboard: Ctrl/Cmd+Enter submits from anywhere on the page.
+            document.addEventListener('keydown', function (e) {
+                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                    if (!$('submit-btn').disabled) {
+                        e.preventDefault();
+                        submit();
+                    }
+                }
+            });
+
+            // Load CodeMirror + problem detail. We run the editor
+            // load in parallel with the problem fetch — the editor
+            // can finish mounting before or after the data arrives
+            // without breaking anything.
+            loadCodemirror().then(function (ok) {
+                // Mount the editor with an empty default; it gets
+                // replaced once the problem (and its draft) loads.
+                mountEditor(DEFAULT_TEMPLATES[state.lang] || '', state.lang);
+            });
+            loadProblem();
+        });
+    })();
     </script>
 </body>
 </html>

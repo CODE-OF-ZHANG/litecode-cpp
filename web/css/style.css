@@ -1134,3 +1134,326 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     }
     .lc-nav-links::-webkit-scrollbar { display: none; }
 }
+
+/* =====================================================================
+   12. Problem detail + code editor (Phase 5 ★ 题目详情 + 代码编辑器)
+   ---------------------------------------------------------------------
+   SPEC §11 Phase 5 + §6.3 (LeetCode-style two-column):
+     - Left column  : 题目描述 / 样例 / 标签 / 通过率 (scrollable)
+     - Right column : 代码编辑器 (CodeMirror 5) + 提交 + 结果 (sticky)
+
+   On wide viewports (>1024px) both columns sit side-by-side. The
+   right column sticks to the top so the editor stays in view as the
+   user scrolls the problem description.
+
+   On narrow viewports the layout collapses to a single column
+   (problem on top, editor below). The editor and result panel both
+   take the full available width.
+
+   The CodeMirror theme is overridden via `.CodeMirror` rules below
+   to match the page's --lc-color-* tokens, so the editor feels
+   native to the rest of the UI (and respects dark mode).
+   ===================================================================== */
+
+.lc-problem-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--lc-space-5);
+    align-items: start;
+    margin-top: var(--lc-space-4);
+}
+
+.lc-problem-pane {
+    background: var(--lc-color-surface);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-lg);
+    padding: var(--lc-space-5);
+    box-shadow: var(--lc-shadow-sm);
+    /* Cap the height so the description becomes scrollable on tall
+       viewports, mirroring LeetCode's behaviour. The right column
+       stays visible (sticky) so the user can keep editing. */
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+    position: relative;
+}
+
+.lc-problem-pane__header {
+    border-bottom: 1px solid var(--lc-color-border);
+    padding-bottom: var(--lc-space-4);
+    margin-bottom: var(--lc-space-4);
+}
+
+.lc-problem-pane__title-row {
+    align-items: baseline;
+    gap: var(--lc-space-3);
+    flex-wrap: wrap;
+}
+.lc-problem-pane__title {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--lc-color-text);
+}
+.lc-problem-pane__meta {
+    margin-top: var(--lc-space-2);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--lc-space-3);
+}
+.lc-problem-pane__tags {
+    margin-top: var(--lc-space-3);
+    flex-wrap: wrap;
+}
+
+/* Description (Markdown rendered) — already gets prose styling from
+   .lc-markdown defined in §9. We only tweak spacing here so the
+   description reads well in this narrower column. */
+.lc-problem-pane__description {
+    margin-top: var(--lc-space-2);
+    line-height: 1.7;
+}
+
+/* Sample test cases — vertical list of "示例 N" with input + output
+   blocks. The pre tags stay horizontally scrollable on narrow widths. */
+.lc-problem-pane__samples {
+    margin-top: var(--lc-space-5);
+    padding-top: var(--lc-space-4);
+    border-top: 1px solid var(--lc-color-border);
+}
+.lc-problem-pane__samples h2 {
+    font-size: 18px;
+    margin: 0 0 var(--lc-space-3) 0;
+}
+.lc-samples {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--lc-space-3);
+}
+.lc-sample {
+    background: var(--lc-color-surface-2);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-md);
+    padding: var(--lc-space-3);
+}
+.lc-sample__caption {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--lc-color-text-2);
+    margin-bottom: var(--lc-space-2);
+}
+.lc-sample__io {
+    margin-top: var(--lc-space-2);
+}
+.lc-sample__io:first-of-type { margin-top: 0; }
+.lc-sample__label {
+    font-size: 12px;
+    color: var(--lc-color-text-muted);
+    margin-bottom: 2px;
+}
+.lc-sample__pre {
+    margin: 0;
+    background: var(--lc-color-surface);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-sm);
+    padding: 8px 10px;
+    font-family: var(--lc-font-mono);
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-x: auto;
+    white-space: pre;
+    color: var(--lc-color-text);
+}
+
+/* Right column — editor + submit + result */
+.lc-editor-pane {
+    position: sticky;
+    top: 70px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--lc-space-3);
+}
+
+.lc-editor-pane__toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--lc-space-3);
+    padding: var(--lc-space-2) 0;
+    flex-wrap: wrap;
+}
+.lc-editor-pane__lang {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--lc-space-2);
+}
+.lc-editor-pane__lang .lc-form-label {
+    font-size: 13px;
+    white-space: nowrap;
+}
+.lc-editor-pane__select {
+    width: auto;
+    min-width: 140px;
+    padding: 4px 8px;
+    font-size: 13px;
+}
+.lc-editor-pane__toolbar-actions {
+    display: inline-flex;
+    gap: var(--lc-space-2);
+}
+
+.lc-editor-shell {
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-md);
+    background: var(--lc-color-surface);
+    overflow: hidden;
+    /* Fixed minimum height — CodeMirror will scroll inside. The
+       shell height is bounded so a tall screen still leaves room
+       for the result panel below. */
+    min-height: 360px;
+    height: 50vh;
+    max-height: 600px;
+    display: flex;
+    flex-direction: column;
+}
+
+.lc-editor-shell .CodeMirror {
+    height: 100% !important;
+    flex: 1 1 auto;
+    font-family: var(--lc-font-mono);
+    font-size: 14px;
+    line-height: 1.55;
+    background: var(--lc-color-surface);
+    color: var(--lc-color-text);
+}
+
+/* Override CodeMirror monokai's hard-coded colors to use our tokens
+   so it blends with the page (and respects dark mode). */
+html.dark .lc-editor-shell .CodeMirror {
+    background: #1e2127;
+    color: var(--lc-color-text);
+}
+html.dark .lc-editor-shell .CodeMirror-gutters {
+    background: #181b22;
+    border-right: 1px solid var(--lc-color-border);
+    color: var(--lc-color-text-muted);
+}
+html.dark .lc-editor-shell .CodeMirror-cursor {
+    border-left: 1px solid var(--lc-color-text);
+}
+html.dark .lc-editor-shell .CodeMirror-linenumber {
+    color: var(--lc-color-text-muted);
+}
+html.dark .lc-editor-shell .CodeMirror-selected {
+    background: rgba(96, 165, 250, 0.25) !important;
+}
+html.dark .lc-editor-shell .CodeMirror-activeline-background {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+/* The textarea fallback (used when CodeMirror fails to load) — fill
+   the shell, monospace, no resize handle. */
+.lc-editor-shell textarea#code-textarea {
+    flex: 1 1 auto;
+    width: 100%;
+    border: 0;
+    outline: 0;
+    resize: none;
+    padding: var(--lc-space-3);
+    font-family: var(--lc-font-mono);
+    font-size: 14px;
+    line-height: 1.55;
+    background: var(--lc-color-surface);
+    color: var(--lc-color-text);
+    tab-size: 4;
+}
+.lc-editor-shell textarea#code-textarea:focus {
+    background: var(--lc-color-surface-2);
+}
+
+.lc-editor-pane__submit-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--lc-space-3);
+    flex-wrap: wrap;
+}
+
+/* Result panel — appears below the submit row when there's a result. */
+.lc-result-panel {
+    background: var(--lc-color-surface);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-lg);
+    padding: var(--lc-space-4);
+    box-shadow: var(--lc-shadow-sm);
+    display: flex;
+    flex-direction: column;
+    gap: var(--lc-space-3);
+}
+.lc-result-panel__status-row {
+    display: flex;
+    align-items: center;
+    gap: var(--lc-space-3);
+    flex-wrap: wrap;
+}
+.lc-result-panel__metrics {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    column-gap: var(--lc-space-4);
+    row-gap: 4px;
+    margin: 0;
+    font-size: 13px;
+}
+.lc-result-panel__metric-label {
+    color: var(--lc-color-text-muted);
+}
+.lc-result-panel__metric-value {
+    margin: 0;
+    color: var(--lc-color-text);
+    font-family: var(--lc-font-mono);
+}
+.lc-result-panel__details {
+    border-top: 1px solid var(--lc-color-border);
+    padding-top: var(--lc-space-3);
+}
+.lc-result-panel__details summary {
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--lc-color-text-2);
+    user-select: none;
+}
+.lc-result-panel__details pre {
+    margin: var(--lc-space-2) 0 0 0;
+    background: var(--lc-color-surface-2);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-sm);
+    padding: var(--lc-space-3);
+    font-family: var(--lc-font-mono);
+    font-size: 12px;
+    line-height: 1.5;
+    max-height: 200px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* Mobile / narrow-viewport collapse — at <= 1024px the layout goes
+   single-column and the editor stops being sticky (otherwise it
+   would eat the viewport). */
+@media (max-width: 1024px) {
+    .lc-problem-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .lc-problem-pane {
+        max-height: none;
+    }
+    .lc-editor-pane {
+        position: static;
+    }
+    .lc-editor-shell {
+        height: 360px;
+        max-height: none;
+    }
+}
