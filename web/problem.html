@@ -156,18 +156,90 @@
 
                 <section id="result-panel" class="lc-result-panel" hidden
                          aria-live="polite" aria-label="判题结果">
-                    <div class="lc-result-panel__status-row">
-                        <span id="result-status-badge" class="lc-status">…</span>
-                        <span id="result-message" class="lc-form-help"></span>
+                    <!--
+                      Header — status icon + badge + message + actions.
+                      The icon is a single character (emoji) that visually
+                      identifies the status; the badge uses the existing
+                      .lc-status--{ac,wa,tle,...} palette from style.css.
+                    -->
+                    <div class="lc-result-panel__header">
+                        <div class="lc-result-panel__status">
+                            <span id="result-status-icon" class="lc-status-icon" aria-hidden="true">…</span>
+                            <span id="result-status-badge" class="lc-status">…</span>
+                            <span id="result-message" class="lc-result-panel__message"></span>
+                        </div>
+                        <div class="lc-result-panel__actions">
+                            <button type="button" class="lc-btn lc-btn--ghost lc-btn--sm"
+                                    id="copy-code-btn" title="复制当前编辑器代码到剪贴板">复制代码</button>
+                            <button type="button" class="lc-btn lc-btn--primary lc-btn--sm"
+                                    id="resubmit-btn" title="用当前代码再次提交">再次提交</button>
+                        </div>
                     </div>
+
+                    <!--
+                      Time / Memory gauges — visual bars showing usage
+                      vs the problem's limit (state.problem.time_limit
+                      / state.problem.memory_limit). When the gauge
+                      goes red, the user immediately sees they hit the
+                      limit. Empty / unknown values are handled with a
+                      neutral track.
+                    -->
+                    <div class="lc-result-panel__gauges" id="result-gauges">
+                        <div class="lc-gauge" data-kind="time">
+                            <div class="lc-gauge__head">
+                                <span class="lc-gauge__label">耗时</span>
+                                <span class="lc-gauge__value">
+                                    <strong id="gauge-time-value">—</strong>
+                                    <span class="lc-gauge__max"> / <span id="gauge-time-max">—</span> ms</span>
+                                </span>
+                            </div>
+                            <div class="lc-gauge__track">
+                                <div class="lc-gauge__fill" id="gauge-time-fill" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="lc-gauge" data-kind="memory">
+                            <div class="lc-gauge__head">
+                                <span class="lc-gauge__label">内存</span>
+                                <span class="lc-gauge__value">
+                                    <strong id="gauge-mem-value">—</strong>
+                                    <span class="lc-gauge__max"> / <span id="gauge-mem-max">—</span> KB</span>
+                                </span>
+                            </div>
+                            <div class="lc-gauge__track">
+                                <div class="lc-gauge__fill" id="gauge-mem-fill" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!--
+                      Plain metadata grid — submission id, finished_at,
+                      language. The interesting metrics (time + memory)
+                      are already in the gauges above; this is the
+                      "everything else" panel.
+                    -->
                     <dl class="lc-result-panel__metrics" id="result-metrics"></dl>
-                    <details id="result-failed-case" class="lc-result-panel__details"
-                             hidden>
-                        <summary>查看失败测试点</summary>
+
+                    <!--
+                      Status-specific help block — explains the status
+                      in plain language. Each terminal status gets its
+                      own copy; pending / running get a brief "judge
+                      is busy" notice.
+                    -->
+                    <div class="lc-result-panel__help" id="result-help" hidden>
+                        <p id="result-help-body" class="lc-form-help"></p>
+                    </div>
+
+                    <!--
+                      Failed test point details — error_message verbatim.
+                      Always monospace; max-height + overflow so very
+                      long compile output doesn't blow the panel.
+                    -->
+                    <details id="result-failed-case" class="lc-result-panel__details" hidden>
+                        <summary>查看错误输出</summary>
                         <pre id="result-failed-case-body"></pre>
                     </details>
-                    <a id="result-link" class="lc-form-help"
-                       href="#" hidden>查看完整提交详情 →</a>
+
+                    <a id="result-link" class="lc-form-help" href="#" hidden>查看完整提交详情 →</a>
                 </section>
             </aside>
         </div>
@@ -772,24 +844,159 @@
             btn.textContent = submitting ? '提交中…' : '提交';
         }
 
+        // Status icon (single emoji glyph) per status. Centralized so
+        // a future "i18n" pass can swap glyphs per locale without
+        // touching the render function. Pairs with the .lc-status-icon
+        // CSS rule which sizes + colors the glyph.
+        var STATUS_ICON = {
+            pending: '⏳',
+            running: '⚙️',
+            ac:      '🎉',
+            wa:      '❌',
+            tle:     '⏱',
+            mle:     '💾',
+            re:      '⚠️',
+            ole:     '📤',
+            pe:      '🔍',
+            ce:      '🔧',
+            se:      '🛑',
+        };
+
+        // Status-specific help copy (Phase 5 ★ 失败时显示测试点).
+        // Each non-AC terminal status explains in plain language what
+        // went wrong and what the user can try. The first sentence is
+        // also reused for the toast (not implemented here — kept
+        // short for future integration). The full text is the
+        // .lc-result-panel__help body shown below the metrics grid.
+        var STATUS_HELP = {
+            ac:      '所有测试点通过，恭喜！当前代码已加入历史记录。',
+            wa:      '部分测试点输出与期望不同（Wrong Answer）。常见原因：算法边界未覆盖、输出格式有偏差（多余空格 / 换行 / 大小写）、变量初始化错误。建议对照示例输入重新模拟一遍代码运行。',
+            tle:     '运行时间超出题目限制（Time Limit Exceeded）。请检查是否有死循环、嵌套循环层数过深、或 I/O 效率过低（考虑用 scanf/printf 替代 cin/cout，或加 ios::sync_with_stdio(false)）。',
+            mle:     '内存使用超出题目限制（Memory Limit Exceeded）。请检查是否有大数组（局部/全局）、递归过深、或未释放的容器。',
+            re:      '程序运行时异常（Runtime Error）。常见原因：访问非法内存、数组越界、栈溢出（递归）、除以零。错误信息见下方输出。',
+            ole:     '输出超过 16MB 上限（Output Limit Exceeded）。通常由死循环 + 大量输出导致。请检查输出逻辑是否有死循环或意外的全量打印。',
+            pe:      '输出内容差异在行末空白（Presentation Error）。AC/PE 判定基于去掉行末空白后的逐行比较；请检查输出是否有意外的多余空格或缺失换行。',
+            ce:      '编译错误（Compilation Error）。请阅读下方编译错误信息，检查语法、类型、头文件包含等。',
+            se:      '系统错误（System Error）。判题基础设施异常（容器启动失败、DB 写失败等），与你的代码无关。请稍后重试。',
+            pending: '提交已入队，等待 worker 拉取。',
+            running: '判题 worker 正在执行（编译 → 逐点运行 → 比对）。',
+        };
+
+        // Status mapping to gauge warning threshold. When the usage
+        // exceeds 80% of the limit the bar turns warning, ≥100% turns
+        // danger. AC stays success green regardless of usage.
+        function gaugeSeverity(status, percent) {
+            if (status === 'ac' || status === 'pending' || status === 'running') return 'normal';
+            if (status === 'tle' || status === 'mle' || status === 'ole') return 'danger';
+            if (percent >= 1.0) return 'danger';
+            if (percent >= 0.8) return 'warning';
+            return 'normal';
+        }
+
+        // Update a single gauge (time OR memory).
+        //   value   — actual used (number ms / KB), or null
+        //   limit   — problem's limit (number), or null
+        //   elValue — <strong> element for the used display
+        //   elMax   — span for the limit display
+        //   elFill  — div that grows the bar
+        //   elGauge — the outer .lc-gauge element (severity class lives here)
+        function updateGauge(value, limit, elValue, elMax, elFill, elGauge, status) {
+            if (elMax) elMax.textContent = (limit != null) ? limit : '—';
+            if (value == null || limit == null || limit <= 0) {
+                if (elValue) elValue.textContent = '—';
+                if (elFill) elFill.style.width = '0%';
+                if (elGauge) elGauge.classList.remove('lc-gauge--warning', 'lc-gauge--danger');
+                return;
+            }
+            var pct = value / limit;
+            if (elValue) elValue.textContent = value;
+            if (elFill) {
+                // Cap visual width at 100% even if the judge reported
+                // an over-limit value (the bar can't go past full).
+                var widthPct = Math.min(100, Math.max(0, pct * 100));
+                elFill.style.width = widthPct.toFixed(1) + '%';
+            }
+            if (elGauge) {
+                elGauge.classList.remove('lc-gauge--warning', 'lc-gauge--danger');
+                var sev = gaugeSeverity(status, pct);
+                if (sev === 'warning') elGauge.classList.add('lc-gauge--warning');
+                else if (sev === 'danger') elGauge.classList.add('lc-gauge--danger');
+            }
+        }
+
         function renderResult(row) {
             var panel = $('result-panel');
             panel.hidden = false;
 
             var status = (row && row.status) || 'pending';
+
+            // Status badge + icon + headline message
             var badge = $('result-status-badge');
             badge.className = 'lc-status lc-status--' + status;
             badge.textContent = STATUS_LABEL[status] || status.toUpperCase();
+            var icon = $('result-status-icon');
+            icon.textContent = STATUS_ICON[status] || '·';
 
-            $('result-message').textContent = status === 'ac'
-                ? '所有测试点通过 🎉'
-                : (status === 'ce' ? '编译错误' :
-                   status === 'se' ? '系统错误，请稍后重试' :
-                   status === 'pending' ? '排队中…' :
-                   status === 'running' ? '正在判题…' :
-                   '部分测试点未通过');
+            // Headline message — short, in the status row.
+            $('result-message').textContent = (function () {
+                if (status === 'ac')      return '所有测试点通过 🎉';
+                if (status === 'pending') return '排队中…';
+                if (status === 'running') return '正在判题…';
+                if (status === 'ce')      return '编译错误';
+                if (status === 'se')      return '系统错误，请稍后重试';
+                if (status === 'tle')     return '运行超时';
+                if (status === 'mle')     return '内存超限';
+                if (status === 'ole')     return '输出超限';
+                if (status === 're')      return '运行时错误';
+                if (status === 'pe')      return '格式错误';
+                if (status === 'wa')      return '答案错误';
+                return '部分测试点未通过';
+            })();
 
-            // Metrics
+            // Status-specific help text — full explanation in the help
+            // block below the metrics grid.
+            var helpBox = $('result-help');
+            var helpBody = $('result-help-body');
+            var helpText = STATUS_HELP[status];
+            if (helpText) {
+                helpBody.textContent = helpText;
+                helpBox.hidden = false;
+            } else {
+                helpBody.textContent = '';
+                helpBox.hidden = true;
+            }
+
+            // Time + memory gauges — pull limits from state.problem
+            // (state.problem is null until loadProblem resolves; we
+            // guard every read with `state.problem &&`).
+            var p = state.problem || {};
+            var timeLimit = Number(p.time_limit) || null;
+            var memLimit  = Number(p.memory_limit) || null;
+            // memory_limit is stored in MB; convert to KB to match
+            // the submission row's `memory_used` (KB).
+            if (memLimit != null) memLimit = memLimit * 1024;
+            updateGauge(
+                row.time_used != null ? Number(row.time_used) : null,
+                timeLimit,
+                $('gauge-time-value'),
+                $('gauge-time-max'),
+                $('gauge-time-fill'),
+                document.querySelector('.lc-gauge[data-kind="time"]'),
+                status
+            );
+            updateGauge(
+                row.memory_used != null ? Number(row.memory_used) : null,
+                memLimit,
+                $('gauge-mem-value'),
+                $('gauge-mem-max'),
+                $('gauge-mem-fill'),
+                document.querySelector('.lc-gauge[data-kind="memory"]'),
+                status
+            );
+
+            // Metadata grid — anything that doesn't have its own visual
+            // gauge. The submission id is the canonical handle the
+            // user can quote when reporting bugs.
             var metrics = $('result-metrics');
             while (metrics.firstChild) metrics.removeChild(metrics.firstChild);
             function metric(label, value) {
@@ -799,15 +1006,18 @@
                 metrics.appendChild(dt);
                 metrics.appendChild(dd);
             }
-            if (row.time_used != null)   metric('耗时',   row.time_used + ' ms');
-            if (row.memory_used != null) metric('内存',   row.memory_used + ' KB');
-            if (row.created_at)          metric('提交于', row.created_at);
-            if (row.finished_at)         metric('完成于', row.finished_at);
+            if (lastSubmissionId)         metric('提交 ID', '#' + lastSubmissionId);
+            if (row.created_at)           metric('提交于', row.created_at);
+            if (row.finished_at)          metric('完成于', row.finished_at);
+            if (row.language)             metric('语言',
+                row.language === 'cpp' ? 'C++' : (row.language === 'c' ? 'C' : row.language));
 
-            // Failed case body
+            // Failed-case details — the error_message from the judge.
+            // We expose CE / RE / TLE / WA failure output here so the
+            // user can read the exact error. For AC, hide the section.
             var failed = $('result-failed-case');
             var failedBody = $('result-failed-case-body');
-            if (row.error_message) {
+            if (row.error_message && status !== 'ac') {
                 failed.hidden = false;
                 failedBody.textContent = row.error_message;
             } else {
@@ -815,7 +1025,10 @@
                 failedBody.textContent = '';
             }
 
-            // Link to full submission (future page)
+            // "View full submission" anchor — future /submissions/:id
+            // page will own this; until then it points to the same
+            // problem page with a hash fragment so the user can
+            // bookmark a particular submission.
             var link = $('result-link');
             if (lastSubmissionId > 0) {
                 link.href = '/problem.html?slug=' + encodeURIComponent(state.slug)
@@ -905,6 +1118,41 @@
 
         // ── State + load problem ───────────────────────────────────
         var state = { slug: '', problem: null, lang: 'cpp' };
+
+        // Copy-to-clipboard helper. Tries the modern navigator.clipboard
+        // API first; falls back to a hidden textarea + document.execCommand
+        // for browsers that block clipboard API in non-secure contexts
+        // (e.g. http:// in production). Returns a Promise so the caller
+        // can show a status message regardless of the result.
+        function copyToClipboard(text) {
+            return new Promise(function (resolve, reject) {
+                if (navigator.clipboard && window.isSecureContext) {
+                    navigator.clipboard.writeText(text).then(resolve, function () {
+                        // Fall through to the textarea fallback if the
+                        // async API is rejected (focus, permission, etc).
+                        if (fallbackCopy(text)) resolve();
+                        else reject(new Error('剪贴板写入被拒绝'));
+                    });
+                    return;
+                }
+                if (fallbackCopy(text)) resolve();
+                else reject(new Error('剪贴板 API 不可用'));
+            });
+        }
+        function fallbackCopy(text) {
+            try {
+                var ta = document.createElement('textarea');
+                ta.value = text;
+                ta.setAttribute('readonly', '');
+                ta.style.position = 'absolute';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                var ok = document.execCommand && document.execCommand('copy');
+                document.body.removeChild(ta);
+                return !!ok;
+            } catch (_) { return false; }
+        }
 
         function loadProblem() {
             var slug = getSlug();
@@ -1054,6 +1302,24 @@
 
             // Submit
             $('submit-btn').addEventListener('click', submit);
+
+            // Result-panel actions (Phase 5 ★ 提交结果展示).
+            //  - Re-submit: same submit() with current editor content
+            //    (user might have tweaked code since last attempt).
+            //  - Copy code: navigator.clipboard with a textarea
+            //    fallback for older browsers / non-secure contexts.
+            $('resubmit-btn').addEventListener('click', function () {
+                if (!$('submit-btn').disabled) submit();
+            });
+            $('copy-code-btn').addEventListener('click', function () {
+                var code = getEditorValue();
+                if (!code) { updateDraftStatus('编辑器为空，无可复制的代码'); return; }
+                copyToClipboard(code).then(function () {
+                    updateDraftStatus('已复制 ' + code.length + ' 字符到剪贴板');
+                }).catch(function (err) {
+                    updateDraftStatus('复制失败：' + (err && err.message || '未知错误'));
+                });
+            });
 
             // Keyboard: Ctrl/Cmd+Enter submits from anywhere on the page.
             document.addEventListener('keydown', function (e) {

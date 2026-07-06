@@ -1559,3 +1559,165 @@ html.dark .lc-draft-banner {
         justify-content: flex-end;
     }
 }
+
+/* =====================================================================
+   14. Result panel polish (Phase 5 ★ 提交结果展示)
+   ---------------------------------------------------------------------
+   v1.2.25 落地了 .lc-result-panel 的 baseline（status badge + metrics
+   grid + 错误 details），v1.2.27 升级到"完整可生产"：加 .lc-status-icon
+   emoji + .lc-result-panel__header 双栏（status + 复制/再次提交 actions）
+   + .lc-result-panel__gauges 两段 gauge 条（耗时/内存 vs 题目 limit
+   ，80% 变 warning，≥100% 变 danger）+ .lc-result-panel__help 状态
+   specific 解释 block（AC / WA / TLE / MLE / OLE / RE / PE / CE / SE
+   11 状态各有文案）。
+   ===================================================================== */
+
+.lc-result-panel__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--lc-space-3);
+    flex-wrap: wrap;
+}
+
+.lc-result-panel__status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--lc-space-2);
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* Status icon — a single emoji glyph sized to match the badge. The
+   size is intentionally large enough to scan at a glance without
+   overwhelming the badge next to it. */
+.lc-status-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    line-height: 1;
+    flex-shrink: 0;
+    /* Fallback: when the glyph can't render (very rare), keep the
+       layout box reserved so the status row doesn't reflow. */
+    min-width: 28px;
+    min-height: 28px;
+}
+
+.lc-result-panel__message {
+    font-size: 14px;
+    color: var(--lc-color-text-2);
+    font-weight: 500;
+}
+
+.lc-result-panel__actions {
+    display: inline-flex;
+    gap: var(--lc-space-2);
+    flex-shrink: 0;
+}
+
+/* Gauges — two side-by-side progress bars with label + value above.
+   The bar grows from 0% to 100% (capped visually even when usage
+   exceeds limit). Severity classes --warning / --danger recolor the
+   fill so the user sees they hit the limit at a glance. */
+.lc-result-panel__gauges {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--lc-space-3);
+}
+@media (max-width: 540px) {
+    .lc-result-panel__gauges {
+        grid-template-columns: 1fr;
+    }
+}
+
+.lc-gauge {
+    background: var(--lc-color-surface-2);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-md);
+    padding: var(--lc-space-3);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    transition: border-color var(--lc-transition-fast),
+                background var(--lc-transition-fast);
+}
+.lc-gauge--warning {
+    background: rgba(217, 119, 6, 0.10);
+    border-color: rgba(217, 119, 6, 0.45);
+}
+html.dark .lc-gauge--warning {
+    background: rgba(251, 191, 36, 0.10);
+    border-color: rgba(251, 191, 36, 0.40);
+}
+.lc-gauge--danger {
+    background: rgba(220, 38, 38, 0.10);
+    border-color: rgba(220, 38, 38, 0.55);
+}
+html.dark .lc-gauge--danger {
+    background: rgba(248, 113, 113, 0.12);
+    border-color: rgba(248, 113, 113, 0.50);
+}
+
+.lc-gauge__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--lc-space-2);
+    font-size: 13px;
+}
+.lc-gauge__label {
+    color: var(--lc-color-text-2);
+    font-weight: 500;
+}
+.lc-gauge__value {
+    color: var(--lc-color-text);
+    font-family: var(--lc-font-mono);
+    font-size: 13px;
+}
+.lc-gauge__value strong {
+    font-weight: 600;
+    margin-right: 2px;
+}
+.lc-gauge__max {
+    color: var(--lc-color-text-muted);
+    font-weight: 400;
+}
+.lc-gauge__track {
+    height: 8px;
+    background: var(--lc-color-border);
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+}
+.lc-gauge__fill {
+    height: 100%;
+    background: var(--lc-color-info);
+    border-radius: 4px;
+    transition: width 240ms ease, background var(--lc-transition-fast);
+    min-width: 0;
+}
+.lc-gauge--warning .lc-gauge__fill {
+    background: var(--lc-color-warning);
+}
+.lc-gauge--danger .lc-gauge__fill {
+    background: var(--lc-color-danger);
+}
+
+/* Status-specific help block. Sits between the metrics grid and
+   the failure details, so the user can read a plain-language
+   explanation of what their status means before they dig into
+   raw error output. */
+.lc-result-panel__help {
+    background: var(--lc-color-surface-2);
+    border: 1px solid var(--lc-color-border);
+    border-left: 3px solid var(--lc-color-info);
+    border-radius: var(--lc-radius-md);
+    padding: var(--lc-space-3) var(--lc-space-4);
+}
+.lc-result-panel__help p {
+    margin: 0;
+    color: var(--lc-color-text-2);
+    font-size: 13px;
+    line-height: 1.6;
+}
