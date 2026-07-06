@@ -20,29 +20,933 @@
     <div data-nav></div>
 
     <main class="lc-container">
-        <header class="lc-stack" style="margin-bottom: 24px;">
-            <h1>编辑题目（占位）</h1>
-            <p class="lc-form-help">
-                Phase 5 ★ 管理后台 - 题目编辑页面（新建/编辑表单）将在
-                后续 commit 落地；本占位页只承载 CSP + SRI + 框架接入。
-            </p>
+        <!--
+          Page header is mode-aware: "新建题目" vs "编辑题目 <slug>".
+          We update the title from JS once we know whether we're in
+          create or edit mode (URL slug param present).
+        -->
+        <header class="lc-row lc-row--between"
+                style="margin-bottom: var(--lc-space-5);">
+            <div class="lc-stack-sm">
+                <h1 id="page-title">题目</h1>
+                <p class="lc-form-help" id="page-subtitle">…</p>
+            </div>
+            <div class="lc-row" style="gap: var(--lc-space-2);">
+                <a href="/admin/problems.html"
+                   class="lc-btn lc-btn--ghost">返回列表</a>
+                <button type="submit" form="problem-form"
+                        class="lc-btn lc-btn--primary"
+                        id="submit-btn">保存</button>
+            </div>
         </header>
+
+        <!--
+          Form-level error envelope. We surface the most recent
+          generic error here (network failures, 5xx). Field-level
+          errors (400 with details.field) live next to the offending
+          input. Inline error messages clear when the user fixes
+          the field.
+        -->
+        <div id="form-error" class="lc-form-error" role="alert"
+             hidden></div>
+
+        <form id="problem-form" class="lc-card lc-stack-lg"
+              novalidate>
+            <!--
+              Section: 基本信息
+              Slug, title, difficulty are the three always-required
+              scalars. Slug is editable in BOTH create and edit mode
+              (the API supports rename — admin_problem_update's
+              :slug is the OLD slug, body.slug is the NEW one).
+            -->
+            <section class="lc-form-section" aria-label="基本信息">
+                <h2 class="lc-form-section__title">基本信息</h2>
+
+                <div class="lc-form-row">
+                    <label class="lc-form-label" for="slug-input">
+                        Slug <span aria-hidden="true" style="color: var(--lc-color-danger);">*</span>
+                    </label>
+                    <input type="text" id="slug-input" name="slug"
+                           class="lc-input"
+                           pattern="[a-z0-9]+(-[a-z0-9]+)*"
+                           minlength="1" maxlength="100"
+                           autocomplete="off" required
+                           placeholder="例如 two-sum"
+                           aria-describedby="slug-help slug-error">
+                    <span id="slug-help" class="lc-form-help">
+                        URL 标识符：小写字母/数字/连字符，1-100 字符，
+                        不能以连字符开头或结尾（修改 slug 会改变题目 URL）。
+                    </span>
+                    <span id="slug-error" class="lc-form-error" hidden></span>
+                </div>
+
+                <div class="lc-form-row">
+                    <label class="lc-form-label" for="title-input">
+                        标题 <span aria-hidden="true" style="color: var(--lc-color-danger);">*</span>
+                    </label>
+                    <input type="text" id="title-input" name="title"
+                           class="lc-input"
+                           minlength="1" maxlength="200"
+                           autocomplete="off" required
+                           placeholder="例如 两数之和"
+                           aria-describedby="title-help title-error">
+                    <span id="title-help" class="lc-form-help">
+                        题目的可读标题，1-200 字符。
+                    </span>
+                    <span id="title-error" class="lc-form-error" hidden></span>
+                </div>
+
+                <div class="lc-form-row">
+                    <span class="lc-form-label">难度</span>
+                    <div class="lc-seg" id="difficulty-seg" role="tablist">
+                        <button type="button" class="lc-seg__btn"
+                                data-difficulty="easy" role="tab"
+                                aria-selected="false">简单</button>
+                        <button type="button" class="lc-seg__btn lc-seg__btn--active"
+                                data-difficulty="medium" role="tab"
+                                aria-selected="true">中等</button>
+                        <button type="button" class="lc-seg__btn"
+                                data-difficulty="hard" role="tab"
+                                aria-selected="false">困难</button>
+                    </div>
+                    <span id="difficulty-error" class="lc-form-error" hidden></span>
+                </div>
+
+                <div class="lc-row" style="gap: var(--lc-space-4); flex-wrap: wrap;">
+                    <div class="lc-form-row" style="flex: 1; min-width: 200px;">
+                        <label class="lc-form-label" for="time-limit-input">
+                            时间限制 (ms)
+                        </label>
+                        <input type="number" id="time-limit-input"
+                               name="time_limit_ms"
+                               class="lc-input"
+                               min="1" max="60000" step="1"
+                               placeholder="1000（默认）"
+                               aria-describedby="time-limit-help time-limit-error">
+                        <span id="time-limit-help" class="lc-form-help">
+                            范围 1-60000；留空使用后端默认 1000。
+                        </span>
+                        <span id="time-limit-error" class="lc-form-error" hidden></span>
+                    </div>
+                    <div class="lc-form-row" style="flex: 1; min-width: 200px;">
+                        <label class="lc-form-label" for="memory-limit-input">
+                            内存限制 (MB)
+                        </label>
+                        <input type="number" id="memory-limit-input"
+                               name="memory_limit_mb"
+                               class="lc-input"
+                               min="1" max="1024" step="1"
+                               placeholder="256（默认）"
+                               aria-describedby="memory-limit-help memory-limit-error">
+                        <span id="memory-limit-help" class="lc-form-help">
+                            范围 1-1024；留空使用后端默认 256。
+                        </span>
+                        <span id="memory-limit-error" class="lc-form-error" hidden></span>
+                    </div>
+                </div>
+            </section>
+
+            <!--
+              Section: 标签
+              Tag chips: each chip carries an × button that calls
+              removeTag(name). The input is debounced; pressing Enter
+              or comma adds the chip. We trim + reject empty names
+              client-side; the server re-validates and returns a 400
+              envelope with details.field="tags" / details.index on
+              failure.
+            -->
+            <section class="lc-form-section" aria-label="标签">
+                <h2 class="lc-form-section__title">标签</h2>
+                <div class="lc-form-row">
+                    <label class="lc-form-label" for="tag-input">
+                        添加标签
+                    </label>
+                    <div class="lc-tag-input">
+                        <div class="lc-tag-input__chips" id="tag-chips"
+                             aria-label="已添加的标签"></div>
+                        <input type="text" id="tag-input"
+                               class="lc-input lc-tag-input__input"
+                               placeholder="输入标签名后回车"
+                               autocomplete="off"
+                               maxlength="50"
+                               aria-describedby="tag-help tag-error">
+                    </div>
+                    <span id="tag-help" class="lc-form-help">
+                        1-50 字符；按 Enter 或英文逗号添加；
+                        不存在的标签会在保存时自动创建。
+                    </span>
+                    <span id="tag-error" class="lc-form-error" hidden></span>
+                </div>
+            </section>
+
+            <!--
+              Section: 题目描述（Markdown）
+              Two-pane editor on wide viewports: textarea on the left,
+              sanitized preview on the right. On narrow viewports
+              (<=1024px) the preview collapses below the textarea.
+              Markdown rendering goes through litecode.markdown so the
+              CSP-pinned DOMPurify+marked pipeline is reused — the
+              server delivers raw Markdown (SPEC §6.3 / A32) and the
+              browser is responsible for XSS sanitization.
+            -->
+            <section class="lc-form-section" aria-label="题目描述">
+                <h2 class="lc-form-section__title">题目描述（Markdown）</h2>
+                <div class="lc-md-editor">
+                    <div class="lc-md-editor__pane">
+                        <label class="lc-form-label" for="description-input">
+                            Markdown 源
+                        </label>
+                        <textarea id="description-input" name="description"
+                                  class="lc-input lc-md-editor__textarea"
+                                  rows="14"
+                                  required
+                                  placeholder="## 题目描述\n\n……\n\n## 输入格式\n\n……\n\n## 示例\n\n输入：\n```\n...\n```\n\n输出：\n```\n...\n```"
+                                  aria-describedby="description-help description-error"></textarea>
+                        <span id="description-help" class="lc-form-help">
+                            支持 GFM（标题 / 列表 / 表格 / 代码块 / 删除线）。
+                            保存时原样入库，前端预览会经过 DOMPurify 净化。
+                        </span>
+                        <span id="description-error" class="lc-form-error" hidden></span>
+                    </div>
+                    <div class="lc-md-editor__pane">
+                        <span class="lc-form-label">预览</span>
+                        <div class="lc-markdown lc-md-editor__preview"
+                             id="description-preview"
+                             aria-live="polite">
+                            <em class="lc-form-help">
+                                （在左侧输入 Markdown 后即时预览）
+                            </em>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!--
+              Section: 样例（示例输入输出）
+              Repeatable rows. Each row has input / output textareas
+              + a judge_type select + a remove button. Adding a row
+              appends to the bottom; removing hides the row (no DOM
+              re-indexing needed). On save we walk the rows in order
+              and assign order_num = array index, matching the API's
+              default order_num semantics.
+            -->
+            <section class="lc-form-section" aria-label="样例">
+                <h2 class="lc-form-section__title">样例</h2>
+                <p class="lc-form-help">
+                    这些样例会显示在题目详情页给所有用户参考；判题机只使用
+                    <code>test_cases</code>（详见批量导入）。
+                </p>
+                <div id="samples-list" class="lc-stack"></div>
+                <div>
+                    <button type="button" class="lc-btn lc-btn--sm"
+                            id="add-sample-btn">+ 添加样例</button>
+                </div>
+                <span id="samples-error" class="lc-form-error" hidden></span>
+            </section>
+        </form>
+
+        <!--
+          Bottom action bar — mirrors the header so a long editor
+          form (especially Markdown with many code blocks) doesn't
+          trap the user at the bottom without an obvious save CTA.
+        -->
+        <div class="lc-row lc-row--right"
+             style="margin-top: var(--lc-space-5); gap: var(--lc-space-2);">
+            <a href="/admin/problems.html"
+               class="lc-btn lc-btn--ghost">取消</a>
+            <button type="submit" form="problem-form"
+                    class="lc-btn lc-btn--primary"
+                    id="submit-btn-bottom">保存</button>
+        </div>
     </main>
 
-    <!-- Load order is mandatory: csp.js → markdown.js → api.js → app.js. -->
+    <!--
+      Load order is mandatory: csp.js → markdown.js → api.js → app.js.
+      The Markdown prewarm kicks off as soon as the page loads so the
+      first keystroke's preview doesn't wait on a CDN round-trip.
+    -->
     <script src="/js/csp.js" defer></script>
     <script src="/js/markdown.js" defer></script>
     <script src="/js/api.js" defer></script>
     <script src="/js/app.js" defer></script>
 
     <script>
-        // ★ Markdown XSS 净化: the editor's live-preview pane
-        // renders admin-typed Markdown through the same sanitizer
-        // pipeline that problem.html uses for end-user rendering.
-        // Pre-warm so the first keystroke's preview isn't blocked
-        // on a CDN round-trip.
-        litecode.markdown.prewarm();
-        litecode.boot.shell({ title: 'LiteCode · 编辑题目', requireAdmin: true });
+    // ────────────────────────────────────────────────────────────────────
+    //  Admin Problem Edit Page (Phase 5 ★ 管理后台 - 编辑题目)
+    //
+    //  Two modes (URL ?slug=… controls):
+    //    create mode  — slug input is editable from empty, submit POSTs
+    //                   /api/v1/admin/problems, success → toast + redirect.
+    //    edit mode    — page loads the row via GET /api/v1/problems/:slug,
+    //                   prefills every field, submit PUTs
+    //                   /api/v1/admin/problems/:oldSlug (body carries the
+    //                   new slug so a rename is one round-trip).
+    //
+    //  The form mirrors the backend admin_problem_routes.h body shape
+    //  one-for-one:
+    //    { slug, title, difficulty, description, time_limit_ms?,
+    //      memory_limit_mb?, tags[], samples[{input,output,
+    //      judge_type?,order_num?}] }
+    //
+    //  400 envelope details.field drives field-level error rendering
+    //  so we surface the failure next to the offending input rather
+    //  than as a single form-level message. fields we don't have a
+    //  matching input for (e.g. "samples.0.input") fall back to the
+    //  top-of-form banner.
+    // ────────────────────────────────────────────────────────────────────
+    (function () {
+        'use strict';
+
+        var PROBLEMS_LIST_URL = '/admin/problems.html';
+        var PUBLIC_DETAIL     = '/api/v1/problems/';
+
+        // Backend constants — kept in lock-step with problem_repo.h /
+        // admin_problem_routes.h. (No frontend import of headers; the
+        // values are inlined here.)
+        var SLUG_RE           = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+        var SLUG_MIN          = 1;
+        var SLUG_MAX          = 100;
+        var TITLE_MIN         = 1;
+        var TITLE_MAX         = 200;
+        var TIME_MIN          = 1;
+        var TIME_MAX          = 60000;
+        var MEM_MIN           = 1;
+        var MEM_MAX           = 1024;
+        var DIFFICULTIES      = ['easy', 'medium', 'hard'];
+        var TAG_MAX           = 50;
+        var TAG_NAME_RE       = /^.{1,50}$/;   // backend trims then re-checks
+        var DIFFICULTY_LABELS = { easy: '简单', medium: '中等', hard: '困难' };
+
+        // ── State ───────────────────────────────────────────────────
+        var mode = 'create';            // 'create' | 'edit'
+        var originalSlug = null;        // URL slug (edit mode)
+        var tags = [];                  // array of strings (in insertion order)
+        var samples = [];               // array of {input, output, judge_type, order_num}
+        var loading = false;
+        var submitting = false;
+
+        // ── DOM refs ────────────────────────────────────────────────
+        function $(id) { return document.getElementById(id); }
+        var form, slugInput, titleInput, difficultySeg, timeInput,
+            memInput, tagInput, tagChips, tagError, descriptionInput,
+            descriptionPreview, samplesList, samplesError, pageTitle,
+            pageSubtitle, submitBtn, submitBtnBottom, formError;
+
+        // ── el() helper ─────────────────────────────────────────────
+        function el(tag, attrs, children) {
+            var node = document.createElement(tag);
+            if (attrs) {
+                Object.keys(attrs).forEach(function (k) {
+                    if (k === 'class')      node.className = attrs[k];
+                    else if (k === 'text')  node.textContent = attrs[k];
+                    else if (k === 'html')  node.innerHTML = attrs[k];
+                    else if (k === 'dataset') {
+                        Object.keys(attrs[k]).forEach(function (dk) {
+                            node.dataset[dk] = attrs[k][dk];
+                        });
+                    } else if (k.charAt(0) === 'o' && k.charAt(1) === 'n') {
+                        node.addEventListener(k.slice(2).toLowerCase(), attrs[k]);
+                    } else {
+                        node.setAttribute(k, attrs[k]);
+                    }
+                });
+            }
+            if (children !== undefined && children !== null) {
+                (Array.isArray(children) ? children : [children]).forEach(function (c) {
+                    if (c === null || c === undefined) return;
+                    if (typeof c === 'string') node.appendChild(document.createTextNode(c));
+                    else node.appendChild(c);
+                });
+            }
+            return node;
+        }
+
+        // ── Field-level error helpers ───────────────────────────────
+        // Each error region is hidden by default and shows the
+        // truncated server message. Empty string clears it.
+        function showFieldError(id, msg) {
+            var node = $(id);
+            if (!node) return;
+            if (!msg) {
+                node.hidden = true;
+                node.textContent = '';
+            } else {
+                node.hidden = false;
+                node.textContent = msg;
+            }
+        }
+
+        function clearAllErrors() {
+            ['slug-error', 'title-error', 'difficulty-error',
+             'time-limit-error', 'memory-limit-error', 'tag-error',
+             'description-error', 'samples-error'].forEach(function (id) {
+                showFieldError(id, '');
+            });
+            formError.hidden = true;
+            formError.textContent = '';
+        }
+
+        function showFormError(msg) {
+            if (!msg) {
+                formError.hidden = true;
+                formError.textContent = '';
+            } else {
+                formError.hidden = false;
+                formError.textContent = msg;
+                // Best-effort scroll-to-error so a long form doesn't
+                // hide the failure from the user.
+                if (formError.scrollIntoView) {
+                    formError.scrollIntoView({ behavior: 'smooth',
+                                               block: 'center' });
+                }
+            }
+        }
+
+        // Map a server `details.field` value to the corresponding
+        // inline error element id. Falls through to the form-level
+        // banner for fields without a dedicated slot (samples.X.Y,
+        // unknown fields, etc).
+        var FIELD_TO_ERROR = {
+            'slug':           'slug-error',
+            'title':          'title-error',
+            'difficulty':     'difficulty-error',
+            'time_limit_ms':  'time-limit-error',
+            'memory_limit_mb':'memory-limit-error',
+            'description':    'description-error',
+            'tags':           'tag-error',
+            'samples':        'samples-error',
+        };
+        function applyServerErrors(err) {
+            clearAllErrors();
+            if (!err) return;
+            var details = err.details || {};
+            var field = details.field;
+            if (field && FIELD_TO_ERROR[field]) {
+                showFieldError(FIELD_TO_ERROR[field],
+                    (err.message || '校验失败')
+                    + (details.value !== undefined
+                        ? '（当前值：' + String(details.value) + '）'
+                        : '')
+                    + (details.index !== undefined
+                        ? ' [index=' + details.index + ']'
+                        : ''));
+            } else {
+                showFormError(err.message || ('HTTP ' + (err.status || 0)));
+            }
+        }
+
+        // ── Difficulty segmented control ────────────────────────────
+        function renderDifficultySeg() {
+            var seg = difficultySeg;
+            while (seg.firstChild) seg.removeChild(seg.firstChild);
+            DIFFICULTIES.forEach(function (d) {
+                var active = (state_difficulty() === d);
+                seg.appendChild(el('button', {
+                    type: 'button',
+                    class: 'lc-seg__btn' + (active ? ' lc-seg__btn--active' : ''),
+                    dataset: { difficulty: d },
+                    text: DIFFICULTY_LABELS[d],
+                    role: 'tab',
+                    'aria-selected': active ? 'true' : 'false',
+                    onClick: function () { setDifficulty(d); },
+                }));
+            });
+        }
+        function state_difficulty() {
+            var btn = difficultySeg.querySelector('[aria-selected="true"]');
+            return btn ? btn.dataset.difficulty : 'medium';
+        }
+        function setDifficulty(d) {
+            Array.prototype.forEach.call(
+                difficultySeg.querySelectorAll('.lc-seg__btn'),
+                function (b) {
+                    var active = (b.dataset.difficulty === d);
+                    b.classList.toggle('lc-seg__btn--active', active);
+                    b.setAttribute('aria-selected', active ? 'true' : 'false');
+                });
+        }
+
+        // ── Tag chips: render + add/remove ──────────────────────────
+        function renderTagChips() {
+            while (tagChips.firstChild) tagChips.removeChild(tagChips.firstChild);
+            tags.forEach(function (name, idx) {
+                var chip = el('span', { class: 'lc-tag-chip lc-tag-chip--active' }, [
+                    document.createTextNode(name),
+                    el('button', {
+                        type: 'button',
+                        class: 'lc-tag-chip__remove',
+                        'aria-label': '移除标签 ' + name,
+                        text: '×',
+                        dataset: { idx: String(idx) },
+                        onClick: function (ev) {
+                            var i = parseInt(ev.currentTarget.dataset.idx, 10);
+                            tags.splice(i, 1);
+                            renderTagChips();
+                        },
+                    }),
+                ]);
+                tagChips.appendChild(chip);
+            });
+        }
+
+        function tryAddTag(raw) {
+            var name = String(raw || '').trim();
+            if (!name) return;
+            if (name.length > TAG_MAX) {
+                showFieldError('tag-error',
+                    '标签长度不可超过 ' + TAG_MAX + ' 字符');
+                return;
+            }
+            if (tags.indexOf(name) !== -1) {
+                showFieldError('tag-error',
+                    '标签 "' + name + '" 已存在');
+                return;
+            }
+            tags.push(name);
+            showFieldError('tag-error', '');
+            renderTagChips();
+        }
+
+        // ── Sample rows: render + add/remove ────────────────────────
+        function renderSamples() {
+            while (samplesList.firstChild) samplesList.removeChild(samplesList.firstChild);
+            if (!samples.length) {
+                samplesList.appendChild(el('p', {
+                    class: 'lc-form-help',
+                    text: '尚无样例；点击下方"添加样例"按钮新增。',
+                }));
+                return;
+            }
+            samples.forEach(function (sample, idx) {
+                var row = el('div', { class: 'lc-sample-row',
+                                       dataset: { idx: String(idx) } });
+
+                var head = el('div', { class: 'lc-row lc-row--between',
+                                        style: 'margin-bottom: var(--lc-space-2);' }, [
+                    el('strong', { text: '样例 ' + (idx + 1) }),
+                    el('button', {
+                        type: 'button',
+                        class: 'lc-btn lc-btn--sm lc-btn--danger',
+                        text: '删除',
+                        dataset: { idx: String(idx) },
+                        onClick: function (ev) {
+                            var i = parseInt(ev.currentTarget.dataset.idx, 10);
+                            samples.splice(i, 1);
+                            renderSamples();
+                        },
+                    }),
+                ]);
+                row.appendChild(head);
+
+                // Input textarea.
+                row.appendChild(el('label', { class: 'lc-form-label' }, [
+                    document.createTextNode('输入（in）')
+                ]));
+                var inArea = el('textarea', {
+                    class: 'lc-input lc-sample-row__textarea',
+                    rows: 4,
+                    'aria-label': '样例 ' + (idx + 1) + ' 输入',
+                    dataset: { idx: String(idx), field: 'input' },
+                });
+                inArea.value = sample.input || '';
+                inArea.addEventListener('input', function (ev) {
+                    var i = parseInt(ev.currentTarget.dataset.idx, 10);
+                    samples[i].input = ev.currentTarget.value;
+                });
+                row.appendChild(inArea);
+
+                // Output textarea.
+                row.appendChild(el('label', { class: 'lc-form-label' }, [
+                    document.createTextNode('输出（expected）')
+                ]));
+                var outArea = el('textarea', {
+                    class: 'lc-input lc-sample-row__textarea',
+                    rows: 4,
+                    'aria-label': '样例 ' + (idx + 1) + ' 输出',
+                    dataset: { idx: String(idx), field: 'output' },
+                });
+                outArea.value = sample.output || '';
+                outArea.addEventListener('input', function (ev) {
+                    var i = parseInt(ev.currentTarget.dataset.idx, 10);
+                    samples[i].output = ev.currentTarget.value;
+                });
+                row.appendChild(outArea);
+
+                // Judge type select.
+                var sel = el('select', {
+                    class: 'lc-input',
+                    'aria-label': '样例 ' + (idx + 1) + ' judge_type',
+                    dataset: { idx: String(idx), field: 'judge_type' },
+                });
+                ['exact', 'ignore_trailing', 'float_eps', 'special'].forEach(function (jt) {
+                    sel.appendChild(el('option', { value: jt, text: jt }));
+                });
+                sel.value = sample.judge_type || 'exact';
+                sel.addEventListener('change', function (ev) {
+                    var i = parseInt(ev.currentTarget.dataset.idx, 10);
+                    samples[i].judge_type = ev.currentTarget.value;
+                });
+                row.appendChild(el('label', { class: 'lc-form-label' }, [
+                    document.createTextNode('judge_type')
+                ]));
+                row.appendChild(sel);
+
+                samplesList.appendChild(row);
+            });
+        }
+
+        function addSample() {
+            samples.push({
+                input: '',
+                output: '',
+                judge_type: 'exact',
+                order_num: samples.length,
+            });
+            renderSamples();
+        }
+
+        // ── Live Markdown preview (lazy sanitizer) ──────────────────
+        function renderPreview() {
+            var md = descriptionInput.value || '';
+            // litecode.markdown.renderSafe() returns escaped text
+            // when the CDN bundles aren't loaded yet; that's still
+            // safe (no script can ever run). We prewarmed at page
+            // load so by the time the user is typing here the
+            // marked + DOMPurify pipeline is up.
+            var safeHtml = litecode.markdown.renderSafe(md);
+            descriptionPreview.innerHTML = safeHtml;
+        }
+
+        // ── Mode detection + initial load ───────────────────────────
+        function readModeFromUrl() {
+            var sp = new URLSearchParams(window.location.search);
+            var s = sp.get('slug');
+            if (s && SLUG_RE.test(s)) {
+                mode = 'edit';
+                originalSlug = s;
+            } else {
+                mode = 'create';
+                originalSlug = null;
+            }
+        }
+
+        function applyHeaderForMode() {
+            if (mode === 'create') {
+                pageTitle.textContent = '新建题目';
+                pageSubtitle.textContent =
+                    '填写以下字段并保存；保存后可在题目列表中查看。';
+                submitBtn.textContent = '创建';
+                submitBtnBottom.textContent = '创建';
+                document.title = 'LiteCode · 新建题目';
+            } else {
+                pageTitle.textContent = '编辑题目';
+                pageSubtitle.textContent =
+                    '修改字段并保存；slug 可重命名（会改变题目 URL）。';
+                submitBtn.textContent = '保存';
+                submitBtnBottom.textContent = '保存';
+                document.title = 'LiteCode · 编辑题目 · ' + originalSlug;
+            }
+        }
+
+        function loadForEdit() {
+            if (mode !== 'edit') return Promise.resolve();
+            loading = true;
+            return litecode.api.get(PUBLIC_DETAIL + encodeURIComponent(originalSlug))
+                .then(function (resp) {
+                    var p = (resp && resp.data) || {};
+                    slugInput.value    = p.slug || originalSlug;
+                    titleInput.value   = p.title || '';
+                    if (p.difficulty && DIFFICULTIES.indexOf(p.difficulty) !== -1) {
+                        setDifficulty(p.difficulty);
+                    }
+                    timeInput.value = (typeof p.time_limit === 'number' && p.time_limit > 0)
+                        ? String(p.time_limit) : '';
+                    memInput.value  = (typeof p.memory_limit === 'number' && p.memory_limit > 0)
+                        ? String(p.memory_limit) : '';
+                    tags = Array.isArray(p.tags) ? p.tags.map(function (t) {
+                        return t && typeof t.name === 'string' ? t.name : '';
+                    }).filter(function (s) { return s.length > 0; }) : [];
+                    samples = Array.isArray(p.samples) ? p.samples.map(function (s) {
+                        return {
+                            input: s && typeof s.input === 'string' ? s.input : '',
+                            output: s && typeof s.output === 'string' ? s.output : '',
+                            judge_type: s && s.judge_type ? s.judge_type : 'exact',
+                            order_num: s && typeof s.order_num === 'number' ? s.order_num : 0,
+                        };
+                    }) : [];
+                    descriptionInput.value = p.description || '';
+                    renderTagChips();
+                    renderSamples();
+                    renderPreview();
+                })
+                .catch(function (err) {
+                    if (err && err.status === 404) {
+                        showFormError('该 slug 不存在或已被删除。');
+                    } else {
+                        showFormError(err && err.message
+                            ? err.message : '加载题目失败');
+                    }
+                })
+                .then(function () {
+                    loading = false;
+                });
+        }
+
+        // ── Client-side validation (defense in depth) ────────────────
+        function clientValidate() {
+            var ok = true;
+            var slug = (slugInput.value || '').trim();
+            if (!slug) {
+                showFieldError('slug-error', 'Slug 不可为空');
+                ok = false;
+            } else if (slug.length < SLUG_MIN || slug.length > SLUG_MAX) {
+                showFieldError('slug-error',
+                    'Slug 长度需在 ' + SLUG_MIN + '-' + SLUG_MAX + ' 之间');
+                ok = false;
+            } else if (!SLUG_RE.test(slug)) {
+                showFieldError('slug-error',
+                    'Slug 仅允许小写字母 / 数字 / 连字符，且不能以连字符开头或结尾');
+                ok = false;
+            }
+
+            var title = (titleInput.value || '').trim();
+            if (!title) {
+                showFieldError('title-error', '标题不可为空');
+                ok = false;
+            } else if (title.length < TITLE_MIN || title.length > TITLE_MAX) {
+                showFieldError('title-error',
+                    '标题长度需在 ' + TITLE_MIN + '-' + TITLE_MAX + ' 之间');
+                ok = false;
+            }
+
+            var t = (timeInput.value || '').trim();
+            if (t) {
+                var tNum = parseInt(t, 10);
+                if (!Number.isFinite(tNum) || tNum < TIME_MIN || tNum > TIME_MAX) {
+                    showFieldError('time-limit-error',
+                        '时间限制需在 ' + TIME_MIN + '-' + TIME_MAX + ' 之间');
+                    ok = false;
+                }
+            }
+
+            var m = (memInput.value || '').trim();
+            if (m) {
+                var mNum = parseInt(m, 10);
+                if (!Number.isFinite(mNum) || mNum < MEM_MIN || mNum > MEM_MAX) {
+                    showFieldError('memory-limit-error',
+                        '内存限制需在 ' + MEM_MIN + '-' + MEM_MAX + ' 之间');
+                    ok = false;
+                }
+            }
+
+            if (!descriptionInput.value || descriptionInput.value.trim() === '') {
+                showFieldError('description-error', '题目描述不可为空');
+                ok = false;
+            }
+
+            // Each sample row needs non-empty input + output.
+            var sampleBad = false;
+            for (var i = 0; i < samples.length; i++) {
+                if (!samples[i].input || !samples[i].output) {
+                    sampleBad = true;
+                    break;
+                }
+            }
+            if (sampleBad) {
+                showFieldError('samples-error',
+                    '每个样例都需填写 input 与 output');
+                ok = false;
+            }
+
+            return ok;
+        }
+
+        // ── Build request body from current form state ──────────────
+        function buildPayload() {
+            var body = {
+                slug:        (slugInput.value || '').trim(),
+                title:       (titleInput.value || '').trim(),
+                difficulty:  state_difficulty(),
+                description: descriptionInput.value || '',
+                tags:        tags.slice(),
+                samples:     samples.map(function (s, i) {
+                    var out = {
+                        input:  s.input || '',
+                        output: s.output || '',
+                    };
+                    if (s.judge_type && s.judge_type !== 'exact') {
+                        out.judge_type = s.judge_type;
+                    }
+                    out.order_num = i;
+                    return out;
+                }),
+            };
+            var t = (timeInput.value || '').trim();
+            if (t) body.time_limit_ms = parseInt(t, 10);
+            var m = (memInput.value || '').trim();
+            if (m) body.memory_limit_mb = parseInt(m, 10);
+            return body;
+        }
+
+        // ── Submit handler (create + edit) ──────────────────────────
+        function onSubmit(ev) {
+            if (ev) ev.preventDefault();
+            if (submitting) return;
+
+            clearAllErrors();
+            if (!clientValidate()) {
+                showFormError('请修正下方红色提示后再提交。');
+                return;
+            }
+
+            var body = buildPayload();
+            submitting = true;
+            submitBtn.disabled = true;
+            submitBtnBottom.disabled = true;
+            var origText = submitBtn.textContent;
+            submitBtn.textContent = '保存中…';
+            submitBtnBottom.textContent = '保存中…';
+
+            var p;
+            if (mode === 'create') {
+                p = litecode.api.post('/admin/problems', body);
+            } else {
+                // The URL slug is the OLD slug; body.slug may differ
+                // (a rename). The backend reads both and updates.
+                p = litecode.api.put(
+                    '/admin/problems/' + encodeURIComponent(originalSlug),
+                    body);
+            }
+
+            p.then(function (resp) {
+                var slug = (resp && resp.data && resp.data.slug) || body.slug;
+                litecode.toast.success(
+                    (mode === 'create' ? '已创建题目 ' : '已保存题目 ')
+                    + slug);
+                // Redirect back to the list so the user sees the new row.
+                window.location.href = PROBLEMS_LIST_URL;
+            })
+            .catch(function (err) {
+                applyServerErrors(err);
+                if (!err || !err.status || (err.status >= 500)) {
+                    litecode.toast.error('保存失败：' +
+                        (err && err.message ? err.message : '未知错误'));
+                }
+            })
+            .then(function () {
+                submitting = false;
+                submitBtn.disabled = false;
+                submitBtnBottom.disabled = false;
+                submitBtn.textContent = origText;
+                submitBtnBottom.textContent = origText;
+            });
+        }
+
+        // ── Wire up events ──────────────────────────────────────────
+        function wireEvents() {
+            form.addEventListener('submit', onSubmit);
+
+            // Description → live preview (debounced via direct event;
+            // markdown.renderSafe is sync and fast, so no debounce
+            // needed for typing latency).
+            descriptionInput.addEventListener('input', renderPreview);
+
+            // Tag input: Enter or comma commits the typed value.
+            tagInput.addEventListener('keydown', function (ev) {
+                if (ev.key === 'Enter' || ev.key === ',') {
+                    ev.preventDefault();
+                    tryAddTag(tagInput.value);
+                    tagInput.value = '';
+                } else if (ev.key === 'Backspace'
+                           && tagInput.value === ''
+                           && tags.length) {
+                    // Backspace on empty input pops the last tag — a
+                    // small UX shortcut, mirrors chip inputs on
+                    // GitHub / Linear.
+                    tags.pop();
+                    renderTagChips();
+                }
+            });
+            tagInput.addEventListener('blur', function () {
+                if (tagInput.value.trim()) {
+                    tryAddTag(tagInput.value);
+                    tagInput.value = '';
+                }
+            });
+
+            // Clear inline errors when the user starts fixing them.
+            slugInput.addEventListener('input', function () {
+                showFieldError('slug-error', '');
+            });
+            titleInput.addEventListener('input', function () {
+                showFieldError('title-error', '');
+            });
+            timeInput.addEventListener('input', function () {
+                showFieldError('time-limit-error', '');
+            });
+            memInput.addEventListener('input', function () {
+                showFieldError('memory-limit-error', '');
+            });
+            descriptionInput.addEventListener('input', function () {
+                showFieldError('description-error', '');
+            });
+            difficultySeg.addEventListener('click', function () {
+                showFieldError('difficulty-error', '');
+            });
+
+            // Sample add.
+            document.getElementById('add-sample-btn')
+                .addEventListener('click', addSample);
+        }
+
+        // ── Boot ────────────────────────────────────────────────────
+        document.addEventListener('DOMContentLoaded', function () {
+            litecode.boot.shell({
+                title: 'LiteCode · 编辑题目',
+                requireAdmin: true,
+            }).then(function () {
+                // Capture DOM refs.
+                form              = $('problem-form');
+                slugInput         = $('slug-input');
+                titleInput        = $('title-input');
+                difficultySeg     = $('difficulty-seg');
+                timeInput         = $('time-limit-input');
+                memInput          = $('memory-limit-input');
+                tagInput          = $('tag-input');
+                tagChips          = $('tag-chips');
+                tagError          = $('tag-error');
+                descriptionInput  = $('description-input');
+                descriptionPreview= $('description-preview');
+                samplesList       = $('samples-list');
+                samplesError      = $('samples-error');
+                pageTitle         = $('page-title');
+                pageSubtitle      = $('page-subtitle');
+                submitBtn         = $('submit-btn');
+                submitBtnBottom   = $('submit-btn-bottom');
+                formError         = $('form-error');
+
+                readModeFromUrl();
+                applyHeaderForMode();
+                renderDifficultySeg();
+                renderTagChips();
+                renderSamples();
+                wireEvents();
+
+                if (mode === 'edit') {
+                    // Slug is editable for rename; the placeholder
+                    // reflects the current slug. The OLD slug lives
+                    // in originalSlug for the PUT URL.
+                    slugInput.placeholder = originalSlug;
+                    loadForEdit();
+                } else {
+                    // Default difficulty is medium; leave description
+                    // empty. The preview renders the placeholder
+                    // hint until the user types.
+                    renderPreview();
+                }
+            });
+        });
+    })();
     </script>
 </body>
 </html>

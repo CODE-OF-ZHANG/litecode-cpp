@@ -2218,3 +2218,232 @@ html.dark .lc-gauge--danger {
     .lc-rank-cell--subs { display: none; }
     .lc-rank-cell--rate { grid-area: rate; }
 }
+
+/* ════════════════════════════════════════════════════════════════
+   §18  Admin pages — 题目管理 / 编辑题目 (Phase 5 ★ 管理后台 - 题目管理页面)
+
+   Admin problem management needs three components that don't have
+   an analog on the public side:
+
+     1. .lc-admin-table       — dense data table with hover row
+                                highlight + sticky header
+     2. .lc-tag-input         — chip input (chips above, input below)
+                                for tag editing
+     3. .lc-md-editor         — two-pane Markdown editor with live
+                                preview, collapses to single column
+                                on <= 1024px
+     4. .lc-sample-row        — repeatable input/output/judge_type
+                                row for problem samples
+     5. .lc-form-section      — sectioned card layout with a
+                                subtitle and inner spacing
+     6. .lc-form-section__title — small uppercase heading inside a
+                                  form section
+
+   The rest of the admin pages (users / dashboard / audit-logs) will
+   reuse .lc-admin-table + .lc-card + .lc-row patterns, so these
+   primitives are written with their non-problem siblings in mind. */
+
+.lc-admin-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+    background: var(--lc-color-surface);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-lg);
+    box-shadow: var(--lc-shadow-sm);
+}
+
+.lc-admin-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    min-width: 720px;
+}
+
+.lc-admin-table thead th {
+    text-align: left;
+    padding: 12px 14px;
+    background: var(--lc-color-surface-2);
+    color: var(--lc-color-text-2);
+    font-weight: 600;
+    border-bottom: 1px solid var(--lc-color-border);
+    white-space: nowrap;
+}
+
+.lc-admin-table tbody td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--lc-color-border);
+    vertical-align: middle;
+}
+
+.lc-admin-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.lc-admin-table tbody tr:hover {
+    background: var(--lc-color-surface-2);
+}
+
+.lc-admin-table tbody td a {
+    color: var(--lc-color-link);
+    text-decoration: none;
+}
+
+.lc-admin-table tbody td a:hover {
+    text-decoration: underline;
+}
+
+/* Form sections — visually group related fields inside the editor
+   card. Same `.lc-card > .lc-stack-lg > section` shape works
+   without these too; the section title is just a small heading
+   so the user has a navigation hint on a long form. */
+
+.lc-form-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lc-space-3);
+}
+
+.lc-form-section__title {
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--lc-color-text-2);
+    margin: 0;
+    padding-bottom: var(--lc-space-2);
+    border-bottom: 1px solid var(--lc-color-border);
+}
+
+/* Tag chip input — a wrap that hosts existing chips + a free-text
+   input. Visually mirrors the public .lc-tag-chips row. The X
+   button on each chip is a tiny ghost control. */
+
+.lc-tag-input {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--lc-space-2);
+    padding: 6px 8px;
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-md);
+    background: var(--lc-color-surface);
+    min-height: 38px;
+}
+
+.lc-tag-input:focus-within {
+    border-color: var(--lc-color-link);
+    box-shadow: 0 0 0 3px var(--lc-color-focus-ring);
+}
+
+.lc-tag-input__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--lc-space-2);
+}
+
+.lc-tag-input__input {
+    flex: 1;
+    min-width: 120px;
+    border: 0;
+    outline: none;
+    padding: 2px 4px;
+    background: transparent;
+    font-size: 14px;
+}
+
+.lc-tag-input__input:focus {
+    box-shadow: none;
+}
+
+.lc-tag-chip__remove {
+    margin-left: 4px;
+    background: transparent;
+    border: 0;
+    color: inherit;
+    cursor: pointer;
+    padding: 0 2px;
+    font-size: 14px;
+    line-height: 1;
+}
+
+.lc-tag-chip__remove:hover {
+    color: var(--lc-color-danger);
+}
+
+/* Markdown editor — two-pane layout. The textarea is
+   full-height; the preview is constrained to the same width so
+   long code blocks don't blow out the row. On <=1024px the
+   preview collapses BELOW the textarea. */
+
+.lc-md-editor {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--lc-space-4);
+}
+
+.lc-md-editor__pane {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lc-space-2);
+    min-width: 0;
+}
+
+.lc-md-editor__textarea {
+    font-family: var(--lc-font-mono, ui-monospace, "SFMono-Regular",
+                      Consolas, "Liberation Mono", Menlo, monospace);
+    font-size: 13px;
+    line-height: 1.5;
+    resize: vertical;
+    min-height: 280px;
+}
+
+.lc-md-editor__preview {
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-md);
+    background: var(--lc-color-surface);
+    padding: var(--lc-space-4);
+    min-height: 280px;
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+@media (max-width: 1024px) {
+    .lc-md-editor {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Sample row — repeatable editor row for the admin's problem
+   samples list. Each row has two textareas (input / output) plus
+   a judge_type select and a remove button. */
+
+.lc-sample-row {
+    padding: var(--lc-space-4);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-md);
+    background: var(--lc-color-surface-2);
+    display: flex;
+    flex-direction: column;
+    gap: var(--lc-space-2);
+}
+
+.lc-sample-row__textarea {
+    font-family: var(--lc-font-mono, ui-monospace, "SFMono-Regular",
+                      Consolas, "Liberation Mono", Menlo, monospace);
+    font-size: 13px;
+    line-height: 1.5;
+    resize: vertical;
+    min-height: 80px;
+}
+
+@media (max-width: 768px) {
+    .lc-admin-table thead th,
+    .lc-admin-table tbody td {
+        padding: 8px 10px;
+        font-size: 13px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .lc-md-editor__preview { scroll-behavior: auto; }
+}

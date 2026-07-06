@@ -19,13 +19,192 @@
     <div data-nav></div>
 
     <main class="lc-container">
-        <header class="lc-stack" style="margin-bottom: 24px;">
-            <h1>题目管理（占位）</h1>
-            <p class="lc-form-help">
-                Phase 5 ★ 管理后台 - 题目管理页面（含批量导入区）将在
-                后续 commit 落地；本占位页只承载 CSP + SRI + 框架接入。
-            </p>
+        <!--
+          Page header: title + two primary actions. The "新建题目" link
+          drops into /admin/problem-edit.html (no slug = create mode);
+          the "批量导入" button toggles the in-page bulk-import panel
+          below the table.
+        -->
+        <header class="lc-row lc-row--between"
+                style="margin-bottom: var(--lc-space-5);">
+            <div class="lc-stack-sm">
+                <h1>题目管理</h1>
+                <p class="lc-form-help">
+                    管理题库的增删改与批量导入。删除采用软删除（题目不再公开展示，历史提交保留）。
+                </p>
+            </div>
+            <div class="lc-row" style="gap: var(--lc-space-2);">
+                <button type="button" class="lc-btn"
+                        id="toggle-import-btn"
+                        aria-expanded="false"
+                        aria-controls="import-panel">
+                    批量导入
+                </button>
+                <a href="/admin/problem-edit.html"
+                   class="lc-btn lc-btn--primary">
+                    + 新建题目
+                </a>
+            </div>
         </header>
+
+        <!--
+          Bulk-import panel (Phase 5 ★ 管理后台 - 批量导入页面).
+          Hidden by default; toggled by the header button. The panel
+          contains:
+            - a file picker accepting multiple .json files
+            - an on_duplicate select (skip | overwrite)
+            - a submit button that POSTs to
+              /api/v1/admin/problems/import?on_duplicate=...
+            - a result panel that surfaces summary + per-file outcomes
+          The backend enforces 50-file / 10 MB limits — we mirror
+          them on the client so the user sees a friendly message
+          before the round-trip.
+        -->
+        <section id="import-panel" class="lc-card lc-stack"
+                 aria-label="批量导入" hidden>
+            <header class="lc-row lc-row--between">
+                <h2 style="margin: 0; font-size: 18px;">批量导入</h2>
+                <button type="button" class="lc-btn lc-btn--sm"
+                        id="close-import-btn"
+                        aria-label="关闭批量导入面板">关闭</button>
+            </header>
+
+            <p class="lc-form-help">
+                选择或拖入多个 JSON 题目文件（每个文件须符合单题 schema — 参考 <code>problems/*.json</code>）。
+                单次最多 50 个文件、总计不超过 10 MB。
+            </p>
+
+            <div class="lc-form-row">
+                <span class="lc-form-label" for="on-duplicate-select">
+                    冲突处理
+                </span>
+                <select id="on-duplicate-select" class="lc-input">
+                    <option value="skip" selected>
+                        skip（默认）：已存在的 slug 跳过
+                    </option>
+                    <option value="overwrite">
+                        overwrite：覆盖已存在的 slug（含恢复软删）
+                    </option>
+                </select>
+                <span class="lc-form-help">
+                    "skip" 不会触碰已存在的题目；"overwrite" 会用文件内容覆盖（包含软删恢复）。
+                </span>
+            </div>
+
+            <div class="lc-form-row">
+                <span class="lc-form-label" for="file-input">
+                    题目文件
+                </span>
+                <input type="file" id="file-input"
+                       class="lc-input"
+                       accept="application/json,.json"
+                       multiple>
+                <span class="lc-form-help" id="file-help">
+                    未选择文件
+                </span>
+            </div>
+
+            <div class="lc-row lc-row--right">
+                <button type="button" class="lc-btn lc-btn--primary"
+                        id="submit-import-btn" disabled>
+                    提交导入
+                </button>
+            </div>
+
+            <!-- Import result panel. Hidden until the first import finishes. -->
+            <section id="import-result" class="lc-stack-sm" hidden
+                     aria-live="polite"></section>
+        </section>
+
+        <!--
+          Filter bar — mirrors index.html so admins use the same
+          mental model. Filter values are URL-state (replaceState) so
+          a deep link like ?difficulty=easy&page=2 round-trips.
+        -->
+        <section class="lc-card lc-problem-filters" aria-label="题目筛选">
+            <div class="lc-problem-filters__row">
+                <label class="lc-form-row lc-problem-filters__search">
+                    <span class="lc-form-label" for="search-input">搜索</span>
+                    <input type="search" id="search-input"
+                           class="lc-input"
+                           placeholder="按 slug 或标题筛选（当前页内生效）"
+                           autocomplete="off"
+                           aria-describedby="search-help">
+                    <span id="search-help" class="lc-form-help">
+                        客户端即时筛选当前页内已加载的题目；切换页或筛选条件后会重新拉取。
+                    </span>
+                </label>
+            </div>
+
+            <div class="lc-problem-filters__row"
+                 role="group" aria-label="难度筛选">
+                <span class="lc-form-label">难度</span>
+                <div class="lc-seg" id="difficulty-seg" role="tablist">
+                    <button type="button" class="lc-seg__btn lc-seg__btn--active"
+                            data-difficulty="" role="tab" aria-selected="true">全部</button>
+                    <button type="button" class="lc-seg__btn"
+                            data-difficulty="easy" role="tab" aria-selected="false">简单</button>
+                    <button type="button" class="lc-seg__btn"
+                            data-difficulty="medium" role="tab" aria-selected="false">中等</button>
+                    <button type="button" class="lc-seg__btn"
+                            data-difficulty="hard" role="tab" aria-selected="false">困难</button>
+                </div>
+            </div>
+
+            <div class="lc-problem-filters__row lc-row lc-row--between">
+                <span class="lc-form-help" id="filter-summary"
+                      aria-live="polite">共 0 题</span>
+                <button type="button" class="lc-btn lc-btn--ghost lc-btn--sm"
+                        id="reset-filters-btn">重置筛选</button>
+            </div>
+        </section>
+
+        <!--
+          Result table / states. The table is the only non-table
+          view (cards would consume too much vertical real estate
+          once admin has 100+ problems); we keep the row density
+          tight and rely on hover highlighting for navigation.
+        -->
+        <section class="lc-stack-lg" aria-label="题目列表">
+            <div class="lc-admin-table-wrap">
+                <table class="lc-admin-table" id="problem-table"
+                       aria-label="题目列表" hidden>
+                    <thead>
+                        <tr>
+                            <th scope="col">Slug</th>
+                            <th scope="col">标题</th>
+                            <th scope="col">难度</th>
+                            <th scope="col">标签</th>
+                            <th scope="col">通过率</th>
+                            <th scope="col">时间 / 内存</th>
+                            <th scope="col">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="problem-tbody"></tbody>
+                </table>
+            </div>
+
+            <div class="lc-empty" id="empty-state" hidden>
+                <p class="lc-empty__title">没有符合条件的题目</p>
+                <p class="lc-form-help">试试调整筛选条件，或点击"新建题目"。</p>
+            </div>
+
+            <div class="lc-error" id="error-state" hidden role="alert">
+                <p class="lc-error__title">加载失败</p>
+                <p class="lc-form-help" id="error-message"></p>
+                <button type="button" class="lc-btn lc-btn--primary lc-btn--sm"
+                        id="retry-btn">重试</button>
+            </div>
+
+            <div class="lc-loading" id="loading-state" hidden
+                 aria-live="polite">
+                <span class="lc-spinner" aria-hidden="true"></span>
+                <span>加载中…</span>
+            </div>
+
+            <nav class="lc-pagination" id="pagination"
+                 aria-label="分页" hidden></nav>
+        </section>
     </main>
 
     <!-- Load order is mandatory: csp.js → api.js → app.js. -->
@@ -34,7 +213,698 @@
     <script src="/js/app.js" defer></script>
 
     <script>
-        litecode.boot.shell({ title: 'LiteCode · 题目管理', requireAdmin: true });
+    // ────────────────────────────────────────────────────────────────────
+    //  Admin Problem Management Page (Phase 5 ★ 管理后台 - 题目管理页面)
+    //
+    //  Responsibilities:
+    //    1) Admin guard via litecode.boot.shell({ requireAdmin: true })
+    //       (already enforced by app.js — non-admin → redirect home).
+    //    2) List problems with the same filter model as index.html
+    //       (search / difficulty / tag / pagination). All filter state
+    //       lives in the URL so deep links round-trip.
+    //    3) Per-row "编辑" + "删除" actions. Delete asks for
+    //       confirmation (single-page soft-delete — irreversible from
+    //       the UI per SPEC §4.2).
+    //    4) Bulk-import panel that POSTs
+    //       /api/v1/admin/problems/import?on_duplicate=… as
+    //       multipart/form-data and renders the server's per-file
+    //       summary (imported / skipped / overwritten / failed).
+    //
+    //  Soft-deleted problems: not visible here on purpose — the public
+    //  GET /api/v1/problems already filters out is_deleted=TRUE rows
+    //  (SPEC §4.2). Restoring a soft-deleted problem from this UI is
+    //  deferred to a later commit (would require an admin list
+    //  endpoint that returns include_deleted=true).
+    // ────────────────────────────────────────────────────────────────────
+    (function () {
+        'use strict';
+
+        // ── Constants ────────────────────────────────────────────────
+        var DEFAULT_LIMIT   = 20;            // matches backend default
+        var PROBLEM_DETAIL  = '/problem.html?slug=';
+        var PROBLEM_EDIT    = '/admin/problem-edit.html';
+        var MAX_FILES       = 50;            // mirrors backend §8.2
+        var MAX_TOTAL_BYTES = 10 * 1024 * 1024;   // 10 MB
+
+        var DIFFICULTIES = ['', 'easy', 'medium', 'hard'];
+        var DIFFICULTY_LABELS = {
+            '': '全部', easy: '简单', medium: '中等', hard: '困难'
+        };
+        var DIFFICULTY_CLASS = {
+            easy: 'lc-pill lc-pill--easy',
+            medium: 'lc-pill lc-pill--medium',
+            hard: 'lc-pill lc-pill--hard',
+        };
+
+        // ── State ───────────────────────────────────────────────────
+        var state = {
+            difficulty: '',
+            page:       1,
+            limit:      DEFAULT_LIMIT,
+            search:     '',
+        };
+        var lastPayload = null;
+        var searchTimer = null;
+        var inflightToken = 0;
+
+        // ── DOM refs ────────────────────────────────────────────────
+        function $(id) { return document.getElementById(id); }
+        var els = {};
+
+        // ── Element builder (mirrors app.js's el()) ─────────────────
+        function el(tag, attrs, children) {
+            var node = document.createElement(tag);
+            if (attrs) {
+                Object.keys(attrs).forEach(function (k) {
+                    if (k === 'class')      node.className = attrs[k];
+                    else if (k === 'text')  node.textContent = attrs[k];
+                    else if (k === 'html')  node.innerHTML = attrs[k];
+                    else if (k === 'dataset') {
+                        Object.keys(attrs[k]).forEach(function (dk) {
+                            node.dataset[dk] = attrs[k][dk];
+                        });
+                    } else if (k.charAt(0) === 'o' && k.charAt(1) === 'n') {
+                        node.addEventListener(k.slice(2).toLowerCase(), attrs[k]);
+                    } else {
+                        node.setAttribute(k, attrs[k]);
+                    }
+                });
+            }
+            if (children !== undefined && children !== null) {
+                (Array.isArray(children) ? children : [children]).forEach(function (c) {
+                    if (c === null || c === undefined) return;
+                    if (typeof c === 'string') node.appendChild(document.createTextNode(c));
+                    else node.appendChild(c);
+                });
+            }
+            return node;
+        }
+
+        function escapeText(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        // ── URL state ───────────────────────────────────────────────
+        function readUrl() {
+            var sp = new URLSearchParams(window.location.search);
+            var d = sp.get('difficulty') || '';
+            if (DIFFICULTIES.indexOf(d) === -1) d = '';
+            var page = parseInt(sp.get('page') || '1', 10);
+            if (!Number.isFinite(page) || page < 1) page = 1;
+            var limit = parseInt(sp.get('limit') || String(DEFAULT_LIMIT), 10);
+            if (!Number.isFinite(limit) || limit < 1) limit = DEFAULT_LIMIT;
+            var q = sp.get('q') || '';
+            return { difficulty: d, page: page, limit: limit, search: q };
+        }
+        function writeUrl(replace) {
+            var sp = new URLSearchParams();
+            if (state.difficulty) sp.set('difficulty', state.difficulty);
+            if (state.page > 1)   sp.set('page', String(state.page));
+            if (state.limit !== DEFAULT_LIMIT) sp.set('limit', String(state.limit));
+            if (state.search)     sp.set('q', state.search);
+            var qs = sp.toString();
+            var url = window.location.pathname + (qs ? '?' + qs : '');
+            if (replace) window.history.replaceState(null, '', url);
+            else         window.history.pushState(null, '', url);
+        }
+
+        // ── Render: difficulty segmented control ───────────────────
+        function renderDifficultySeg() {
+            var seg = $('difficulty-seg');
+            while (seg.firstChild) seg.removeChild(seg.firstChild);
+            DIFFICULTIES.forEach(function (d) {
+                var active = (state.difficulty === d);
+                seg.appendChild(el('button', {
+                    type: 'button',
+                    class: 'lc-seg__btn' + (active ? ' lc-seg__btn--active' : ''),
+                    dataset: { difficulty: d },
+                    text: DIFFICULTY_LABELS[d],
+                    role: 'tab',
+                    'aria-selected': active ? 'true' : 'false',
+                    onClick: function () { onDifficultyChange(d); },
+                }));
+            });
+        }
+
+        // ── Render: summary text ────────────────────────────────────
+        function renderSummary() {
+            var total = (lastPayload && typeof lastPayload.total === 'number')
+                ? lastPayload.total : 0;
+            var parts = ['共 ' + total + ' 题'];
+            if (state.difficulty) parts.push('难度=' + DIFFICULTY_LABELS[state.difficulty]);
+            if (state.search)     parts.push('搜索="' + state.search + '"');
+            $('filter-summary').textContent = parts.join(' · ');
+        }
+
+        // ── Render: one row of the problem table ────────────────────
+        function renderRow(p) {
+            var slug  = escapeText(p.slug);
+            var title = escapeText(p.title);
+            var diff  = escapeText(p.difficulty);
+            var diffCellClass = DIFFICULTY_CLASS[diff] || 'lc-pill';
+            var diffLabel = DIFFICULTY_LABELS[diff] || diff || '—';
+
+            var ac  = Number(p.accepted_count)   || 0;
+            var sub = Number(p.submission_count) || 0;
+            var rate = sub > 0 ? ((ac / sub) * 100).toFixed(1) + '%' : '—';
+
+            var timeLimit = (typeof p.time_limit === 'number') ? p.time_limit : '—';
+            var memLimit  = (typeof p.memory_limit === 'number') ? p.memory_limit : '—';
+
+            var tr = el('tr', { dataset: { slug: p.slug } });
+
+            // Slug (monospace-ish, link to public detail for preview).
+            tr.appendChild(el('td', null, [
+                el('a', {
+                    href: PROBLEM_DETAIL + encodeURIComponent(p.slug),
+                    text: p.slug || '',
+                    title: '在新标签打开预览',
+                    target: '_blank',
+                    rel: 'noopener',
+                })
+            ]));
+
+            // Title (with link to public detail; preview in new tab).
+            tr.appendChild(el('td', null, [
+                el('a', {
+                    href: PROBLEM_DETAIL + encodeURIComponent(p.slug),
+                    text: p.title || '',
+                    title: '预览题目',
+                    target: '_blank',
+                    rel: 'noopener',
+                })
+            ]));
+
+            // Difficulty pill.
+            tr.appendChild(el('td', null, [
+                el('span', { class: diffCellClass, text: diffLabel })
+            ]));
+
+            // Tags: API list endpoint omits tags (only detail has them),
+            // so we render "—" with a tooltip pointing at the detail page.
+            tr.appendChild(el('td', null, [
+                el('span', {
+                    class: 'lc-form-help',
+                    text: '—',
+                    title: '标签详情见题目预览',
+                })
+            ]));
+
+            // AC rate.
+            tr.appendChild(el('td', null, [
+                el('span', {
+                    class: 'lc-form-help',
+                    text: rate + ' (' + ac + ' / ' + sub + ')',
+                    title: '通过率（通过数 / 提交数）',
+                })
+            ]));
+
+            // Time / memory.
+            tr.appendChild(el('td', null, [
+                el('span', {
+                    class: 'lc-form-help',
+                    text: timeLimit + ' ms / ' + memLimit + ' MB',
+                })
+            ]));
+
+            // Actions.
+            tr.appendChild(el('td', null, [
+                el('a', {
+                    href: PROBLEM_EDIT + '?slug=' + encodeURIComponent(p.slug),
+                    class: 'lc-btn lc-btn--sm',
+                    text: '编辑',
+                    dataset: { act: 'edit', slug: p.slug },
+                }),
+                el('button', {
+                    type: 'button',
+                    class: 'lc-btn lc-btn--sm lc-btn--danger',
+                    text: '删除',
+                    dataset: { act: 'delete', slug: p.slug, title: p.title || '' },
+                    style: 'margin-left: var(--lc-space-2);',
+                    onClick: function () { confirmDelete(p.slug, p.title); },
+                }),
+            ]));
+
+            return tr;
+        }
+
+        function renderRows() {
+            var tbody = $('problem-tbody');
+            while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+
+            var items = (lastPayload && Array.isArray(lastPayload.items))
+                ? lastPayload.items : [];
+
+            var q = state.search.trim().toLowerCase();
+            var filtered = q ? items.filter(function (p) {
+                if (!p) return false;
+                var slugMatch  = p.slug  && String(p.slug).toLowerCase().indexOf(q) !== -1;
+                var titleMatch = p.title && String(p.title).toLowerCase().indexOf(q) !== -1;
+                return slugMatch || titleMatch;
+            }) : items;
+
+            if (!filtered.length) {
+                $('problem-table').hidden = true;
+                $('empty-state').hidden = false;
+                return;
+            }
+            $('empty-state').hidden = true;
+            $('problem-table').hidden = false;
+            filtered.forEach(function (p) {
+                tbody.appendChild(renderRow(p));
+            });
+        }
+
+        // ── Render: pagination ──────────────────────────────────────
+        function totalPages() {
+            var t = (lastPayload && typeof lastPayload.total === 'number')
+                ? lastPayload.total : 0;
+            if (t <= 0) return 1;
+            return Math.max(1, Math.ceil(t / state.limit));
+        }
+
+        function renderPagination() {
+            var nav = $('pagination');
+            while (nav.firstChild) nav.removeChild(nav.firstChild);
+            var tp = totalPages();
+            if (tp <= 1) { nav.hidden = true; return; }
+            nav.hidden = false;
+
+            var cur = state.page;
+            function pageBtn(label, target, opts) {
+                opts = opts || {};
+                var attrs = {
+                    type: 'button',
+                    class: 'lc-page-btn'
+                        + (opts.active ? ' lc-page-btn--active' : '')
+                        + (opts.disabled ? ' lc-page-btn--disabled' : ''),
+                    text: label,
+                    'aria-label': opts.ariaLabel || ('第 ' + target + ' 页'),
+                    'aria-current': opts.active ? 'page' : null,
+                };
+                if (opts.disabled) attrs.disabled = true;
+                else attrs.onClick = function () { goToPage(target); };
+                return el('button', attrs);
+            }
+            function ellipsis() {
+                return el('span', { class: 'lc-page-ellipsis',
+                                    text: '…', 'aria-hidden': 'true' });
+            }
+
+            nav.appendChild(pageBtn('« 首页', 1, { disabled: cur === 1 }));
+            nav.appendChild(pageBtn('‹ 上一页', cur - 1, { disabled: cur === 1 }));
+
+            var pages = [];
+            if (tp <= 7) {
+                for (var i = 1; i <= tp; i++) pages.push(i);
+            } else {
+                pages.push(1);
+                if (cur > 3) pages.push('…');
+                var from = Math.max(2, cur - 1);
+                var to   = Math.min(tp - 1, cur + 1);
+                for (var j = from; j <= to; j++) pages.push(j);
+                if (cur < tp - 2) pages.push('…');
+                pages.push(tp);
+            }
+            pages.forEach(function (p) {
+                if (p === '…') nav.appendChild(ellipsis());
+                else nav.appendChild(pageBtn(String(p), p, { active: p === cur }));
+            });
+
+            nav.appendChild(pageBtn('下一页 ›', cur + 1, { disabled: cur === tp }));
+            nav.appendChild(pageBtn('末页 »', tp, { disabled: cur === tp }));
+        }
+
+        // ── State transitions ───────────────────────────────────────
+        function onDifficultyChange(d) {
+            state.difficulty = d;
+            state.page = 1;
+            writeUrl(true);
+            renderDifficultySeg();
+            load();
+        }
+
+        function goToPage(p) {
+            var tp = totalPages();
+            if (p < 1) p = 1;
+            if (p > tp) p = tp;
+            if (p === state.page) return;
+            state.page = p;
+            writeUrl(true);
+            var t = $('problem-table');
+            if (t && t.scrollIntoView) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            load();
+        }
+
+        function onSearchInput() {
+            if (searchTimer) clearTimeout(searchTimer);
+            searchTimer = setTimeout(function () {
+                state.search = els.searchInput.value || '';
+                writeUrl(true);
+                renderRows();
+                renderSummary();
+            }, 250);
+        }
+
+        function resetFilters() {
+            state.difficulty = '';
+            state.page = 1;
+            state.search = '';
+            els.searchInput.value = '';
+            writeUrl(true);
+            renderDifficultySeg();
+            load();
+        }
+
+        // ── Delete confirmation + dispatch ──────────────────────────
+        function confirmDelete(slug, title) {
+            var label = title ? ('"' + title + '" (slug: ' + slug + ')') : ('slug: ' + slug);
+            var ok = window.confirm(
+                '确认删除题目 ' + label + '？\n\n' +
+                '该操作采用软删除 — 题目将不再出现在公开展示与本题列表，但保留所有历史提交记录。'
+            );
+            if (!ok) return;
+
+            litecode.api.delete('/admin/problems/' + encodeURIComponent(slug))
+                .then(function () {
+                    litecode.toast.success('已删除题目 ' + slug);
+                    load();
+                })
+                .catch(function (err) {
+                    // LitecodeApiError → friendly message; the global
+                    // toast listener would surface a generic version,
+                    // we want a slightly clearer one for 404.
+                    if (err && err.status === 404) {
+                        litecode.toast.warn('该题目不存在或已被删除');
+                    } else if (err && err.status === 429) {
+                        litecode.toast.warn('操作过于频繁，请稍后重试');
+                    } else {
+                        litecode.toast.error('删除失败：' +
+                            (err && err.message ? err.message : '未知错误'));
+                    }
+                });
+        }
+
+        // ── Load state machine ──────────────────────────────────────
+        function showState(name) {
+            ['loading-state', 'empty-state', 'error-state'].forEach(function (id) {
+                $(id).hidden = true;
+            });
+            $('problem-table').hidden = true;
+            if (name === 'loading') {
+                $('loading-state').hidden = false;
+            } else if (name === 'error') {
+                $('error-state').hidden = false;
+            } else if (name === 'empty') {
+                $('empty-state').hidden = false;
+            } else {
+                $('problem-table').hidden = false;
+            }
+        }
+
+        function load() {
+            var token = ++inflightToken;
+            showState('loading');
+
+            var qs = '?limit=' + encodeURIComponent(state.limit)
+                   + '&offset=' + encodeURIComponent((state.page - 1) * state.limit);
+            if (state.difficulty) qs += '&difficulty=' + encodeURIComponent(state.difficulty);
+
+            litecode.api.get('/problems' + qs)
+                .then(function (resp) {
+                    if (token !== inflightToken) return;
+                    lastPayload = (resp && resp.data)
+                        ? resp.data : { items: [], total: 0 };
+                    renderSummary();
+                    renderRows();
+                    renderPagination();
+                    if ((lastPayload.items || []).length === 0) {
+                        showState('empty');
+                    } else {
+                        showState('table');
+                    }
+                })
+                .catch(function (err) {
+                    if (token !== inflightToken) return;
+                    showState('error');
+                    $('error-message').textContent = (err && err.message)
+                        ? err.message : '网络错误，请稍后重试';
+                });
+        }
+
+        // ── Bulk import: panel toggle + file handling ──────────────
+        function toggleImportPanel(show) {
+            var panel = $('import-panel');
+            var btn   = $('toggle-import-btn');
+            var open  = (show === undefined) ? panel.hidden : !!show;
+            panel.hidden = !open;
+            btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+            btn.textContent = open ? '收起导入面板' : '批量导入';
+        }
+
+        function refreshFileHelp() {
+            var input = $('file-input');
+            var help = $('file-help');
+            var submitBtn = $('submit-import-btn');
+            var files = input.files ? Array.prototype.slice.call(input.files) : [];
+            if (!files.length) {
+                help.textContent = '未选择文件';
+                submitBtn.disabled = true;
+                return;
+            }
+            var totalBytes = files.reduce(function (s, f) { return s + f.size; }, 0);
+            var tooMany = files.length > MAX_FILES;
+            var tooBig  = totalBytes > MAX_TOTAL_BYTES;
+            help.textContent = files.length + ' 个文件，共 '
+                + (totalBytes / 1024).toFixed(1) + ' KB'
+                + (tooMany ? '（超过 ' + MAX_FILES + ' 个上限）' : '')
+                + (tooBig  ? '（超过 10 MB 上限）' : '');
+            submitBtn.disabled = (tooMany || tooBig);
+        }
+
+        function clearFileInput() {
+            $('file-input').value = '';
+            refreshFileHelp();
+        }
+
+        function renderImportResult(data) {
+            var out = $('import-result');
+            while (out.firstChild) out.removeChild(out.firstChild);
+            out.hidden = false;
+
+            var summary = (data && data.summary) || {};
+            var imported = (data && Array.isArray(data.imported)) ? data.imported : [];
+            var failures = (data && Array.isArray(data.failures)) ? data.failures : [];
+
+            // Top-line stats as pills.
+            var stats = el('div', { class: 'lc-row', style: 'gap: var(--lc-space-3); flex-wrap: wrap;' }, [
+                el('span', { class: 'lc-pill lc-pill--easy',
+                             text: '导入 ' + (summary.imported || 0) }),
+                el('span', { class: 'lc-pill',
+                             text: '跳过 ' + (summary.skipped || 0) }),
+                el('span', { class: 'lc-pill lc-pill--medium',
+                             text: '覆盖 ' + (summary.overwritten || 0) }),
+                el('span', { class: 'lc-pill lc-pill--hard',
+                             text: '失败 ' + (summary.failed || 0) }),
+                el('span', { class: 'lc-form-help',
+                             text: '合计 ' + (summary.total_files || 0)
+                                 + ' 个文件 · ' + (summary.on_duplicate || 'skip')
+                                 + ' · ' + (summary.duration_ms || 0) + ' ms' }),
+            ]);
+            out.appendChild(stats);
+
+            // Imported list (compact table).
+            if (imported.length) {
+                out.appendChild(el('h3', { style: 'margin: 0; font-size: 14px;',
+                                           text: '导入 / 覆盖 / 跳过 的文件' }));
+                var ul = el('ul', { class: 'lc-stack-sm',
+                                    style: 'list-style: none; padding-left: 0; margin: 0;' });
+                imported.forEach(function (it) {
+                    var li = el('li', { class: 'lc-form-help' });
+                    var action = it.action || 'imported';
+                    var tagClass = action === 'overwritten'
+                        ? 'lc-pill lc-pill--medium'
+                        : action === 'skipped'
+                            ? 'lc-pill'
+                            : 'lc-pill lc-pill--easy';
+                    li.appendChild(el('span', { class: tagClass, text: action,
+                                                 style: 'margin-right: 6px;' }));
+                    li.appendChild(document.createTextNode(
+                        (it.filename || it.slug || '?') +
+                        (it.slug ? ' → ' + it.slug : '') +
+                        (typeof it.id === 'number' ? ' (id=' + it.id + ')' : '')
+                    ));
+                    ul.appendChild(li);
+                });
+                out.appendChild(ul);
+            }
+
+            // Failure list (each row gets its stage tag + reason).
+            if (failures.length) {
+                out.appendChild(el('h3', { style: 'margin: 0; font-size: 14px; color: var(--lc-color-danger);',
+                                           text: '失败详情' }));
+                var ful = el('ul', { class: 'lc-stack-sm',
+                                     style: 'list-style: none; padding-left: 0; margin: 0;' });
+                failures.forEach(function (it) {
+                    var li = el('li', { class: 'lc-form-help' });
+                    li.appendChild(el('span', { class: 'lc-pill lc-pill--hard',
+                                                 text: it.stage || '?',
+                                                 style: 'margin-right: 6px;' }));
+                    li.appendChild(document.createTextNode(
+                        (it.filename || '?') + ' — ' + (it.reason || '')
+                        + (it.details && it.details.field
+                            ? ' (field=' + it.details.field + ')' : '')
+                    ));
+                    ful.appendChild(li);
+                });
+                out.appendChild(ful);
+            }
+        }
+
+        function submitImport() {
+            var input = $('file-input');
+            var files = input.files ? Array.prototype.slice.call(input.files) : [];
+            if (!files.length) {
+                litecode.toast.warn('请先选择至少一个题目文件');
+                return;
+            }
+            if (files.length > MAX_FILES) {
+                litecode.toast.error('单次最多 ' + MAX_FILES + ' 个文件');
+                return;
+            }
+            var totalBytes = files.reduce(function (s, f) { return s + f.size; }, 0);
+            if (totalBytes > MAX_TOTAL_BYTES) {
+                litecode.toast.error('文件总大小超过 10 MB 上限');
+                return;
+            }
+
+            var form = new FormData();
+            files.forEach(function (f) { form.append('files', f, f.name); });
+            var onDup = $('on-duplicate-select').value || 'skip';
+
+            var submitBtn = $('submit-import-btn');
+            submitBtn.disabled = true;
+            var origText = submitBtn.textContent;
+            submitBtn.textContent = '上传中…';
+
+            // rawFetch is the escape hatch for multipart/form-data —
+            // litecode.api.post() serializes JSON bodies only.
+            litecode.api.rawFetch(
+                '/admin/problems/import?on_duplicate=' + encodeURIComponent(onDup),
+                { method: 'POST', body: form }
+            ).then(function (resp) {
+                return resp.text().then(function (body) {
+                    var parsed = null;
+                    try { parsed = body ? JSON.parse(body) : null; } catch (_) {}
+                    if (!resp.ok) {
+                        // Surface the same envelope shape as other
+                        // LitecodeApiError consumers would see.
+                        var code = parsed && parsed.code;
+                        var msg  = parsed && parsed.message;
+                        var details = parsed && parsed.details;
+                        throw new litecode.api.LitecodeApiError(
+                            resp.status,
+                            { code: code || 'INTERNAL_ERROR',
+                              message: msg || ('HTTP ' + resp.status),
+                              details: details },
+                            parsed && parsed.request_id);
+                    }
+                    return (parsed && parsed.data) ? parsed.data : null;
+                });
+            }).then(function (data) {
+                if (!data) {
+                    litecode.toast.warn('导入完成但响应未含数据');
+                    return;
+                }
+                var summary = data.summary || {};
+                var failed  = summary.failed || 0;
+                if (failed === 0) {
+                    litecode.toast.success(
+                        '导入完成：导入 ' + (summary.imported || 0)
+                        + ' · 覆盖 ' + (summary.overwritten || 0)
+                        + ' · 跳过 ' + (summary.skipped || 0));
+                } else {
+                    litecode.toast.warn(
+                        '导入完成（含 ' + failed + ' 个失败）：'
+                        + '导入 ' + (summary.imported || 0)
+                        + ' · 覆盖 ' + (summary.overwritten || 0)
+                        + ' · 跳过 ' + (summary.skipped || 0));
+                }
+                renderImportResult(data);
+                clearFileInput();
+                // Refresh the list so newly-imported problems appear.
+                load();
+            }).catch(function (err) {
+                if (err && err.status === 429) {
+                    litecode.toast.warn('批量导入受限于 5/小时；请稍后再试');
+                } else if (err && err.status === 413) {
+                    litecode.toast.error('文件过大（超过 10 MB）');
+                } else if (err && err.status === 400) {
+                    litecode.toast.error('导入失败：' +
+                        (err.message || '请求格式错误'));
+                } else {
+                    litecode.toast.error('导入失败：' +
+                        (err && err.message ? err.message : '网络错误'));
+                }
+            }).then(function () {
+                submitBtn.disabled = false;
+                submitBtn.textContent = origText;
+            });
+        }
+
+        // ── Boot ────────────────────────────────────────────────────
+        document.addEventListener('DOMContentLoaded', function () {
+            litecode.boot.shell({
+                title: 'LiteCode · 题目管理',
+                requireAdmin: true,
+            }).then(function () {
+                // Hydrate from URL.
+                var u = readUrl();
+                state.difficulty = u.difficulty;
+                state.page       = u.page;
+                state.limit      = u.limit;
+                state.search     = u.search;
+
+                els.searchInput = $('search-input');
+                els.searchInput.value = state.search;
+
+                renderDifficultySeg();
+
+                // Filter wiring.
+                els.searchInput.addEventListener('input', onSearchInput);
+                $('reset-filters-btn').addEventListener('click', resetFilters);
+                $('retry-btn').addEventListener('click', function () { load(); });
+
+                // Bulk import wiring.
+                $('toggle-import-btn').addEventListener('click', function () {
+                    toggleImportPanel();
+                });
+                $('close-import-btn').addEventListener('click', function () {
+                    toggleImportPanel(false);
+                });
+                $('file-input').addEventListener('change', refreshFileHelp);
+                $('submit-import-btn').addEventListener('click', submitImport);
+
+                // popstate — back/forward navigation.
+                window.addEventListener('popstate', function () {
+                    var p = readUrl();
+                    state.difficulty = p.difficulty;
+                    state.page       = p.page;
+                    state.limit      = p.limit;
+                    state.search     = p.search;
+                    els.searchInput.value = state.search;
+                    renderDifficultySeg();
+                    load();
+                });
+
+                load();
+            });
+        });
+    })();
     </script>
 </body>
 </html>
