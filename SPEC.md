@@ -979,7 +979,7 @@ litecode-cpp/
 - [x] ★ 排行榜页面（/ranking.html）—— v1.2.31
 - [x] ★ 管理后台 - 题目管理页面（/admin/problems.html）—— v1.2.32
 - [x] ★ 管理后台 - 批量导入页面（/admin/problems.html 导入区）—— v1.2.32
-- [ ] ★ 管理后台 - 用户管理页面（/admin/users.html）
+- [x] ★ 管理后台 - 用户管理页面（/admin/users.html）—— v1.2.33（列表 + 搜索/角色筛选 + 分页 + 改角色确认 PUT + self-protection + 404 endpoint-pending 软状态 + URL state + 复用 `.lc-admin-table`/`.lc-pill--admin`）
 - [ ] ★ 管理后台 - 系统概览页面（/admin/dashboard.html，含队列/预热池/指标）
 - [ ] ★ 管理后台 - 审计日志页面（/admin/audit-logs.html）
 - [ ] ★ 前端权限拦截（非管理员 → 跳转首页，未登录 → 跳转登录）

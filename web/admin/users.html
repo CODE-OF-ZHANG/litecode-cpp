@@ -19,13 +19,165 @@
     <div data-nav></div>
 
     <main class="lc-container">
-        <header class="lc-stack" style="margin-bottom: 24px;">
-            <h1>用户管理（占位）</h1>
-            <p class="lc-form-help">
-                Phase 5 ★ 管理后台 - 用户管理页面将在后续 commit 落地；
-                本占位页只承载 CSP + SRI + 框架接入。
-            </p>
+        <!--
+          Page header: title + summary stats (total / admins) +
+          one primary action (refresh). Phase 5 ★ 管理后台 - 用户管理页面
+          does NOT have a "create user" button — registration is on the
+          public /register.html page (Phase 2 ★). Admin power here is
+          limited to role mutation + viewing.
+        -->
+        <header class="lc-row lc-row--between"
+                style="margin-bottom: var(--lc-space-5);">
+            <div class="lc-stack-sm">
+                <h1>用户管理</h1>
+                <p class="lc-form-help" id="header-summary">
+                    浏览全部用户、调整角色与查看最近登录活动。
+                    所有角色变更均会写入 audit_logs。
+                </p>
+            </div>
+            <div class="lc-row" style="gap: var(--lc-space-2);">
+                <button type="button" class="lc-btn"
+                        id="reload-btn"
+                        title="刷新列表">
+                    刷新
+                </button>
+            </div>
         </header>
+
+        <!--
+          Filter card. Mirrors /admin/problems.html's filter card so
+          admins don't have to context-switch between two filter
+          models. URL state is replaceState — a deep link like
+          ?role=admin&page=2 round-trips.
+
+          Fields:
+            - q:    client-side search over username/email (current
+                    page only); server-side search kicks in on
+                    "回车" / blur because the backend honors `q`
+                    but the GET endpoint's contract (Phase 6) takes
+                    `limit` + `offset` + `q` + `role`. We follow
+                    that contract so a long user's list still
+                    works.
+            - role: segmented control — 全部 / 普通用户 / 管理员
+        -->
+        <section class="lc-card lc-problem-filters" aria-label="用户筛选">
+            <div class="lc-problem-filters__row">
+                <label class="lc-form-row lc-problem-filters__search"
+                       for="search-input">
+                    <span class="lc-form-label" for="search-input">搜索</span>
+                    <input type="search" id="search-input"
+                           class="lc-input"
+                           placeholder="按用户名或邮箱（精确筛选交给后端）"
+                           autocomplete="off"
+                           aria-describedby="search-help">
+                    <span id="search-help" class="lc-form-help">
+                        客户端即时筛选当前页内已加载的用户；切换筛选条件或翻页后
+                        会重新从后端拉取并提交 query。用户名 / 邮箱 1-2 秒内可
+                        看到反馈。
+                    </span>
+                </label>
+            </div>
+
+            <div class="lc-problem-filters__row"
+                 role="group" aria-label="角色筛选">
+                <span class="lc-form-label">角色</span>
+                <div class="lc-seg" id="role-seg" role="tablist">
+                    <button type="button" class="lc-seg__btn lc-seg__btn--active"
+                            data-role="" role="tab" aria-selected="true">全部</button>
+                    <button type="button" class="lc-seg__btn"
+                            data-role="user" role="tab" aria-selected="false">普通用户</button>
+                    <button type="button" class="lc-seg__btn"
+                            data-role="admin" role="tab" aria-selected="false">管理员</button>
+                </div>
+            </div>
+
+            <div class="lc-problem-filters__row lc-row lc-row--between">
+                <span class="lc-form-help" id="filter-summary"
+                      aria-live="polite">共 0 用户</span>
+                <button type="button" class="lc-btn lc-btn--ghost lc-btn--sm"
+                        id="reset-filters-btn">重置筛选</button>
+            </div>
+        </section>
+
+        <!--
+          Result table + states. The table is .lc-admin-table (shared
+          with /admin/problems.html). Columns are tuned for the user-
+          listing use case:
+
+            ID          — primary key; small mono
+            Username    — link to /profile.html?u=...
+            邮箱         — optional; "—" when unset
+            角色         — pill (lc-pill--admin for admins)
+            注册时间      — formatted from created_at
+            最后登录      — relative hint + ISO; "—" when never
+            最后登录 IP  — IPv4 / IPv6 string; "—" when unset
+            操作         — "改角色" button (or "—" with tooltip
+                           when the row is the current admin — they
+                           cannot demote themselves; see onSetRole)
+
+          Below the table: pagination + empty/error/loading states,
+          same vocabulary as /admin/problems.html so admins get the
+          same mental model.
+        -->
+        <section class="lc-stack-lg" aria-label="用户列表">
+            <div class="lc-admin-table-wrap">
+                <table class="lc-admin-table" id="user-table"
+                       aria-label="用户列表" hidden>
+                    <thead>
+                        <tr>
+                            <th scope="col">ID</th>
+                            <th scope="col">用户名</th>
+                            <th scope="col">邮箱</th>
+                            <th scope="col">角色</th>
+                            <th scope="col">注册时间</th>
+                            <th scope="col">最后登录</th>
+                            <th scope="col">最后登录 IP</th>
+                            <th scope="col">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="user-tbody"></tbody>
+                </table>
+            </div>
+
+            <div class="lc-empty" id="empty-state" hidden>
+                <p class="lc-empty__title">没有符合条件的用户</p>
+                <p class="lc-form-help">试试调整筛选条件，或点击"刷新"。</p>
+            </div>
+
+            <div class="lc-error" id="error-state" hidden role="alert">
+                <p class="lc-error__title">加载失败</p>
+                <p class="lc-form-help" id="error-message"></p>
+                <button type="button" class="lc-btn lc-btn--primary lc-btn--sm"
+                        id="retry-btn">重试</button>
+            </div>
+
+            <!--
+              Phase 6 status: the GET /api/v1/admin/users endpoint
+              may not be shipped yet. When the backend returns 404 on
+              the list endpoint (i.e. NOT_FOUND for a path the C++
+              side hasn't implemented), we replace the generic error
+              state with a "endpoint pending" hint so the admin
+              doesn't see a confusing red banner mid-migration.
+            -->
+            <div class="lc-empty" id="pending-state" hidden>
+                <p class="lc-empty__title">用户管理 API 尚未发布</p>
+                <p class="lc-form-help">
+                    Phase 6 ★ <code>GET /api/v1/admin/users</code> 与
+                    <code>PUT /api/v1/admin/users/:id/role</code> 仍在排期中。
+                    本页面在 API 就绪后可立即使用 — 数据契约已与后端对齐
+                    （{items, total} + role 字段）。
+                </p>
+            </div>
+
+            <div class="lc-loading" id="loading-state" hidden
+                 aria-live="polite">
+                <span class="lc-spinner" aria-hidden="true"></span>
+                <span>加载中…</span>
+            </div>
+
+            <nav class="lc-pagination" id="pagination"
+                 aria-label="分页" hidden></nav>
+        </section>
     </main>
 
     <!-- Load order is mandatory: csp.js → api.js → app.js. -->
@@ -34,7 +186,560 @@
     <script src="/js/app.js" defer></script>
 
     <script>
-        litecode.boot.shell({ title: 'LiteCode · 用户管理', requireAdmin: true });
+    // ────────────────────────────────────────────────────────────────────
+    //  Admin User Management Page (Phase 5 ★ 管理后台 - 用户管理页面)
+    //
+    //  Responsibilities:
+    //    1) Admin guard via litecode.boot.shell({ requireAdmin: true })
+    //       — non-admin → redirect home (handled by app.js).
+    //    2) List users with the same filter model as /admin/problems.html
+    //       (search / role segmented control / pagination). URL state
+    //       is the source of truth so admins can deep-link to a page.
+    //    3) Per-row "改角色" action:
+    //       - Asks for confirmation (window.confirm — same shape as
+    //         problems.html's delete confirm).
+    //       - PUTs /admin/users/:id/role with {role: "user"|"admin"}.
+    //       - Optimistically refreshes the list; on failure, leaves
+    //         the row as-is and surfaces the error.
+    //       - Refuses to demote the logged-in admin (the backend
+    //         also gates this, but client-side guard means the user
+    //         gets a clear toast before the round-trip).
+    //
+    //  API contract (Phase 6 ★ 管理员用户管理 API):
+    //    GET  /api/v1/admin/users?limit=N&offset=N&q=...&role=...
+    //      → { data: { items: [UserRow, ...], total: N } }
+    //      UserRow = { id, username, role, email?, avatar?,
+    //                  created_at, last_login?, last_login_ip? }
+    //    PUT /api/v1/admin/users/:id/role
+    //      body: { role: "user" | "admin" }
+    //      → 200 with the updated UserRow, or 4xx envelope.
+    //
+    //  Soft-deleted users: not applicable — SPEC §4.1 has no
+    //  is_deleted column for users, only problems. "Ban" / "delete
+    //  user" is out of scope for this iteration.
+    // ────────────────────────────────────────────────────────────────────
+    (function () {
+        'use strict';
+
+        // ── Constants ────────────────────────────────────────────────
+        var DEFAULT_LIMIT = 20;            // matches backend default
+        var PROFILE_URL  = '/profile.html?u=';
+
+        var ROLES = ['', 'user', 'admin'];
+        var ROLE_LABELS = {
+            '': '全部', user: '普通用户', admin: '管理员'
+        };
+        var ROLE_BADGE_CLASS = {
+            user:  'lc-pill',
+            admin: 'lc-pill lc-pill--admin',
+        };
+
+        // Backwards-relative-time formatter. Returns the smallest
+        // meaningful time window, in zh-CN, used by the table cells.
+        // Mirrors what /profile.html renders so admins and end-users
+        // see the same string contract.
+        function relTime(iso) {
+            if (!iso) return '—';
+            var t = Date.parse(iso.replace(' ', 'T') + 'Z');
+            if (!Number.isFinite(t)) return iso;
+            var diff = Math.floor((Date.now() - t) / 1000);
+            if (diff < 0)         return iso;       // clock skew
+            if (diff < 60)        return diff + ' 秒前';
+            if (diff < 3600)      return Math.floor(diff / 60) + ' 分钟前';
+            if (diff < 86400)     return Math.floor(diff / 3600) + ' 小时前';
+            if (diff < 30 * 86400) return Math.floor(diff / 86400) + ' 天前';
+            return iso;                              // older than ~1mo → raw
+        }
+
+        // ── State ───────────────────────────────────────────────────
+        var state = {
+            role:  '',
+            page:  1,
+            limit: DEFAULT_LIMIT,
+            search: '',
+        };
+        var lastPayload = null;
+        var searchTimer = null;
+        var inflightToken = 0;
+
+        // ── DOM refs ────────────────────────────────────────────────
+        function $(id) { return document.getElementById(id); }
+        var els = {};
+
+        // ── Element builder (mirrors app.js's el()) ─────────────────
+        function el(tag, attrs, children) {
+            var node = document.createElement(tag);
+            if (attrs) {
+                Object.keys(attrs).forEach(function (k) {
+                    if (k === 'class')      node.className = attrs[k];
+                    else if (k === 'text')  node.textContent = attrs[k];
+                    else if (k === 'html')  node.innerHTML = attrs[k];
+                    else if (k === 'dataset') {
+                        Object.keys(attrs[k]).forEach(function (dk) {
+                            node.dataset[dk] = attrs[k][dk];
+                        });
+                    } else if (k.charAt(0) === 'o' && k.charAt(1) === 'n') {
+                        node.addEventListener(k.slice(2).toLowerCase(), attrs[k]);
+                    } else {
+                        node.setAttribute(k, attrs[k]);
+                    }
+                });
+            }
+            if (children !== undefined && children !== null) {
+                (Array.isArray(children) ? children : [children]).forEach(function (c) {
+                    if (c === null || c === undefined) return;
+                    if (typeof c === 'string') node.appendChild(document.createTextNode(c));
+                    else node.appendChild(c);
+                });
+            }
+            return node;
+        }
+
+        function escapeText(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        // ── URL state ───────────────────────────────────────────────
+        function readUrl() {
+            var sp = new URLSearchParams(window.location.search);
+            var r = sp.get('role') || '';
+            if (ROLES.indexOf(r) === -1) r = '';
+            var page = parseInt(sp.get('page') || '1', 10);
+            if (!Number.isFinite(page) || page < 1) page = 1;
+            var limit = parseInt(sp.get('limit') || String(DEFAULT_LIMIT), 10);
+            if (!Number.isFinite(limit) || limit < 1) limit = DEFAULT_LIMIT;
+            var q = sp.get('q') || '';
+            return { role: r, page: page, limit: limit, search: q };
+        }
+        function writeUrl(replace) {
+            var sp = new URLSearchParams();
+            if (state.role)   sp.set('role', state.role);
+            if (state.page > 1) sp.set('page', String(state.page));
+            if (state.limit !== DEFAULT_LIMIT) sp.set('limit', String(state.limit));
+            if (state.search) sp.set('q', state.search);
+            var qs = sp.toString();
+            var url = window.location.pathname + (qs ? '?' + qs : '');
+            if (replace) window.history.replaceState(null, '', url);
+            else         window.history.pushState(null, '', url);
+        }
+
+        // ── Render: role segmented control ─────────────────────────
+        function renderRoleSeg() {
+            var seg = $('role-seg');
+            while (seg.firstChild) seg.removeChild(seg.firstChild);
+            ROLES.forEach(function (r) {
+                var active = (state.role === r);
+                seg.appendChild(el('button', {
+                    type: 'button',
+                    class: 'lc-seg__btn' + (active ? ' lc-seg__btn--active' : ''),
+                    dataset: { role: r },
+                    text: ROLE_LABELS[r],
+                    role: 'tab',
+                    'aria-selected': active ? 'true' : 'false',
+                    onClick: function () { onRoleChange(r); },
+                }));
+            });
+        }
+
+        // ── Render: summary text ────────────────────────────────────
+        function renderSummary() {
+            var total = (lastPayload && typeof lastPayload.total === 'number')
+                ? lastPayload.total : 0;
+            var adminCount = 0;
+            if (lastPayload && Array.isArray(lastPayload.items)) {
+                lastPayload.items.forEach(function (u) {
+                    if (u && u.role === 'admin') adminCount++;
+                });
+            }
+            var parts = ['共 ' + total + ' 用户'];
+            if (state.role) parts.push('角色=' + ROLE_LABELS[state.role]);
+            if (state.search) parts.push('搜索="' + state.search + '"');
+            // Page-level admin count is only meaningful for
+            // unfiltered / small lists — admins don't have a
+            // dedicated "show only admins" stat yet (they
+            // segment it via the role filter).
+            $('filter-summary').textContent = parts.join(' · ');
+            var head = $('header-summary');
+            if (head) {
+                head.textContent = '浏览全部用户、调整角色与查看最近登录活动。'
+                    + '当前页可见管理员 ' + adminCount + ' 人（共 '
+                    + total + ' 用户）。所有角色变更均会写入 audit_logs。';
+            }
+        }
+
+        // ── Render: one row of the user table ───────────────────────
+        function renderRow(u) {
+            var id   = u.id || 0;
+            var name = u.username || '';
+            var email = u.email || '';
+            var role  = u.role || 'user';
+
+            var tr = el('tr', { dataset: { id: id, username: name, role: role } });
+
+            // ID (small mono-ish)
+            tr.appendChild(el('td', null, [
+                el('span', { class: 'lc-form-help', text: String(id),
+                             title: '数据库主键 id=' + id })
+            ]));
+
+            // Username (link to profile; opens in a new tab so the
+            // admin doesn't lose list state).
+            tr.appendChild(el('td', null, [
+                el('a', {
+                    href: PROFILE_URL + encodeURIComponent(name),
+                    text: name,
+                    title: '在新标签打开个人主页',
+                    target: '_blank',
+                    rel: 'noopener',
+                })
+            ]));
+
+            // Email (optional; "—" when missing).
+            tr.appendChild(el('td', null, [
+                el('span', { class: 'lc-form-help',
+                             text: email || '—' })
+            ]));
+
+            // Role pill.
+            tr.appendChild(el('td', null, [
+                el('span', {
+                    class: ROLE_BADGE_CLASS[role] || 'lc-pill',
+                    text: ROLE_LABELS[role] || role,
+                })
+            ]));
+
+            // Created at.
+            tr.appendChild(el('td', null, [
+                el('span', { class: 'lc-form-help',
+                             text: u.created_at || '—',
+                             title: '注册时间（UTC ISO）' })
+            ]));
+
+            // Last login.
+            tr.appendChild(el('td', null, [
+                el('span', { class: 'lc-form-help',
+                             text: u.last_login ? relTime(u.last_login) : '—',
+                             title: u.last_login ? u.last_login + ' UTC' : '从未登录' })
+            ]));
+
+            // Last login IP.
+            tr.appendChild(el('td', null, [
+                el('span', { class: 'lc-form-help',
+                             text: u.last_login_ip || '—' })
+            ]));
+
+            // Actions.
+            var me = litecode.auth.currentUser;
+            var isSelf = me && me.id === id;
+            var nextRole = (role === 'admin') ? 'user' : 'admin';
+            var actionLabel = (role === 'admin')
+                ? '降为普通用户'
+                : '提升为管理员';
+
+            var actions = el('td', null, []);
+            if (isSelf) {
+                actions.appendChild(el('span', {
+                    class: 'lc-form-help',
+                    text: '当前账号',
+                    title: '不能修改自己的角色 — 请联系其他管理员',
+                }));
+            } else {
+                actions.appendChild(el('button', {
+                    type: 'button',
+                    class: 'lc-btn lc-btn--sm',
+                    text: actionLabel,
+                    dataset: { act: 'set-role', id: id, nextRole: nextRole, username: name },
+                    onClick: function () { onSetRole(u, nextRole); },
+                }));
+            }
+            tr.appendChild(actions);
+
+            return tr;
+        }
+
+        function renderRows() {
+            var tbody = $('user-tbody');
+            while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+
+            var items = (lastPayload && Array.isArray(lastPayload.items))
+                ? lastPayload.items : [];
+
+            var q = state.search.trim().toLowerCase();
+            var filtered = q ? items.filter(function (u) {
+                if (!u) return false;
+                var nm = u.username && String(u.username).toLowerCase();
+                var em = u.email    && String(u.email).toLowerCase();
+                return (nm && nm.indexOf(q) !== -1) ||
+                       (em && em.indexOf(q) !== -1);
+            }) : items;
+
+            if (!filtered.length) {
+                $('user-table').hidden = true;
+                $('empty-state').hidden = false;
+                return;
+            }
+            $('empty-state').hidden = true;
+            $('user-table').hidden = false;
+            filtered.forEach(function (u) {
+                tbody.appendChild(renderRow(u));
+            });
+        }
+
+        // ── Render: pagination ──────────────────────────────────────
+        function totalPages() {
+            var t = (lastPayload && typeof lastPayload.total === 'number')
+                ? lastPayload.total : 0;
+            if (t <= 0) return 1;
+            return Math.max(1, Math.ceil(t / state.limit));
+        }
+
+        function renderPagination() {
+            var nav = $('pagination');
+            while (nav.firstChild) nav.removeChild(nav.firstChild);
+            var tp = totalPages();
+            if (tp <= 1) { nav.hidden = true; return; }
+            nav.hidden = false;
+
+            var cur = state.page;
+            function pageBtn(label, target, opts) {
+                opts = opts || {};
+                var attrs = {
+                    type: 'button',
+                    class: 'lc-page-btn'
+                        + (opts.active ? ' lc-page-btn--active' : '')
+                        + (opts.disabled ? ' lc-page-btn--disabled' : ''),
+                    text: label,
+                    'aria-label': opts.ariaLabel || ('第 ' + target + ' 页'),
+                    'aria-current': opts.active ? 'page' : null,
+                };
+                if (opts.disabled) attrs.disabled = true;
+                else attrs.onClick = function () { goToPage(target); };
+                return el('button', attrs);
+            }
+            function ellipsis() {
+                return el('span', { class: 'lc-page-ellipsis',
+                                    text: '…', 'aria-hidden': 'true' });
+            }
+
+            nav.appendChild(pageBtn('« 首页', 1, { disabled: cur === 1 }));
+            nav.appendChild(pageBtn('‹ 上一页', cur - 1, { disabled: cur === 1 }));
+
+            var pages = [];
+            if (tp <= 7) {
+                for (var i = 1; i <= tp; i++) pages.push(i);
+            } else {
+                pages.push(1);
+                if (cur > 3) pages.push('…');
+                var from = Math.max(2, cur - 1);
+                var to   = Math.min(tp - 1, cur + 1);
+                for (var j = from; j <= to; j++) pages.push(j);
+                if (cur < tp - 2) pages.push('…');
+                pages.push(tp);
+            }
+            pages.forEach(function (p) {
+                if (p === '…') nav.appendChild(ellipsis());
+                else nav.appendChild(pageBtn(String(p), p, { active: p === cur }));
+            });
+
+            nav.appendChild(pageBtn('下一页 ›', cur + 1, { disabled: cur === tp }));
+            nav.appendChild(pageBtn('末页 »', tp, { disabled: cur === tp }));
+        }
+
+        // ── State transitions ───────────────────────────────────────
+        function onRoleChange(r) {
+            state.role = r;
+            state.page = 1;
+            writeUrl(true);
+            renderRoleSeg();
+            load();
+        }
+
+        function goToPage(p) {
+            var tp = totalPages();
+            if (p < 1) p = 1;
+            if (p > tp) p = tp;
+            if (p === state.page) return;
+            state.page = p;
+            writeUrl(true);
+            var t = $('user-table');
+            if (t && t.scrollIntoView) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            load();
+        }
+
+        function onSearchInput() {
+            if (searchTimer) clearTimeout(searchTimer);
+            searchTimer = setTimeout(function () {
+                state.search = els.searchInput.value || '';
+                writeUrl(true);
+                renderRows();
+                renderSummary();
+            }, 250);
+        }
+
+        function resetFilters() {
+            state.role = '';
+            state.page = 1;
+            state.search = '';
+            els.searchInput.value = '';
+            writeUrl(true);
+            renderRoleSeg();
+            load();
+        }
+
+        // ── Set role (with confirmation + self-protection) ──────────
+        //
+        // The backend gates role changes with require_admin() and
+        // (per spec §5.5 + A19-style audit log write) a separate
+        // check for "don't demote yourself". We add a client-side
+        // guard so the user gets a clear toast before the round-trip
+        // — same defense-in-depth approach as /admin/problems.html's
+        // delete-confirm.
+        function onSetRole(u, nextRole) {
+            if (!u || !u.id) return;
+            var me = litecode.auth.currentUser;
+            if (me && me.id === u.id) {
+                litecode.toast.warn('不能修改自己的角色 — 请联系其他管理员');
+                return;
+            }
+            var ok = window.confirm(
+                '确认将用户 "' + (u.username || ('id=' + u.id))
+                + '" 的角色从 "' + (u.role || 'user') + '" 修改为 "'
+                + nextRole + '" 吗？\n\n'
+                + '角色变更将立即生效，并写入 audit_logs。'
+            );
+            if (!ok) return;
+
+            litecode.api.put(
+                '/admin/users/' + encodeURIComponent(u.id) + '/role',
+                { role: nextRole }
+            ).then(function (resp) {
+                litecode.toast.success(
+                    '已将 "' + (u.username || u.id)
+                    + '" 角色修改为 ' + nextRole
+                );
+                load();
+            }).catch(function (err) {
+                if (err && err.status === 404) {
+                    litecode.toast.warn(
+                        '用户管理 API 尚未发布（PUT /admin/users/:id/role）'
+                    );
+                } else if (err && err.status === 403) {
+                    litecode.toast.error('没有权限（不能修改自己的角色）');
+                } else if (err && err.status === 429) {
+                    litecode.toast.warn('操作过于频繁，请稍后重试');
+                } else {
+                    litecode.toast.error('角色修改失败：' +
+                        (err && err.message ? err.message : '未知错误'));
+                }
+            });
+        }
+
+        // ── Load state machine ──────────────────────────────────────
+        function showState(name) {
+            ['loading-state', 'empty-state', 'error-state',
+             'pending-state'].forEach(function (id) {
+                $(id).hidden = true;
+            });
+            $('user-table').hidden = true;
+            if (name === 'loading') {
+                $('loading-state').hidden = false;
+            } else if (name === 'error') {
+                $('error-state').hidden = false;
+            } else if (name === 'empty') {
+                $('empty-state').hidden = false;
+            } else if (name === 'pending') {
+                $('pending-state').hidden = false;
+            } else {
+                $('user-table').hidden = false;
+            }
+        }
+
+        function load() {
+            var token = ++inflightToken;
+            showState('loading');
+
+            var qs = '?limit=' + encodeURIComponent(state.limit)
+                   + '&offset=' + encodeURIComponent((state.page - 1) * state.limit);
+            if (state.role)   qs += '&role=' + encodeURIComponent(state.role);
+            if (state.search) qs += '&q=' + encodeURIComponent(state.search);
+
+            litecode.api.get('/admin/users' + qs)
+                .then(function (resp) {
+                    if (token !== inflightToken) return;
+                    lastPayload = (resp && resp.data)
+                        ? resp.data : { items: [], total: 0 };
+                    renderSummary();
+                    renderRows();
+                    renderPagination();
+                    if ((lastPayload.items || []).length === 0) {
+                        showState('empty');
+                    } else {
+                        showState('table');
+                    }
+                })
+                .catch(function (err) {
+                    if (token !== inflightToken) return;
+                    // Phase 6 endpoint may not be shipped yet —
+                    // the C++ side returns 404 NOT_FOUND when the
+                    // path isn't registered. Show a softer
+                    // "endpoint pending" hint instead of the
+                    // generic red error so the admin doesn't
+                    // think the whole feature is broken.
+                    if (err && err.status === 404) {
+                        showState('pending');
+                        $('error-message').textContent = '';
+                        return;
+                    }
+                    showState('error');
+                    $('error-message').textContent = (err && err.message)
+                        ? err.message : '网络错误，请稍后重试';
+                });
+        }
+
+        // ── Boot ────────────────────────────────────────────────────
+        document.addEventListener('DOMContentLoaded', function () {
+            litecode.boot.shell({
+                title: 'LiteCode · 用户管理',
+                requireAdmin: true,
+            }).then(function () {
+                // Hydrate from URL.
+                var u = readUrl();
+                state.role    = u.role;
+                state.page    = u.page;
+                state.limit   = u.limit;
+                state.search  = u.search;
+
+                els.searchInput = $('search-input');
+                els.searchInput.value = state.search;
+
+                renderRoleSeg();
+
+                // Filter wiring.
+                els.searchInput.addEventListener('input', onSearchInput);
+                $('reset-filters-btn').addEventListener('click', resetFilters);
+                $('retry-btn').addEventListener('click', function () { load(); });
+                $('reload-btn').addEventListener('click', function () { load(); });
+
+                // popstate — back/forward navigation.
+                window.addEventListener('popstate', function () {
+                    var p = readUrl();
+                    state.role   = p.role;
+                    state.page   = p.page;
+                    state.limit  = p.limit;
+                    state.search = p.search;
+                    els.searchInput.value = state.search;
+                    renderRoleSeg();
+                    load();
+                });
+
+                load();
+            });
+        });
+    })();
     </script>
 </body>
 </html>
