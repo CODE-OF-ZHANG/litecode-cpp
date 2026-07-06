@@ -809,7 +809,292 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
 }
 
 /* =====================================================================
-   10. Mobile / responsive (SPEC §6.3)
+   10. Problem list page (Phase 5 ★ 题目列表页面)
+   ---------------------------------------------------------------------
+   SPEC §11 Phase 5: 题库列表页，支持按难度/标签筛选、分页、与 detail
+   页保持视觉一致。整套页面沿用既有 .lc-card / .lc-pill / .lc-btn 词
+   汇，仅补充 list page 专属组件：
+
+     - .lc-problem-filters      筛选卡（搜索 + 难度分段 + 标签 chips）
+     - .lc-seg                  segmented control（难度切换）
+     - .lc-tag-chips            标签横向滚动区
+     - .lc-problem-list + .lc-problem-row  题目的列表行
+     - .lc-pagination + .lc-page-btn       分页器
+     - .lc-empty / .lc-error / .lc-loading 三种状态
+     - .lc-spinner              加载圈
+
+   配色全部走 CSS 变量，dark mode 自动适配；焦点环、hover 反馈遵循
+   既有 .lc-btn / .lc-pill 的 transition 词汇。
+   ===================================================================== */
+
+.lc-problem-filters {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lc-space-4);
+    padding: var(--lc-space-5);
+}
+
+.lc-problem-filters__row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lc-space-2);
+}
+
+.lc-problem-filters__search {
+    /* search row uses the .lc-form-row base; nothing to override */
+}
+
+/* Segmented control — used for difficulty. One row, equal-width
+   buttons; the active button gets a contrasting fill. */
+.lc-seg {
+    display: inline-flex;
+    align-self: flex-start;
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-md);
+    overflow: hidden;
+    background: var(--lc-color-surface);
+}
+.lc-seg__btn {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    border-right: 1px solid var(--lc-color-border);
+    padding: 6px 16px;
+    font: inherit;
+    font-size: 13px;
+    color: var(--lc-color-text-2);
+    cursor: pointer;
+    transition: background var(--lc-transition-fast),
+                color var(--lc-transition-fast);
+    line-height: 1.2;
+    min-width: 64px;
+}
+.lc-seg__btn:last-child { border-right: 0; }
+.lc-seg__btn:hover {
+    background: var(--lc-color-surface-2);
+    color: var(--lc-color-text);
+}
+.lc-seg__btn--active {
+    background: var(--lc-color-link);
+    color: #ffffff;
+}
+.lc-seg__btn--active:hover {
+    background: var(--lc-color-link-hover);
+    color: #ffffff;
+}
+
+/* Tag chips — horizontal scrollable strip; the row doesn't wrap so a
+   long tag list doesn't bloat the filter card. */
+.lc-tag-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.lc-tag-chip {
+    appearance: none;
+    background: var(--lc-color-surface-2);
+    border: 1px solid var(--lc-color-border);
+    color: var(--lc-color-text-2);
+    border-radius: 999px;
+    padding: 4px 12px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background var(--lc-transition-fast),
+                color var(--lc-transition-fast),
+                border-color var(--lc-transition-fast);
+    line-height: 1.4;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.lc-tag-chip:hover {
+    border-color: var(--lc-color-link);
+    color: var(--lc-color-text);
+}
+.lc-tag-chip--active {
+    background: var(--lc-color-link);
+    border-color: var(--lc-color-link);
+    color: #ffffff;
+}
+.lc-tag-chip--active:hover {
+    background: var(--lc-color-link-hover);
+    border-color: var(--lc-color-link-hover);
+    color: #ffffff;
+}
+
+/* Problem rows — a flat list. Each row is a flex container with a
+   main title cluster on the left and metadata on the right; rows are
+   separated by a 1px border, hover raises the bg subtly. */
+.lc-problem-list {
+    background: var(--lc-color-surface);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-lg);
+    overflow: hidden;
+    box-shadow: var(--lc-shadow-sm);
+    display: flex;
+    flex-direction: column;
+}
+
+.lc-problem-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--lc-space-4);
+    padding: var(--lc-space-4) var(--lc-space-5);
+    border-top: 1px solid var(--lc-color-border);
+    color: inherit;
+    text-decoration: none;
+    transition: background var(--lc-transition-fast);
+}
+.lc-problem-row:first-child { border-top: 0; }
+.lc-problem-row:hover {
+    background: var(--lc-color-surface-2);
+    color: inherit;
+}
+.lc-problem-row:focus-visible {
+    outline: 2px solid var(--lc-color-focus-ring);
+    outline-offset: -2px;
+    background: var(--lc-color-surface-2);
+}
+
+.lc-problem-row__main {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.lc-problem-row__head {
+    display: flex;
+    align-items: center;
+    gap: var(--lc-space-3);
+    flex-wrap: wrap;
+}
+.lc-problem-row__title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--lc-color-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.lc-problem-row:hover .lc-problem-row__title {
+    color: var(--lc-color-link);
+}
+
+.lc-problem-row__meta {
+    display: flex;
+    align-items: center;
+    gap: var(--lc-space-3);
+    font-size: 12px;
+    color: var(--lc-color-text-muted);
+    flex-shrink: 0;
+}
+.lc-problem-row__metric {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+/* Empty / loading / error states */
+.lc-empty,
+.lc-error {
+    text-align: center;
+    padding: var(--lc-space-8) var(--lc-space-5);
+    background: var(--lc-color-surface);
+    border: 1px dashed var(--lc-color-border);
+    border-radius: var(--lc-radius-lg);
+}
+.lc-error {
+    border-style: solid;
+    border-color: var(--lc-color-danger);
+}
+.lc-empty__title,
+.lc-error__title {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0 0 var(--lc-space-2) 0;
+    color: var(--lc-color-text);
+}
+.lc-error__title { color: var(--lc-color-danger); }
+.lc-error .lc-btn { margin-top: var(--lc-space-4); }
+
+.lc-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--lc-space-3);
+    padding: var(--lc-space-6);
+    color: var(--lc-color-text-muted);
+    font-size: 14px;
+}
+
+.lc-spinner {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--lc-color-border);
+    border-top-color: var(--lc-color-link);
+    border-radius: 50%;
+    animation: lc-spin 0.8s linear infinite;
+}
+@keyframes lc-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Pagination */
+.lc-pagination {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: var(--lc-space-3) 0;
+}
+.lc-page-btn {
+    appearance: none;
+    background: var(--lc-color-surface);
+    border: 1px solid var(--lc-color-border);
+    color: var(--lc-color-text-2);
+    border-radius: var(--lc-radius-md);
+    padding: 5px 12px;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    min-width: 36px;
+    text-align: center;
+    transition: background var(--lc-transition-fast),
+                color var(--lc-transition-fast),
+                border-color var(--lc-transition-fast);
+    line-height: 1.2;
+}
+.lc-page-btn:hover:not(:disabled):not(.lc-page-btn--active):not(.lc-page-btn--disabled) {
+    background: var(--lc-color-surface-2);
+    color: var(--lc-color-text);
+    border-color: var(--lc-color-border-2);
+}
+.lc-page-btn--active {
+    background: var(--lc-color-link);
+    border-color: var(--lc-color-link);
+    color: #ffffff;
+    cursor: default;
+}
+.lc-page-btn--disabled,
+.lc-page-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+.lc-page-ellipsis {
+    color: var(--lc-color-text-muted);
+    padding: 0 4px;
+    user-select: none;
+}
+
+/* =====================================================================
+   11. Mobile / responsive (SPEC §6.3)
    ===================================================================== */
 
 @media (max-width: 768px) {
@@ -824,6 +1109,20 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
 
     h1 { font-size: 24px; }
     h2 { font-size: 19px; }
+
+    .lc-problem-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--lc-space-2);
+    }
+    .lc-problem-row__meta { font-size: 11px; }
+    .lc-problem-row__title {
+        /* Allow wrapping when the viewport is narrow instead of
+           ellipsis — readability beats compactness on mobile. */
+        white-space: normal;
+    }
+
+    .lc-tag-chips { flex-wrap: wrap; }
 }
 
 @media (max-width: 480px) {

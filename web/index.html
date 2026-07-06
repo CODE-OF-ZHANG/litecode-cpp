@@ -23,36 +23,91 @@
     <div data-nav></div>
 
     <main class="lc-container">
-        <header class="lc-stack" style="margin-bottom: 24px;">
+        <header class="lc-stack" style="margin-bottom: var(--lc-space-5);">
             <h1>题库</h1>
             <p class="lc-form-help">浏览所有已发布题目；登录后可提交代码。</p>
         </header>
 
-        <!-- Phase 5 framework — index page demo. Each concrete feature
-             (search / difficulty filter / pagination) is delivered as a
-             separate Phase 5 entry; this shell proves the framework's
-             request + error + nav wiring works end-to-end before those
-             features land. -->
-        <section class="lc-card">
-            <div class="lc-row lc-row--between" style="margin-bottom: 12px;">
-                <strong>健康检查示例</strong>
-                <span id="health-status" class="lc-pill">…</span>
+        <!--
+          Filter bar — controls the GET /api/v1/problems query string.
+          Inputs:
+            - search       — client-side title filter (debounced 250ms)
+            - difficulty   — server-side filter: '' | 'easy' | 'medium' | 'hard'
+            - tag chips    — server-side filter: ?tag_id=N (only one at a time)
+          Every change pushes a new ?... state to history.replaceState so
+          deep-links round-trip cleanly; popstate re-runs load() with the
+          params the user came back to.
+        -->
+        <section class="lc-card lc-problem-filters" aria-label="题目筛选">
+            <div class="lc-problem-filters__row">
+                <label class="lc-form-row lc-problem-filters__search">
+                    <span class="lc-form-label" for="search-input">搜索</span>
+                    <input
+                        type="search"
+                        id="search-input"
+                        class="lc-input"
+                        placeholder="按标题筛选（仅当前页内生效）"
+                        autocomplete="off"
+                        aria-describedby="search-help">
+                    <span id="search-help" class="lc-form-help">
+                        筛选当前已加载页内的标题；切换页或筛选条件后将重新拉取。
+                    </span>
+                </label>
             </div>
-            <p class="lc-form-help">
-                点击下面的按钮触发一次 <code>GET /api/v1/health</code> 调用。
-                任何错误都会通过 <code>litecode:api-error</code> 事件冒泡，
-                app.js 的 toast 层会把它展示在右下角（401 会自动跳转登录页）。
-            </p>
-            <div class="lc-row" style="margin-top: 16px;">
-                <button type="button" class="lc-btn lc-btn--primary" id="ping-btn">测试 /api/v1/health</button>
-                <button type="button" class="lc-btn lc-btn--ghost"   id="problems-btn">拉取题目列表</button>
+
+            <div class="lc-problem-filters__row"
+                 role="group" aria-label="难度筛选">
+                <span class="lc-form-label">难度</span>
+                <div class="lc-seg" id="difficulty-seg" role="tablist">
+                    <button type="button" class="lc-seg__btn lc-seg__btn--active"
+                            data-difficulty="" role="tab" aria-selected="true">全部</button>
+                    <button type="button" class="lc-seg__btn"
+                            data-difficulty="easy" role="tab" aria-selected="false">简单</button>
+                    <button type="button" class="lc-seg__btn"
+                            data-difficulty="medium" role="tab" aria-selected="false">中等</button>
+                    <button type="button" class="lc-seg__btn"
+                            data-difficulty="hard" role="tab" aria-selected="false">困难</button>
+                </div>
             </div>
-            <pre id="results" style="margin-top: 16px; white-space: pre-wrap; word-break: break-all;"></pre>
+
+            <div class="lc-problem-filters__row" id="tag-row" hidden>
+                <span class="lc-form-label">标签</span>
+                <div class="lc-tag-chips" id="tag-chips" role="group" aria-label="标签筛选">
+                    <!-- Filled by renderTagChips() at load time. -->
+                </div>
+            </div>
+
+            <div class="lc-problem-filters__row lc-row lc-row--between">
+                <span class="lc-form-help" id="filter-summary" aria-live="polite">共 0 题</span>
+                <button type="button" class="lc-btn lc-btn--ghost lc-btn--sm"
+                        id="reset-filters-btn">重置筛选</button>
+            </div>
         </section>
 
-        <section class="lc-card" id="problems-section" hidden>
-            <h2>题目列表</h2>
-            <div id="problems-list"></div>
+        <!-- Result list / states. Exactly one of these is visible at a time. -->
+        <section class="lc-stack-lg" aria-label="题目列表">
+            <div class="lc-problem-list" id="problem-list" role="list"></div>
+
+            <div class="lc-empty" id="empty-state" hidden>
+                <p class="lc-empty__title">没有符合条件的题目</p>
+                <p class="lc-form-help">试试调整筛选条件，或清空搜索框。</p>
+            </div>
+
+            <div class="lc-error" id="error-state" hidden role="alert">
+                <p class="lc-error__title">加载失败</p>
+                <p class="lc-form-help" id="error-message"></p>
+                <button type="button" class="lc-btn lc-btn--primary lc-btn--sm"
+                        id="retry-btn">重试</button>
+            </div>
+
+            <div class="lc-loading" id="loading-state" hidden aria-live="polite">
+                <span class="lc-spinner" aria-hidden="true"></span>
+                <span>加载中…</span>
+            </div>
+
+            <!-- Pagination. Hidden when total ≤ 1 page. -->
+            <nav class="lc-pagination" id="pagination"
+                 aria-label="分页" hidden></nav>
         </section>
     </main>
 
@@ -71,58 +126,515 @@
     <script src="/js/app.js" defer></script>
 
     <script>
-        window.addEventListener('DOMContentLoaded', function () {
-            // Boot the shell (theme + nav + global error wiring).
-            litecode.boot.shell({ title: 'LiteCode · 题库' });
+    // ────────────────────────────────────────────────────────────────────
+    //  Problem list page (Phase 5 ★ 题目列表页面 — /)
+    //
+    //  Responsibilities:
+    //    1) Read filter + pagination state from the URL on load so deep
+    //       links round-trip (e.g. ?difficulty=easy&tag_id=2&page=3).
+    //    2) Render a search box + segmented difficulty control + tag
+    //       chips, driven by GET /api/v1/tags (one network call).
+    //    3) Fetch GET /api/v1/problems on every state change, render
+    //       the rows, and update the URL via history.replaceState so
+    //       browser back/forward keeps working without flooding history.
+    //    4) Render a paginator with first / prev / page numbers (with
+    //       ellipsis for many pages) / next / last.
+    //    5) Show loading / empty / error states and surface API failures
+    //       through the standard `litecode:api-error` channel (app.js
+    //       toast layer picks it up).
+    //
+    //  Out of scope (later commits):
+    //    - Per-problem tag chips on the list rows (the public list API
+    //      omits tags — see serialize_problem_row comment in
+    //      src/routes/problem_routes.h. We'd need to call detail per
+    //      row, which is N+1; not worth it for a list page).
+    //    - Server-side title search (no backend param exists; today
+    //      search filters within the current page client-side).
+    // ────────────────────────────────────────────────────────────────────
+    (function () {
+        'use strict';
 
-            var out = document.getElementById('results');
-            function log(heading, payload) {
-                var body = (payload && typeof payload === 'object')
-                    ? JSON.stringify(payload, null, 2)
-                    : String(payload);
-                out.textContent = '【' + heading + '】\n' + body + '\n\n' + out.textContent;
+        // ── Constants ────────────────────────────────────────────────
+        var DEFAULT_LIMIT    = 20;        // matches backend default
+        var SEARCH_DEBOUNCE  = 250;       // ms
+        var PROBLEM_DETAIL   = '/problem.html?slug=';
+
+        // Allowed values per filter — kept in lock-step with backend
+        // validation in problem_routes.h::detail::parse_difficulty_param.
+        var DIFFICULTIES = ['', 'easy', 'medium', 'hard'];
+        var DIFFICULTY_LABELS = { '': '全部', easy: '简单', medium: '中等', hard: '困难' };
+
+        // ── Page state ──────────────────────────────────────────────
+        var state = {
+            difficulty: '',
+            tagId:      null,
+            tagName:    '',   // resolved from /tags list (for chip highlight)
+            page:       1,
+            limit:      DEFAULT_LIMIT,
+            search:     '',   // client-side filter on loaded rows
+        };
+
+        var allTags = [];                 // cached /api/v1/tags items
+        var lastPayload = null;           // { items, total, limit, offset }
+        var searchTimer = null;
+        var inflightToken = 0;            // monotonic; only the latest request renders
+
+        // ── DOM refs ────────────────────────────────────────────────
+        function $(id) { return document.getElementById(id); }
+
+        var els = {};
+
+        // ── URL state ───────────────────────────────────────────────
+        function readUrl() {
+            var sp = new URLSearchParams(window.location.search);
+            var d = sp.get('difficulty') || '';
+            if (DIFFICULTIES.indexOf(d) === -1) d = '';
+            var tag = sp.get('tag_id');
+            var tagId = tag && /^\d+$/.test(tag) ? parseInt(tag, 10) : null;
+            var page = parseInt(sp.get('page') || '1', 10);
+            if (!Number.isFinite(page) || page < 1) page = 1;
+            var limit = parseInt(sp.get('limit') || String(DEFAULT_LIMIT), 10);
+            if (!Number.isFinite(limit) || limit < 1) limit = DEFAULT_LIMIT;
+            var q = sp.get('q') || '';
+            return { difficulty: d, tagId: tagId, page: page, limit: limit, search: q };
+        }
+
+        function writeUrl(replace) {
+            var sp = new URLSearchParams();
+            if (state.difficulty) sp.set('difficulty', state.difficulty);
+            if (state.tagId)      sp.set('tag_id', String(state.tagId));
+            if (state.page > 1)   sp.set('page', String(state.page));
+            if (state.limit !== DEFAULT_LIMIT) sp.set('limit', String(state.limit));
+            if (state.search)     sp.set('q', state.search);
+            var qs = sp.toString();
+            var url = window.location.pathname + (qs ? '?' + qs : '');
+            if (replace) window.history.replaceState(null, '', url);
+            else         window.history.pushState(null, '', url);
+        }
+
+        // ── Rendering ───────────────────────────────────────────────
+        function el(tag, attrs, children) {
+            var node = document.createElement(tag);
+            if (attrs) {
+                Object.keys(attrs).forEach(function (k) {
+                    if (k === 'class') node.className = attrs[k];
+                    else if (k === 'text') node.textContent = attrs[k];
+                    else if (k === 'dataset') {
+                        Object.keys(attrs[k]).forEach(function (dk) {
+                            node.dataset[dk] = attrs[k][dk];
+                        });
+                    } else if (k.charAt(0) === 'o' && k.charAt(1) === 'n') {
+                        node.addEventListener(k.slice(2).toLowerCase(), attrs[k]);
+                    } else {
+                        node.setAttribute(k, attrs[k]);
+                    }
+                });
+            }
+            if (children !== undefined && children !== null) {
+                (Array.isArray(children) ? children : [children]).forEach(function (c) {
+                    if (c === null || c === undefined) return;
+                    if (typeof c === 'string') node.appendChild(document.createTextNode(c));
+                    else node.appendChild(c);
+                });
+            }
+            return node;
+        }
+
+        function renderDifficultySeg() {
+            var seg = $('difficulty-seg');
+            while (seg.firstChild) seg.removeChild(seg.firstChild);
+            DIFFICULTIES.forEach(function (d) {
+                var active = (state.difficulty === d);
+                var btn = el('button', {
+                    type: 'button',
+                    class: 'lc-seg__btn' + (active ? ' lc-seg__btn--active' : ''),
+                    dataset: { difficulty: d },
+                    text: DIFFICULTY_LABELS[d],
+                    role: 'tab',
+                    'aria-selected': active ? 'true' : 'false',
+                    onClick: function () { onDifficultyChange(d); },
+                });
+                seg.appendChild(btn);
+            });
+        }
+
+        function renderTagChips() {
+            var row = $('tag-row');
+            var wrap = $('tag-chips');
+            while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
+            if (!allTags.length) {
+                row.hidden = true;
+                return;
+            }
+            row.hidden = false;
+
+            // "全部" pill — clears tag filter
+            var clearActive = (state.tagId === null);
+            wrap.appendChild(el('button', {
+                type: 'button',
+                class: 'lc-tag-chip' + (clearActive ? ' lc-tag-chip--active' : ''),
+                dataset: { tagId: '' },
+                text: '全部',
+                onClick: function () { onTagChange(null); },
+            }));
+
+            allTags.forEach(function (t) {
+                if (!t || typeof t.id !== 'number' || !t.name) return;
+                var active = (state.tagId === t.id);
+                var chip = el('button', {
+                    type: 'button',
+                    class: 'lc-tag-chip' + (active ? ' lc-tag-chip--active' : ''),
+                    dataset: { tagId: String(t.id), tagName: t.name },
+                    text: t.name + ' (' + (t.problem_count || 0) + ')',
+                    title: t.name,
+                    onClick: function () { onTagChange(t.id); },
+                });
+                wrap.appendChild(chip);
+            });
+        }
+
+        function acRate(p) {
+            var sub = Number(p.submission_count) || 0;
+            var ac  = Number(p.accepted_count)   || 0;
+            if (sub <= 0) return '—';
+            return ((ac / sub) * 100).toFixed(1) + '%';
+        }
+
+        function escapeText(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+
+        function renderProblemRow(p) {
+            // XSS safety: build via textContent + createElement, NOT
+            // innerHTML. The slug/title/difficulty all originate from
+            // the server but defense-in-depth means we never inject
+            // untrusted strings into HTML.
+            var slug  = escapeText(p.slug);
+            var title = escapeText(p.title);
+            var diff  = escapeText(p.difficulty);
+            var diffClass = ['easy', 'medium', 'hard'].indexOf(diff) !== -1
+                ? 'lc-pill lc-pill--' + diff
+                : 'lc-pill';
+
+            var row = el('a', {
+                href: PROBLEM_DETAIL + encodeURIComponent(p.slug),
+                class: 'lc-problem-row',
+                role: 'listitem',
+                dataset: { slug: p.slug },
+            });
+
+            var main = el('div', { class: 'lc-problem-row__main' });
+            var head = el('div', { class: 'lc-problem-row__head' });
+            head.appendChild(el('span', { class: diffClass, text: DIFFICULTY_LABELS[diff] || diff }));
+            head.appendChild(el('span', { class: 'lc-problem-row__title', text: p.title || '' }));
+            main.appendChild(head);
+
+            row.appendChild(main);
+
+            var meta = el('div', { class: 'lc-problem-row__meta' });
+            meta.appendChild(el('span', {
+                class: 'lc-problem-row__metric',
+                text: '通过率 ' + acRate(p),
+            }));
+            meta.appendChild(el('span', {
+                class: 'lc-problem-row__metric',
+                text: (p.accepted_count || 0) + ' / ' + (p.submission_count || 0),
+                title: '通过数 / 提交数',
+            }));
+            row.appendChild(meta);
+
+            return row;
+        }
+
+        function renderRows() {
+            var list = $('problem-list');
+            while (list.firstChild) list.removeChild(list.firstChild);
+
+            var items = (lastPayload && Array.isArray(lastPayload.items)) ? lastPayload.items : [];
+
+            // Client-side title filter — narrow the visible rows but
+            // DO NOT touch pagination math (the server's `total` is
+            // authoritative for page count).
+            var q = state.search.trim().toLowerCase();
+            var filtered = q
+                ? items.filter(function (p) {
+                    return p && typeof p.title === 'string'
+                        && p.title.toLowerCase().indexOf(q) !== -1;
+                })
+                : items;
+
+            if (!filtered.length) {
+                $('problem-list').hidden = true;
+                $('empty-state').hidden = false;
+                return;
+            }
+            $('empty-state').hidden = true;
+            $('problem-list').hidden = false;
+            filtered.forEach(function (p) {
+                list.appendChild(renderProblemRow(p));
+            });
+        }
+
+        function renderSummary() {
+            var total = (lastPayload && typeof lastPayload.total === 'number') ? lastPayload.total : 0;
+            var parts = ['共 ' + total + ' 题'];
+            if (state.difficulty) parts.push('难度=' + DIFFICULTY_LABELS[state.difficulty]);
+            if (state.tagId && state.tagName) parts.push('标签=' + state.tagName);
+            if (state.search) parts.push('搜索="' + state.search + '"');
+            $('filter-summary').textContent = parts.join(' · ');
+        }
+
+        function totalPages() {
+            var t = (lastPayload && typeof lastPayload.total === 'number') ? lastPayload.total : 0;
+            if (t <= 0) return 1;
+            return Math.max(1, Math.ceil(t / state.limit));
+        }
+
+        function renderPagination() {
+            var nav = $('pagination');
+            while (nav.firstChild) nav.removeChild(nav.firstChild);
+            var tp = totalPages();
+            if (tp <= 1) {
+                nav.hidden = true;
+                return;
+            }
+            nav.hidden = false;
+
+            var cur = state.page;
+
+            function pageBtn(label, target, opts) {
+                opts = opts || {};
+                var attrs = {
+                    type: 'button',
+                    class: 'lc-page-btn'
+                        + (opts.active ? ' lc-page-btn--active' : '')
+                        + (opts.disabled ? ' lc-page-btn--disabled' : ''),
+                    text: label,
+                    dataset: { page: String(target) },
+                    'aria-label': opts.ariaLabel || ('第 ' + target + ' 页'),
+                    'aria-current': opts.active ? 'page' : null,
+                };
+                if (opts.disabled) {
+                    attrs.disabled = true;
+                } else {
+                    attrs.onClick = function () { goToPage(target); };
+                }
+                return el('button', attrs);
             }
 
-            document.getElementById('ping-btn').addEventListener('click', function () {
-                document.getElementById('health-status').textContent = '请求中…';
-                litecode.api.get('/health')
-                    .then(function (resp) {
-                        document.getElementById('health-status').textContent = 'ok';
-                        log('健康检查', resp.data);
-                    })
-                    .catch(function (err) {
-                        document.getElementById('health-status').textContent = 'err';
-                        log('健康检查错误', { status: err.status, code: err.code, message: err.message });
-                    });
+            function ellipsis() {
+                return el('span', { class: 'lc-page-ellipsis', text: '…', 'aria-hidden': 'true' });
+            }
+
+            // First + prev
+            nav.appendChild(pageBtn('« 首页', 1, {
+                disabled: cur === 1,
+                ariaLabel: '首页',
+            }));
+            nav.appendChild(pageBtn('‹ 上一页', cur - 1, {
+                disabled: cur === 1,
+                ariaLabel: '上一页',
+            }));
+
+            // Window of page numbers around current. Spec §11 expects a
+            // compact control — show 1 ... (cur-1) cur (cur+1) ... tp
+            // when tp > 7, otherwise show every page.
+            var pages = [];
+            if (tp <= 7) {
+                for (var i = 1; i <= tp; i++) pages.push(i);
+            } else {
+                pages.push(1);
+                if (cur > 3) pages.push('…');
+                var from = Math.max(2, cur - 1);
+                var to   = Math.min(tp - 1, cur + 1);
+                for (var j = from; j <= to; j++) pages.push(j);
+                if (cur < tp - 2) pages.push('…');
+                pages.push(tp);
+            }
+
+            pages.forEach(function (p) {
+                if (p === '…') nav.appendChild(ellipsis());
+                else nav.appendChild(pageBtn(String(p), p, { active: p === cur }));
             });
 
-            document.getElementById('problems-btn').addEventListener('click', function () {
-                litecode.api.get('/problems?limit=5')
-                    .then(function (resp) {
-                        log('题目列表（前 5 条）', { total: resp.data.total, items_len: (resp.data.items || []).length });
-                        var section = document.getElementById('problems-section');
-                        var list = document.getElementById('problems-list');
-                        list.innerHTML = '';
-                        (resp.data.items || []).forEach(function (p) {
-                            var row = document.createElement('div');
-                            row.className = 'lc-row lc-row--between';
-                            row.style.padding = '8px 0';
-                            row.style.borderTop = '1px solid var(--lc-color-border)';
-                            row.innerHTML =
-                                '<div class="lc-row" style="gap:8px;">' +
-                                '  <span class="lc-pill lc-pill--' + p.difficulty + '">' + p.difficulty + '</span>' +
-                                '  <a href="/problem.html?slug=' + encodeURIComponent(p.slug) + '">' + p.title + '</a>' +
-                                '</div>' +
-                                '<span class="lc-form-help">' + (p.accepted_count || 0) + ' 通过 / ' + (p.submission_count || 0) + ' 提交</span>';
-                            list.appendChild(row);
-                        });
-                        section.hidden = false;
-                    })
-                    .catch(function (err) {
-                        log('题目列表错误', { status: err.status, code: err.code, message: err.message });
-                    });
+            // Next + last
+            nav.appendChild(pageBtn('下一页 ›', cur + 1, {
+                disabled: cur === tp,
+                ariaLabel: '下一页',
+            }));
+            nav.appendChild(pageBtn('末页 »', tp, {
+                disabled: cur === tp,
+                ariaLabel: '末页',
+            }));
+        }
+
+        // ── State transitions ───────────────────────────────────────
+        function onDifficultyChange(d) {
+            state.difficulty = d;
+            state.page = 1;
+            writeUrl(true);
+            renderDifficultySeg();
+            load();
+        }
+
+        function onTagChange(tagId) {
+            state.tagId = (typeof tagId === 'number') ? tagId : null;
+            state.tagName = '';
+            if (state.tagId !== null) {
+                var t = allTags.find(function (x) { return x && x.id === state.tagId; });
+                if (t) state.tagName = t.name;
+            }
+            state.page = 1;
+            writeUrl(true);
+            renderTagChips();
+            load();
+        }
+
+        function goToPage(p) {
+            var tp = totalPages();
+            if (p < 1) p = 1;
+            if (p > tp) p = tp;
+            if (p === state.page) return;
+            state.page = p;
+            writeUrl(true);
+            // Scroll back to the top of the list so the user sees the
+            // new page; cheap UX win that matches GitHub / LeetCode.
+            var list = $('problem-list');
+            if (list && list.scrollIntoView) list.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            load();
+        }
+
+        function onSearchInput() {
+            if (searchTimer) clearTimeout(searchTimer);
+            searchTimer = setTimeout(function () {
+                state.search = els.searchInput.value || '';
+                writeUrl(true);
+                renderRows();
+                renderSummary();
+            }, SEARCH_DEBOUNCE);
+        }
+
+        function resetFilters() {
+            state.difficulty = '';
+            state.tagId = null;
+            state.tagName = '';
+            state.page = 1;
+            state.search = '';
+            els.searchInput.value = '';
+            writeUrl(true);
+            renderDifficultySeg();
+            renderTagChips();
+            load();
+        }
+
+        // ── Loading ──────────────────────────────────────────────────
+        function showState(name) {
+            ['loading-state', 'empty-state', 'error-state'].forEach(function (id) {
+                $(id).hidden = true;
             });
+            $('problem-list').hidden = true;
+            if (name) $(name + '-state').hidden = false;
+        }
+
+        function loadTags() {
+            return litecode.api.get('/tags').then(function (resp) {
+                var items = (resp && resp.data && Array.isArray(resp.data.items)) ? resp.data.items : [];
+                allTags = items;
+                renderTagChips();
+            }).catch(function (err) {
+                // Non-fatal: tag chips stay hidden, but list still works.
+                // We still log so an operator sees the failure.
+                console.warn('[problem-list] failed to load tags', err);
+                allTags = [];
+                renderTagChips();
+            });
+        }
+
+        function load() {
+            var token = ++inflightToken;
+            showState('loading');
+
+            var qs = '?limit=' + encodeURIComponent(state.limit)
+                   + '&offset=' + encodeURIComponent((state.page - 1) * state.limit);
+            if (state.difficulty) qs += '&difficulty=' + encodeURIComponent(state.difficulty);
+            if (state.tagId)      qs += '&tag_id=' + encodeURIComponent(state.tagId);
+
+            litecode.api.get('/problems' + qs)
+                .then(function (resp) {
+                    if (token !== inflightToken) return; // stale
+                    lastPayload = (resp && resp.data) ? resp.data : { items: [], total: 0 };
+                    renderSummary();
+                    renderRows();
+                    renderPagination();
+                    $('problem-list').hidden = false;
+                    $('loading-state').hidden = true;
+                })
+                .catch(function (err) {
+                    if (token !== inflightToken) return; // stale
+                    showState('error');
+                    $('error-message').textContent = (err && err.message)
+                        ? err.message
+                        : '网络错误，请稍后重试';
+                });
+        }
+
+        // ── Boot ────────────────────────────────────────────────────
+        document.addEventListener('DOMContentLoaded', function () {
+            // Phase 5 framework: theme + nav + global error wiring.
+            litecode.boot.shell({ title: 'LiteCode · 题库' });
+
+            // Hydrate state from URL.
+            var u = readUrl();
+            state.difficulty = u.difficulty;
+            state.tagId      = u.tagId;
+            state.page       = u.page;
+            state.limit      = u.limit;
+            state.search     = u.search;
+
+            els.searchInput     = $('search-input');
+            els.searchInput.value = state.search;
+
+            renderDifficultySeg();
+
+            // Wire user controls.
+            els.searchInput.addEventListener('input', onSearchInput);
+            $('reset-filters-btn').addEventListener('click', resetFilters);
+            $('retry-btn').addEventListener('click', function () { load(); });
+
+            // Back/forward: re-hydrate from URL and refetch. We tag the
+            // user-initiated `pushState` ourselves by always using
+            // replaceState — so popstate fires only when the user
+            // actually navigates with the browser buttons.
+            window.addEventListener('popstate', function () {
+                var p = readUrl();
+                state.difficulty = p.difficulty;
+                state.tagId      = p.tagId;
+                state.page       = p.page;
+                state.limit      = p.limit;
+                state.search     = p.search;
+                els.searchInput.value = state.search;
+                // Re-resolve tag name from cached list (in case the
+                // page was reached via deep-link before /tags loaded).
+                state.tagName = '';
+                if (state.tagId !== null) {
+                    var t = allTags.find(function (x) { return x && x.id === state.tagId; });
+                    if (t) state.tagName = t.name;
+                }
+                renderDifficultySeg();
+                renderTagChips();
+                load();
+            });
+
+            // Load tags + first page. We run them in parallel; the
+            // problem list endpoint doesn't depend on tags, but tag
+            // chips need the result before the user can filter.
+            loadTags();
+            load();
         });
+    })();
     </script>
 </body>
 </html>
