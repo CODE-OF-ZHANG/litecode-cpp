@@ -10,119 +10,496 @@
 </head>
 <body>
     <!--
-      Profile page — auth-required. Demonstrates the framework's
-      `litecode.guard.requireAuth()` redirect-and-await pattern; if the
-      visitor has no session, the browser is sent to /login.html?next=…
-      BEFORE this page renders anything (the guard promises never
-      resolve on a redirect, so nothing reads the DOM until after a
-      successful fetch).
+      Phase 5 ★ 个人主页（/profile/:username，做题统计） — F6/F7, A15.
 
-      F6 / A15: profile shows solved count, attempt stats. The stats
-      endpoints (Phase 6) are not implemented yet, so this page is a
-      minimal /auth/profile shell that demonstrates the framework's
-      wiring. Wire-flesh stays for a follow-up entry in Phase 5★.
+      Auth-required. Uses the framework's `litecode.guard.requireAuth()`
+      redirect-and-await pattern: a visitor with no session is sent to
+      /login.html?next=… BEFORE this page renders anything.
+
+      Data source
+      ───────────
+      The dedicated stats endpoint `GET /api/v1/stats/profile/:username`
+      is a Phase 6 item and is NOT implemented yet. Rather than block
+      this Phase 5 page on it, the 做题统计 numbers are aggregated
+      *client-side* from two existing, shipped APIs:
+
+        · GET /api/v1/submissions  (v1.2.16) — the caller's own history;
+          non-admin is server-forced to user_id = self, so this page can
+          only compute stats for the logged-in user's own profile.
+        · GET /api/v1/problems     (v1.2.6)  — live problem catalog, used
+          for the "已解决 / 总题数" denominator, per-difficulty totals, and
+          to resolve problem_id → {slug, title, difficulty} for the recent
+          submissions list.
+
+      Because /submissions is self-only for non-admins, viewing *another*
+      user's profile (`?username=other`) shows a friendly notice pointing
+      at the Phase 6 endpoint; the logged-in user's own profile is fully
+      functional. When the stats API lands, swap `loadStats()`'s two
+      paginated fetches for a single `GET /api/v1/stats/profile/:username`
+      call — the render layer already takes a plain stats object.
+
+      URL: static hosting has no path params, so `:username` is carried
+      as `?username=` (same convention as problem.html's `?slug=`).
     -->
     <div data-nav></div>
 
     <main class="lc-container">
-        <header class="lc-stack" style="margin-bottom: 24px;">
+        <header class="lc-stack" style="margin-bottom: 20px;">
             <h1 id="page-title">个人主页</h1>
-            <p id="page-subtitle" class="lc-form-help">请稍候…</p>
+            <p id="page-subtitle" class="lc-form-help" aria-live="polite">正在加载做题统计…</p>
         </header>
 
-        <section class="lc-card" id="profile-card" hidden>
-            <div class="lc-row" style="gap: 16px;">
-                <div class="lc-avatar" id="avatar" style="width:64px;height:64px;font-size:24px;"></div>
-                <div>
-                    <h2 id="display-name" style="margin:0 0 4px 0;"></h2>
-                    <div class="lc-row" style="gap:8px;">
-                        <span id="role-badge"></span>
-                        <span class="lc-form-help" id="joined-at"></span>
+        <!-- Loading -->
+        <div class="lc-loading" id="loading-state">
+            <span class="lc-spinner" aria-hidden="true"></span>
+            <span>加载中…</span>
+        </div>
+
+        <!-- Error -->
+        <section class="lc-error" id="error-state" hidden>
+            <div class="lc-error__title">加载失败</div>
+            <p class="lc-form-help" id="error-message"></p>
+            <div class="lc-row" style="gap: 8px; margin-top: 12px;">
+                <button type="button" class="lc-btn lc-btn--primary" id="retry-btn">重试</button>
+                <a href="/login.html" class="lc-btn lc-btn--ghost">前往登录</a>
+            </div>
+        </section>
+
+        <!-- Cross-user notice (viewing someone else's profile) -->
+        <section class="lc-card" id="foreign-state" hidden>
+            <h2 style="margin-top:0;">查看他人主页</h2>
+            <p class="lc-profile-notice" id="foreign-message"></p>
+            <a class="lc-btn lc-btn--primary" id="foreign-self-link" href="/profile.html">查看我的主页</a>
+        </section>
+
+        <!-- Profile content -->
+        <div id="profile-content" hidden>
+            <section class="lc-card">
+                <div class="lc-profile-head">
+                    <div class="lc-avatar lc-avatar--lg" id="avatar"></div>
+                    <div class="lc-profile-head__body">
+                        <h2 class="lc-profile-head__name" id="display-name"></h2>
+                        <div class="lc-profile-head__meta">
+                            <span id="role-badge"></span>
+                            <span id="joined-at"></span>
+                            <span id="last-login" class="lc-form-help"></span>
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            <hr>
+                <div class="lc-stat-grid" id="stat-grid"></div>
+            </section>
 
-            <div class="lc-row lc-row--between">
-                <strong>提交历史</strong>
-                <a href="#" id="view-all" class="lc-form-help">查看全部 →</a>
-            </div>
-            <p class="lc-form-help">
-                完整的历史表格与个人统计（Phase 6）将在后续 Phase 5
-                子条目里补齐；本页面只验证 401 自动跳转登录与
-                <code>litecode.api.auth.fetchProfile()</code> 路径。
-            </p>
-        </section>
+            <section class="lc-card">
+                <h3 class="lc-section-title" style="margin-top:0;">难度分布（已解决 / 题目总数）</h3>
+                <div class="lc-breakdown" id="difficulty-breakdown"></div>
+            </section>
 
-        <section class="lc-card" id="profile-error" hidden>
-            <h2 style="color: var(--lc-color-danger);">加载失败</h2>
-            <p class="lc-form-help" id="profile-error-message"></p>
-            <a href="/login.html" class="lc-btn lc-btn--primary">前往登录</a>
-        </section>
+            <section class="lc-card">
+                <h3 class="lc-section-title" style="margin-top:0;">提交状态分布</h3>
+                <div class="lc-breakdown" id="status-breakdown"></div>
+                <p class="lc-form-help" id="status-empty" hidden>还没有任何提交记录。</p>
+            </section>
+
+            <section class="lc-card">
+                <div class="lc-row lc-row--between">
+                    <h3 class="lc-section-title" style="margin:0;">最近提交</h3>
+                    <a href="/index.html" class="lc-form-help" id="browse-link">去刷题 →</a>
+                </div>
+                <ul class="lc-history-list" id="recent-list" style="margin-top: 12px;"></ul>
+                <p class="lc-form-help" id="recent-empty" hidden>还没有提交记录，去题库挑一道题开始吧。</p>
+                <p class="lc-form-help" id="stats-note" hidden></p>
+            </section>
+        </div>
     </main>
 
+    <!-- Load order is mandatory: csp.js → api.js → app.js. -->
     <script src="/js/csp.js" defer></script>
-    <script src="/js/markdown.js" defer></script>
     <script src="/js/api.js" defer></script>
     <script src="/js/app.js" defer></script>
 
     <script>
-        // ★ Markdown XSS 净化: profile.html doesn't currently render
-        // any user-supplied Markdown, but a future "user bio" field
-        // (Phase 6) and the admin "view-as-user" preview will.
-        // Pre-warm the sanitizer here so the day the bio field lands
-        // we don't have to add the script tag + prewarm call to two
-        // pages — it's already wired and the SRI hashes are
-        // already pinned.
-        litecode.markdown.prewarm();
+    (function () {
+        'use strict';
+
+        // ── Constants ──────────────────────────────────────────────
+        var PAGE_SIZE = 100;   // API list page size (problem_routes clamps ≤ 100)
+        var MAX_PAGES = 20;    // hard cap: ≤ 2000 rows fetched per resource
+
+        var DIFF_LABEL = { easy: '简单', medium: '中等', hard: '困难' };
+        var DIFF_ORDER = ['easy', 'medium', 'hard'];
+
+        // Mirrors the .lc-status--* / STATUS_LABEL tokens used across
+        // problem.html so a server status string always maps to a label.
+        var STATUS_LABEL = {
+            pending: '排队中', running: '运行中',
+            ac: 'AC', wa: 'WA', tle: 'TLE', mle: 'MLE',
+            re: 'RE', ole: 'OLE', pe: 'PE', ce: 'CE', se: 'SE',
+        };
+        // Display order for the status distribution (AC first, then the
+        // common failure modes, infra/queue states last).
+        var STATUS_ORDER = ['ac', 'wa', 'tle', 'mle', 're', 'ole', 'pe', 'ce', 'se', 'running', 'pending'];
+        var LANG_LABEL = { c: 'C', cpp: 'C++' };
+
+        // ── DOM helpers ────────────────────────────────────────────
+        function $(id) { return document.getElementById(id); }
+        function el(tag, attrs, children) {
+            var node = document.createElement(tag);
+            if (attrs) {
+                Object.keys(attrs).forEach(function (k) {
+                    if (k === 'class') node.className = attrs[k];
+                    else if (k === 'text') node.textContent = attrs[k];
+                    else if (k === 'html') node.innerHTML = attrs[k]; // never used with user data
+                    else node.setAttribute(k, attrs[k]);
+                });
+            }
+            (children || []).forEach(function (c) {
+                if (c == null) return;
+                node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+            });
+            return node;
+        }
+        // Defensive escape for any spot that must build a string (all
+        // rendering uses textContent, but keep the contract explicit).
+        function escapeText(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        // ── Pure helpers (also exported via __lcTest) ──────────────
+
+        // Resolve which profile to show. Static hosting has no path
+        // params, so :username rides in as ?username=. Empty → self.
+        function resolveUsername(search, currentUsername) {
+            var sp = new URLSearchParams(search || '');
+            var q = (sp.get('username') || '').trim();
+            var me = (currentUsername || '').trim();
+            if (!q) return { username: me, isSelf: true };
+            return {
+                username: q,
+                isSelf: !!me && q.toLowerCase() === me.toLowerCase(),
+            };
+        }
+
+        function pct(n, d) { return d > 0 ? (n / d) : 0; }
+        function formatPercent(rate) { return (rate * 100).toFixed(1) + '%'; }
+
+        // Relative/absolute timestamp — same vocabulary as
+        // problem.html's tabHistoryFormatTime (v1.2.26).
+        function formatProfileTime(s) {
+            if (!s) return '—';
+            var m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+            if (!m) return String(s);
+            var ts = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+            var diff = Date.now() - ts;
+            if (diff < 60 * 1000)           return '刚刚';
+            if (diff < 60 * 60 * 1000)      return Math.floor(diff / 60000) + ' 分钟前';
+            if (diff < 24 * 60 * 60 * 1000) return Math.floor(diff / 3600000) + ' 小时前';
+            return m[1] + '-' + m[2] + '-' + m[3] + ' ' + m[4] + ':' + m[5];
+        }
+
+        // Build problem_id(string) → {slug,title,difficulty} lookup plus
+        // per-difficulty live-problem totals, from a /problems item array.
+        function buildProblemMeta(items) {
+            var map = {};
+            var diffTotals = { easy: 0, medium: 0, hard: 0 };
+            (items || []).forEach(function (p) {
+                if (p && p.id != null) {
+                    map[String(p.id)] = {
+                        slug: p.slug, title: p.title, difficulty: p.difficulty,
+                    };
+                }
+                if (p && diffTotals[p.difficulty] != null) diffTotals[p.difficulty]++;
+            });
+            return { map: map, diffTotals: diffTotals };
+        }
+
+        // Aggregate submission rows into 做题统计. Pure — no DOM/fetch.
+        function computeStats(subs, metaMap) {
+            var byStatus = {};
+            var solved = {};      // problem_id(string) → true (has an AC)
+            var attempted = {};
+            var ac = 0;
+            (subs || []).forEach(function (s) {
+                var st = (s && s.status) || 'pending';
+                byStatus[st] = (byStatus[st] || 0) + 1;
+                var pid = s ? s.problem_id : null;
+                if (pid != null) attempted[String(pid)] = true;
+                if (st === 'ac') {
+                    ac++;
+                    if (pid != null) solved[String(pid)] = true;
+                }
+            });
+            var solvedIds = Object.keys(solved);
+            var byDifficultySolved = { easy: 0, medium: 0, hard: 0, unknown: 0 };
+            solvedIds.forEach(function (idStr) {
+                var meta = metaMap && metaMap[idStr];
+                var d = (meta && meta.difficulty) || 'unknown';
+                if (byDifficultySolved[d] == null) byDifficultySolved[d] = 0;
+                byDifficultySolved[d]++;
+            });
+            var total = (subs || []).length;
+            return {
+                totalSubmissions: total,
+                acSubmissions: ac,
+                acceptanceRate: pct(ac, total),
+                solvedCount: solvedIds.length,
+                attemptedCount: Object.keys(attempted).length,
+                byStatus: byStatus,
+                byDifficultySolved: byDifficultySolved,
+            };
+        }
+
+        // ── Test surface (no-op in production) ─────────────────────
+        if (typeof __lcTest !== 'undefined') {
+            __lcTest.resolveUsername    = resolveUsername;
+            __lcTest.formatPercent      = formatPercent;
+            __lcTest.formatProfileTime  = formatProfileTime;
+            __lcTest.buildProblemMeta   = buildProblemMeta;
+            __lcTest.computeStats       = computeStats;
+            __lcTest.pct                = pct;
+            __lcTest.STATUS_LABEL       = STATUS_LABEL;
+            __lcTest.DIFF_LABEL         = DIFF_LABEL;
+        }
+
+        // ── Network ────────────────────────────────────────────────
+        // Fetch every page of a list endpoint (up to MAX_PAGES). Returns
+        // {items, total, capped}. 401 flows through api.js forceSignOut.
+        function fetchAllPages(basePath, extraQuery) {
+            var items = [];
+            var total = 0;
+            var page = 0;
+
+            function next() {
+                var offset = page * PAGE_SIZE;
+                var q = '?limit=' + PAGE_SIZE + '&offset=' + offset +
+                        (extraQuery ? '&' + extraQuery : '');
+                return litecode.api.get(basePath + q, { noRetryOn401: true })
+                    .then(function (resp) {
+                        var data = (resp && resp.data) || {};
+                        var batch = data.items || [];
+                        total = Number(data.total) || (items.length + batch.length);
+                        items = items.concat(batch);
+                        page++;
+                        if (batch.length >= PAGE_SIZE && items.length < total && page < MAX_PAGES) {
+                            return next();
+                        }
+                        return { items: items, total: total, capped: items.length < total };
+                    });
+            }
+            return next();
+        }
+
+        // ── Rendering ──────────────────────────────────────────────
+        function showState(name) {
+            $('loading-state').hidden        = (name !== 'loading');
+            $('error-state').hidden          = (name !== 'error');
+            $('foreign-state').hidden        = (name !== 'foreign');
+            $('profile-content').hidden      = (name !== 'content');
+        }
+
+        function statCard(value, label, sub, accent) {
+            return el('div', { class: 'lc-stat-card' }, [
+                el('div', { class: 'lc-stat-card__value' + (accent ? ' lc-stat-card__value--accent' : ''), text: value }),
+                el('div', { class: 'lc-stat-card__label', text: label }),
+                sub ? el('div', { class: 'lc-stat-card__sub', text: sub }) : null,
+            ]);
+        }
+
+        function barRow(label, count, denom, fillModifier) {
+            var ratio = denom > 0 ? Math.min(1, count / denom) : 0;
+            var fill = el('div', {
+                class: 'lc-bar-fill' + (fillModifier ? ' lc-bar-fill--' + fillModifier : ''),
+            });
+            fill.style.width = (ratio * 100).toFixed(1) + '%';
+            return el('div', { class: 'lc-bar-row' }, [
+                el('div', { class: 'lc-bar-row__label', text: label }),
+                el('div', { class: 'lc-bar-track' }, [fill]),
+                el('div', { class: 'lc-bar-row__count', text: count + ' / ' + denom }),
+            ]);
+        }
+
+        function renderHeader(user) {
+            $('display-name').textContent = user.username || '';
+            $('avatar').textContent = (user.username || '?').charAt(0).toUpperCase();
+
+            var badge = $('role-badge');
+            if (user.role === 'admin') {
+                badge.className = 'lc-pill lc-pill--admin';
+                badge.textContent = '管理员';
+            } else {
+                badge.className = 'lc-pill';
+                badge.textContent = '用户';
+            }
+            $('joined-at').textContent = user.created_at
+                ? '注册于 ' + String(user.created_at).slice(0, 10) : '';
+            $('last-login').textContent = user.last_login
+                ? '· 上次登录 ' + formatProfileTime(user.last_login) : '';
+        }
+
+        function renderStats(stats, problemsTotal, diffTotals) {
+            // Stat cards.
+            var grid = $('stat-grid');
+            grid.textContent = '';
+            grid.appendChild(statCard(
+                stats.solvedCount + ' / ' + problemsTotal, '已解决题目',
+                problemsTotal > 0 ? '覆盖 ' + formatPercent(pct(stats.solvedCount, problemsTotal)) : '', true));
+            grid.appendChild(statCard(
+                formatPercent(stats.acceptanceRate), '提交通过率',
+                stats.acSubmissions + ' AC / ' + stats.totalSubmissions + ' 提交'));
+            grid.appendChild(statCard(String(stats.totalSubmissions), '总提交数'));
+            grid.appendChild(statCard(String(stats.attemptedCount), '尝试过的题目'));
+
+            // Difficulty breakdown.
+            var diffBox = $('difficulty-breakdown');
+            diffBox.textContent = '';
+            DIFF_ORDER.forEach(function (d) {
+                var solved = stats.byDifficultySolved[d] || 0;
+                var denom = diffTotals[d] || 0;
+                diffBox.appendChild(barRow(DIFF_LABEL[d], solved, denom, d));
+            });
+
+            // Status distribution.
+            var statusBox = $('status-breakdown');
+            statusBox.textContent = '';
+            var maxCount = 0;
+            STATUS_ORDER.forEach(function (st) {
+                var c = stats.byStatus[st] || 0;
+                if (c > maxCount) maxCount = c;
+            });
+            var anyStatus = false;
+            STATUS_ORDER.forEach(function (st) {
+                var c = stats.byStatus[st] || 0;
+                if (c === 0) return;
+                anyStatus = true;
+                statusBox.appendChild(barRow(
+                    STATUS_LABEL[st] || st.toUpperCase(), c, maxCount,
+                    st === 'ac' ? 'ac' : 'muted'));
+            });
+            $('status-empty').hidden = anyStatus;
+        }
+
+        function renderRecent(subs, metaMap) {
+            var list = $('recent-list');
+            list.textContent = '';
+            var recent = subs.slice(0, 10);
+            $('recent-empty').hidden = recent.length > 0;
+
+            recent.forEach(function (row) {
+                var status = row.status || 'pending';
+                var meta = metaMap[String(row.problem_id)] || {};
+                var li = el('li', { class: 'lc-history-row lc-history-row--' + status });
+
+                var top = el('div', { class: 'lc-history-row__top' });
+                top.appendChild(el('span', {
+                    class: 'lc-status lc-status--' + status,
+                    text: STATUS_LABEL[status] || status.toUpperCase(),
+                }));
+
+                // Problem title → link to the problem page when we know
+                // the slug; otherwise fall back to a plain #id label.
+                if (meta.slug) {
+                    top.appendChild(el('a', {
+                        class: 'lc-history-row__id',
+                        href: '/problem.html?slug=' + encodeURIComponent(meta.slug),
+                        text: meta.title || meta.slug,
+                    }));
+                } else {
+                    top.appendChild(el('span', {
+                        class: 'lc-history-row__id',
+                        text: '题目 #' + row.problem_id,
+                    }));
+                }
+
+                top.appendChild(el('span', {
+                    class: 'lc-history-row__lang',
+                    text: LANG_LABEL[row.language] || row.language || '?',
+                }));
+                top.appendChild(el('span', {
+                    class: 'lc-history-row__time',
+                    title: String(row.created_at || ''),
+                    text: formatProfileTime(row.created_at),
+                }));
+                li.appendChild(top);
+                list.appendChild(li);
+            });
+        }
+
+        // ── Orchestration ──────────────────────────────────────────
+        var currentUser = null;
+        var target = null;
+
+        function loadStats() {
+            showState('loading');
+            $('page-subtitle').textContent = '正在加载做题统计…';
+
+            // Two paginated fetches in parallel: the caller's submissions
+            // and the live problem catalog (for the denominator + titles).
+            return Promise.all([
+                fetchAllPages('/submissions', ''),
+                fetchAllPages('/problems', ''),
+            ]).then(function (results) {
+                var subsResult = results[0];
+                var probResult = results[1];
+                var meta = buildProblemMeta(probResult.items);
+                var stats = computeStats(subsResult.items, meta.map);
+
+                renderHeader(currentUser);
+                renderStats(stats, probResult.total, meta.diffTotals);
+                renderRecent(subsResult.items, meta.map);
+
+                var note = $('stats-note');
+                if (subsResult.capped || probResult.capped) {
+                    note.hidden = false;
+                    note.textContent = '统计基于最近 ' + subsResult.items.length +
+                        ' 条提交；历史较多，部分早期记录未纳入。';
+                } else {
+                    note.hidden = true;
+                }
+
+                $('page-title').textContent = (currentUser.username || '') + ' 的主页';
+                $('page-subtitle').textContent = currentUser.username
+                    ? '@' + currentUser.username + ' 的做题统计' : '';
+                showState('content');
+            });
+        }
+
+        function showError(err) {
+            showState('error');
+            $('page-subtitle').textContent = '';
+            $('error-message').textContent =
+                (err && err.message) ? err.message : ('HTTP ' + (err && err.status));
+        }
+
+        function showForeign() {
+            showState('foreign');
+            $('page-title').textContent = target.username + ' 的主页';
+            $('page-subtitle').textContent = '';
+            $('foreign-message').textContent =
+                '查看「' + target.username + '」的公开做题统计需要统计接口 ' +
+                'GET /api/v1/stats/profile/:username（Phase 6）。当前你只能查看自己的主页。';
+        }
 
         window.addEventListener('DOMContentLoaded', function () {
             litecode.boot.shell({ title: 'LiteCode · 个人主页' });
 
             litecode.guard.requireAuth().then(function (user) {
-                // hydrate via /auth/profile — auth.guard.requireAuth()
-                // already cached it on litecode.auth.currentUser, but
-                // we re-pull here to demo the round-trip and to show
-                // the same shape that stats endpoints will join on.
                 litecode.api.auth.fetchProfile().then(function (profile) {
-                    var card    = document.getElementById('profile-card');
-                    var title   = document.getElementById('page-title');
-                    var subtitle = document.getElementById('page-subtitle');
+                    currentUser = profile || user || litecode.api.auth.currentUser || {};
+                    target = resolveUsername(window.location.search, currentUser.username);
 
-                    subtitle.textContent = '';
-
-                    var u = profile || user || litecode.api.auth.currentUser || {};
-                    title.textContent = u.username ? (u.username + ' 的主页') : '个人主页';
-                    document.getElementById('display-name').textContent = u.username || '';
-                    document.getElementById('avatar').textContent =
-                        (u.username || '?').charAt(0).toUpperCase();
-
-                    var badge = document.getElementById('role-badge');
-                    if (u.role === 'admin') {
-                        badge.outerHTML = '<span class="lc-pill lc-pill--admin">管理员</span>';
-                    } else {
-                        badge.outerHTML = '<span class="lc-pill">用户</span>';
-                    }
-                    if (u.created_at) {
-                        document.getElementById('joined-at').textContent =
-                            '注册于 ' + String(u.created_at).slice(0, 10);
-                    }
-
-                    card.hidden = false;
-                }).catch(function (err) {
-                    showError(err);
-                });
+                    if (!target.isSelf) { showForeign(); return; }
+                    loadStats().catch(showError);
+                }).catch(showError);
             });
 
-            function showError(err) {
-                document.getElementById('profile-card').hidden = true;
-                var box = document.getElementById('profile-error');
-                box.hidden = false;
-                document.getElementById('profile-error-message').textContent =
-                    (err && err.message) ? err.message : ('HTTP ' + (err && err.status));
-            }
+            $('retry-btn').addEventListener('click', function () {
+                if (currentUser) loadStats().catch(showError);
+                else window.location.reload();
+            });
         });
+    })();
     </script>
 </body>
 </html>

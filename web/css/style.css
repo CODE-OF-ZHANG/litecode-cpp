@@ -1982,3 +1982,141 @@ html.dark .lc-gauge--danger {
         gap: var(--lc-space-2);
     }
 }
+
+/* ════════════════════════════════════════════════════════════════
+   §16  Profile page — 做题统计 (Phase 5 ★ 个人主页)
+   ════════════════════════════════════════════════════════════════
+   Consumes existing APIs only (GET /api/v1/submissions +
+   GET /api/v1/problems); the dedicated GET /api/v1/stats/profile
+   endpoint is Phase 6. All numbers are aggregated client-side.
+   Reuses .lc-card / .lc-pill / .lc-avatar / .lc-history-row tokens;
+   only the stat-grid + breakdown bars are new. */
+
+/* ── Profile header ─────────────────────────────────────────── */
+.lc-profile-head {
+    display: flex;
+    align-items: center;
+    gap: var(--lc-space-4);
+    flex-wrap: wrap;
+}
+.lc-avatar--lg {
+    width: 64px;
+    height: 64px;
+    font-size: 26px;
+}
+.lc-profile-head__body { min-width: 0; }
+.lc-profile-head__name {
+    margin: 0 0 var(--lc-space-1) 0;
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--lc-color-text);
+}
+.lc-profile-head__meta {
+    display: flex;
+    align-items: center;
+    gap: var(--lc-space-2);
+    flex-wrap: wrap;
+    font-size: 13px;
+    color: var(--lc-color-text-muted);
+}
+
+/* ── Stat cards grid ────────────────────────────────────────── */
+.lc-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: var(--lc-space-3);
+    margin-top: var(--lc-space-4);
+}
+.lc-stat-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lc-space-1);
+    padding: var(--lc-space-4);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-md);
+    background: var(--lc-color-surface-1);
+}
+.lc-stat-card__value {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.1;
+    color: var(--lc-color-text);
+    font-variant-numeric: tabular-nums;
+}
+.lc-stat-card__value--accent { color: var(--lc-color-link); }
+.lc-stat-card__label {
+    font-size: 13px;
+    color: var(--lc-color-text-muted);
+}
+.lc-stat-card__sub {
+    font-size: 12px;
+    color: var(--lc-color-text-2);
+}
+
+/* ── Breakdown bars (difficulty / status distribution) ──────── */
+.lc-section-title {
+    margin: var(--lc-space-6) 0 var(--lc-space-3) 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--lc-color-text);
+}
+.lc-breakdown {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lc-space-3);
+}
+.lc-bar-row {
+    display: grid;
+    grid-template-columns: 88px 1fr 96px;
+    align-items: center;
+    gap: var(--lc-space-3);
+}
+.lc-bar-row__label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--lc-color-text-1);
+}
+.lc-bar-track {
+    height: 10px;
+    border-radius: 999px;
+    background: var(--lc-color-surface-2);
+    overflow: hidden;
+}
+.lc-bar-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: var(--lc-color-link);
+    transition: width 300ms ease;
+    min-width: 2px;
+}
+.lc-bar-fill--easy   { background: #16a34a; }
+.lc-bar-fill--medium { background: #d97706; }
+.lc-bar-fill--hard   { background: #dc2626; }
+.lc-bar-fill--ac     { background: var(--lc-color-success); }
+.lc-bar-fill--muted  { background: var(--lc-color-text-2); }
+.lc-bar-row__count {
+    font-size: 12px;
+    color: var(--lc-color-text-muted);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* ── Cross-user notice / recent list wrapper ────────────────── */
+.lc-profile-notice {
+    padding: var(--lc-space-4);
+    border: 1px dashed var(--lc-color-border-2);
+    border-radius: var(--lc-radius-md);
+    background: var(--lc-color-surface-1);
+    color: var(--lc-color-text-2);
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+@media (max-width: 600px) {
+    .lc-bar-row {
+        grid-template-columns: 64px 1fr 72px;
+        gap: var(--lc-space-2);
+    }
+    .lc-stat-card__value { font-size: 24px; }
+}
