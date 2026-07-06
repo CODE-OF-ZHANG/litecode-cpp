@@ -145,6 +145,22 @@
                             id="show-draft-btn" hidden>查看草稿</button>
                 </div>
 
+                <!--
+                  SSE / poll status chip — appears next to the draft
+                  indicator while a submission is in flight. Three
+                  visual states map to the wait path:
+                    - "sse"      — connected to /submissions/sse/:id
+                    - "polling"  — SSE failed/timed out, 1.5s poll
+                    - "timeout"  — 30s hard cap; user can refresh
+                  The chip is hidden once the row reaches a terminal
+                  status (AC / WA / TLE / etc).
+                -->
+                <div class="lc-saved-indicator lc-sse-status" id="sse-status"
+                     hidden role="status" aria-live="polite">
+                    <span class="lc-saved-indicator__dot" aria-hidden="true"></span>
+                    <span id="sse-status-text" class="lc-form-help">等待判题…</span>
+                </div>
+
                 <div class="lc-editor-pane__submit-row">
                     <span id="draft-status" class="lc-form-help"
                           aria-live="polite"></span>
@@ -832,16 +848,90 @@
             });
         }
 
-        // ── Submit + polling ───────────────────────────────────────
+        // ── Submit + SSE-wait + polling-fallback ──────────────────
+        //
+        //  SPEC §11 ★ 异步判题轮询/SSE 客户端 (Phase 5 / v1.2.28):
+        //
+        //  1. submit() POSTs /submissions → gets back {submission_id}.
+        //  2. openSse() opens the /submissions/sse/:id stream. The
+        //     server emits one of:
+        //       - "result"   — submission is terminal; render + done.
+        //       - "pending"  — server-side 25s wait expired; client
+        //                      should fall back to polling.
+        //       - "error"    — 401/403/404/500 surfaced as SSE event.
+        //  3. If the stream errors out (network / parse / browser
+        //     without ReadableStream) we fall through to the legacy
+        //     1.5s poll loop.
+        //  4. A 30s hard cap protects the user from a wedged worker
+        //     that holds the row in "running" forever.
+        //
+        //  We deliberately keep the old pollResult() as a SECONDARY
+        //  helper used by the SSE-on-pending / SSE-on-error branches
+        //  — a single submission may go SSE-then-poll, and the page
+        //  lifecycle (closing the tab) has to be able to cancel
+        //  BOTH paths.
+        // ────────────────────────────────────────────────────────────
         var pollTimer = null;
+        var sseHandle = null;        // { close, mode } | null
+        var sseAbort  = null;        // AbortController (page-unload cancel)
         var pollDeadline = 0;
         var lastSubmissionId = 0;
+        var totalWaitStartedAt = 0;  // for the 30s hard cap
 
         function setSubmitting(submitting) {
             var btn = $('submit-btn');
             if (!btn) return;
             btn.disabled = !!submitting;
             btn.textContent = submitting ? '提交中…' : '提交';
+        }
+
+        // cancelWait — kill any in-flight SSE stream AND pending
+        // poll timer. Idempotent: called from resubmit, retry, page
+        // unload, and the 30s hard cap. Both subsystems share the
+        // `sseAbort` controller so a single abort closes the
+        // underlying fetch cleanly (which also aborts the reader
+        // loop in api.js's openSse).
+        function cancelWait() {
+            if (sseAbort) {
+                try { sseAbort.abort(); } catch (_) {}
+                sseAbort = null;
+            }
+            if (sseHandle) {
+                try { sseHandle.close(); } catch (_) {}
+                sseHandle = null;
+            }
+            if (pollTimer) {
+                clearTimeout(pollTimer);
+                pollTimer = null;
+            }
+            updateSseIndicator('idle');
+        }
+
+        // updateSseIndicator — flip the small status chip near the
+        // "提交中…" status. The visual vocabulary is:
+        //   idle    — chip hidden (no submission in flight)
+        //   sse     — green dot, "等待判题 (SSE)…"
+        //   polling — blue dot, "等待判题 (轮询)…"
+        //   timeout — orange dot, "判题超时,可手动刷新"
+        // The dot uses existing .lc-status--* / .lc-saved-indicator
+        // palette so dark mode is free.
+        function updateSseIndicator(mode) {
+            var ind = $('sse-status');
+            if (!ind) return;
+            if (mode === 'idle') {
+                ind.hidden = true;
+                return;
+            }
+            ind.hidden = false;
+            var dot = ind.querySelector('.lc-saved-indicator__dot');
+            var txt = $('sse-status-text');
+            if (dot) dot.className = 'lc-saved-indicator__dot lc-sse-status__dot--' + mode;
+            if (txt) {
+                if      (mode === 'sse')     txt.textContent = '等待判题（SSE）';
+                else if (mode === 'polling') txt.textContent = '等待判题（轮询）';
+                else if (mode === 'timeout') txt.textContent = '判题耗时较长,可手动刷新';
+                else                          txt.textContent = '';
+            }
         }
 
         // Status icon (single emoji glyph) per status. Centralized so
@@ -1041,36 +1131,161 @@
 
         function isTerminal(status) { return !!TERMINAL_STATUSES[status]; }
 
+        // handleTerminalRow — shared "submission has finished" hook.
+        // Called from BOTH the SSE-result path and the polling path;
+        // keeps the AC-clears-draft / WA-keeps-draft contract in a
+        // single place.
+        function handleTerminalRow(row) {
+            if (!row) return;
+            setSubmitting(false);
+            cancelWait();
+            updateSseIndicator('idle');
+            if (row.status === 'ac') {
+                // SPEC §11: "提交成功后清除"
+                clearDraft(state.slug, state.lang);
+                updateDraftStatus('已通过 · 草稿已清除');
+            } else {
+                updateDraftStatus('判题完成 · 草稿已保留，可继续修改');
+            }
+        }
+
+        // pollResult — legacy 1.5s polling fallback. Used when:
+        //   (a) the SSE stream returned a "pending" event (server
+        //       waited 25s and gave up — worker is still running)
+        //   (b) the SSE stream errored out (network blip, browser
+        //       without ReadableStream, etc)
+        //   (c) a 30s hard cap fires (defensive — should never
+        //       happen in practice because the server holds the
+        //       stream open for 25s first)
         function pollResult() {
             if (lastSubmissionId <= 0) return;
             if (Date.now() > pollDeadline) {
                 setSubmitting(false);
-                updateDraftStatus('判题超时，请稍后重试');
+                cancelWait();
+                updateSseIndicator('timeout');
+                updateDraftStatus('判题超时 · 请稍后重试');
                 return;
             }
-            litecode.api.get('/submissions/' + lastSubmissionId)
+            litecode.api.get('/submissions/' + lastSubmissionId, { noRetryOn401: true })
                 .then(function (resp) {
                     var row = (resp && resp.data) || null;
-                    if (!row) return;
-                    renderResult(row);
-                    if (isTerminal(row.status)) {
-                        setSubmitting(false);
-                        if (row.status === 'ac') {
-                            // SPEC §11: "提交成功后清除"
-                            clearDraft(state.slug, state.lang);
-                            updateDraftStatus('已通过 · 草稿已清除');
-                        } else {
-                            updateDraftStatus('判题完成 · 草稿已保留，可继续修改');
-                        }
+                    if (!row) {
+                        scheduleNextPoll();
                         return;
                     }
-                    // Not terminal yet — schedule next poll.
-                    pollTimer = setTimeout(pollResult, POLL_INTERVAL_MS);
+                    renderResult(row);
+                    if (isTerminal(row.status)) {
+                        handleTerminalRow(row);
+                        return;
+                    }
+                    scheduleNextPoll();
                 })
                 .catch(function (err) {
-                    setSubmitting(false);
-                    updateDraftStatus('查询失败：' + (err && err.message || '未知错误'));
+                    // 401/404/500 — surface inline; keep polling so a
+                    // transient hiccup doesn't kill the wait. The
+                    // hard cap (pollDeadline) will still stop us
+                    // eventually.
+                    if (err && err.status) {
+                        updateDraftStatus('查询失败（' + err.status + '）· 继续轮询中…');
+                    }
+                    scheduleNextPoll();
                 });
+        }
+        function scheduleNextPoll() {
+            if (pollTimer) clearTimeout(pollTimer);
+            pollTimer = setTimeout(pollResult, POLL_INTERVAL_MS);
+        }
+
+        // sseWaitForResult — open the SSE stream and let the server
+        // push the terminal row. Three outcomes:
+        //   (1) "result"  event → handleTerminalRow + cancel SSE
+        //   (2) "pending" event → server's 25s window expired; close
+        //                         the stream and switch to polling
+        //   (3) error event     → same as (2)
+        // Plus: the caller's external `signal` (page-unload) aborts
+        // the underlying fetch; the 30s hard cap (pollDeadline)
+        // stops us from polling forever; and any network blip
+        // surfaces as onError → also falls through to polling.
+        function sseWaitForResult() {
+            if (lastSubmissionId <= 0) return;
+            if (Date.now() > pollDeadline) {
+                setSubmitting(false);
+                cancelWait();
+                updateSseIndicator('timeout');
+                updateDraftStatus('判题超时 · 请稍后重试');
+                return;
+            }
+            // AbortController is the single switch we can flip to
+            // kill the stream mid-flight. We hand it to openSse; the
+            // page-unload listener also calls .abort() on it.
+            sseAbort = new AbortController();
+            updateSseIndicator('sse');
+            sseHandle = litecode.api.sse(
+                '/submissions/sse/' + lastSubmissionId,
+                {
+                    onResult: function (row) {
+                        // Server-pushed the terminal row.
+                        renderResult(row);
+                        handleTerminalRow(row);
+                    },
+                    onPending: function (payload) {
+                        // Server's 25s wait timed out — worker is
+                        // still busy. Drop SSE and switch to polling.
+                        cancelWait();
+                        updateSseIndicator('polling');
+                        updateDraftStatus('SSE 等待超时 · 切换为轮询模式');
+                        // The polling path inherits the same
+                        // pollDeadline, so the 30s cap still applies.
+                        pollResult();
+                    },
+                    onError: function (err) {
+                        // 401 / 403 / 404 / 500 / network / parse.
+                        // The terminal-state checks (404, 403) are
+                        // surfaced inline; everything else falls
+                        // through to polling (better UX than giving
+                        // up the moment WiFi blips).
+                        if (err && (err.status === 401 || err.status === 403)) {
+                            // Auth/permission — no point polling.
+                            setSubmitting(false);
+                            cancelWait();
+                            updateSseIndicator('idle');
+                            updateDraftStatus(err.status === 401
+                                ? '请先登录后再提交'
+                                : '无权查看该提交');
+                            return;
+                        }
+                        if (err && err.status === 404) {
+                            setSubmitting(false);
+                            cancelWait();
+                            updateSseIndicator('idle');
+                            updateDraftStatus('提交不存在');
+                            return;
+                        }
+                        if (err && err.status >= 500) {
+                            // 5xx — server's broken. Keep polling
+                            // because the next request might
+                            // succeed (and the row IS persisted).
+                            cancelWait();
+                            updateSseIndicator('polling');
+                            updateDraftStatus('服务端异常 · 切换为轮询');
+                            pollResult();
+                            return;
+                        }
+                        // Network / parse / 0 — best-effort polling.
+                        cancelWait();
+                        updateSseIndicator('polling');
+                        updateDraftStatus('SSE 不可用 · 切换为轮询');
+                        pollResult();
+                    },
+                },
+                {
+                    signal: sseAbort.signal,
+                    // Server keeps the stream open for 25s (judge
+                    // hard wait). Add 5s slack for HTTP / TLS
+                    // overhead. The 30s POLL_MAX_MS is the backstop.
+                    timeoutMs: POLL_MAX_MS,
+                }
+            );
         }
 
         function submit() {
@@ -1084,6 +1299,9 @@
                 updateDraftStatus('代码超过 15 MB 上限');
                 return;
             }
+            // Cancel any prior in-flight wait so a double-submit
+            // doesn't leak streams.
+            cancelWait();
             setSubmitting(true);
             updateDraftStatus('提交中…');
             litecode.api.post('/submissions', {
@@ -1101,7 +1319,8 @@
                 updateDraftStatus('已提交 · 等待判题（id=' + lastSubmissionId + '）');
                 renderResult({ status: 'pending' });
                 pollDeadline = Date.now() + POLL_MAX_MS;
-                pollResult();
+                totalWaitStartedAt = Date.now();
+                sseWaitForResult();
             }).catch(function (err) {
                 setSubmitting(false);
                 if (err && err.status === 401) {
@@ -1329,6 +1548,19 @@
                         submit();
                     }
                 }
+            });
+
+            // Page-unload: tear down the SSE stream so the browser
+            // doesn't keep a half-open connection (and the server's
+            // worker doesn't keep sending frames into the void). The
+            // fetch + ReadableStream pattern in api.js's openSse
+            // respects AbortController.abort() on `pagehide`, which
+            // is the standard "user is leaving" signal that also
+            // fires on bfcache restores.
+            window.addEventListener('pagehide', function () {
+                if (sseAbort) { try { sseAbort.abort(); } catch (_) {} }
+                if (sseHandle) { try { sseHandle.close(); } catch (_) {} }
+                if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
             });
 
             // Load CodeMirror + problem detail. We run the editor

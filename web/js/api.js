@@ -48,8 +48,10 @@
 //                                  → Promise<{data, request_id, raw}>
 //   litecode.api.rawFetch(path, init)
 //                                  → Promise<Response>  (no auto 401 handling)
-//   litecode.api.sse(path, onEvent, onError)
-//                                  → EventSource wrapper with Bearer query
+//   litecode.api.sse(path, handlers, opts)
+//                                  → fetch-stream SSE client (NOT EventSource).
+//                                    See block-comment near `openSse` for why.
+//                                    Returns { close, mode: 'fetch' }.
 //
 //   litecode.auth.getAccessToken()        — string|null (memory only)
 //   litecode.auth.hasRefreshCookie()      — boolean (heuristic — checks
@@ -479,23 +481,315 @@
     }
 
     // ────────────────────────────────────────────────────────────────────
-    //  SSE helper — EventSource can't send Authorization headers, so we
-    //  fall back to `?access_token=...` query. The backend doesn't accept
-    //  query tokens today, so this is a soft-fail; Phase 5+ would add a
-    //  dedicated SSE handshake. For now this is here so the front-end
-    //  has a typed anchor when submissions polling is upgraded to push.
+    //  SSE client — fetch + ReadableStream, NOT EventSource.
+    //
+    //  Why fetch-stream and not EventSource?
+    //  ------------------------------------
+    //    EventSource's API is read-only on the wire side: it can NOT
+    //    set custom request headers, so the `Authorization: Bearer
+    //    <access_token>` we use everywhere else is impossible to send.
+    //    The two "natural" workarounds each break a SPEC guarantee:
+    //      - ?access_token=… query string: the value lands in
+    //        access logs / Referer / browser history. We will NOT
+    //        put an access token in a URL.
+    //      - HttpOnly cookie: would require v1.2.21's "access in
+    //        memory, refresh in cookie" inversion — a regression we
+    //        refuse to take.
+    //    fetch + ReadableStream solves both: it sets headers like a
+    //    normal XHR, then hands the caller a `getReader()` over the
+    //    chunked body. We parse the SSE wire format by hand (RFC
+    //    8895, ~40 lines including comment header) and dispatch the
+    //    same event names the server emits.
+    //
+    //  Wire format we expect (from src/routes/submission_routes.h,
+    //  Phase 4 ★ SSE — submission_sse):
+    //      retry: 3000
+    //      \n
+    //      event: result   |   event: pending   |   event: error
+    //      data: <json>                       data: {submission_id:N} | {code,message,status}
+    //      \n\n
+    //
+    //  Server is "one-shot, then close" today (v1.2.17 Phase 4 ★):
+    //  a single frame is emitted, then the response ends. The
+    //  client treats the stream's end-of-body as "done".
+    //
+    //  Backward compat
+    //  ---------------
+    //    The old `sse(path, onEvent, onError)` returned an EventSource
+    //    instance. We DO NOT keep that signature — it was never
+    //    functional (the backend refuses query tokens). Callers
+    //    (problem.html v1.2.28+) use the new `litecode.api.sse(path,
+    //    handlers, opts)` shape; older branches that imported the
+    //    old EventSource are out of step with SPEC §6.3 anyway.
+    //
+    //  Test surface
+    //  ------------
+    //    The two pure parsers (parseSseFrames / parseSseFrame) are
+    //    also re-exported as `litecode.api._sseParseFrames` and
+    //    `litecode.api._sseParseFrame` (leading underscore — the
+    //    underscore is the project-wide convention for "stable
+    //    shape, internal use, no app-level caller should depend on
+    //    this"). The re-export exists so `web/test/sse-parser.test.js`
+    //    can drive the parsers in a Node vm sandbox without
+    //    rewriting the wire format in two places.
     // ────────────────────────────────────────────────────────────────────
 
-    function openSse(path, onEvent, onError) {
+    // parseSseFrames — split a UTF-8 text buffer into completed frames.
+    // A "frame" is everything between two consecutive \n\n boundaries.
+    // An incomplete trailing frame is kept in the buffer and prepended
+    // to the next chunk. This function is exported (in the IIFE scope)
+    // so unit tests can poke it directly.
+    //
+    // Returns { frames: string[], rest: string }. Each frame is the
+    // raw multi-line text (with no trailing \n\n); the caller parses
+    // event: / data: / retry: lines out of it.
+    function parseSseFrames(buffer) {
+        // Split on \n\n (SSE delimiter per RFC 8895 §3.1). Empty
+        // frames are skipped — they happen when two delimiters sit
+        // adjacent (e.g. the server's "\n\n" at the very end of the
+        // body) and carry no information.
+        var frames = [];
+        var start = 0;
+        for (var i = 0; i < buffer.length - 1; i++) {
+            if (buffer.charCodeAt(i) === 10 && buffer.charCodeAt(i + 1) === 10) {
+                var chunk = buffer.slice(start, i);
+                if (chunk.length > 0) frames.push(chunk);
+                start = i + 2;
+                i++; // skip the second \n
+            }
+        }
+        return { frames: frames, rest: buffer.slice(start) };
+    }
+
+    // parseSseFrame — turn one raw frame (multi-line) into a typed
+    // object { event, data, retry }. Unknown lines are tolerated.
+    // If the same field appears multiple times (e.g. multi-line
+    // `data: foo\ndata: bar`) we join the values with \n per the
+    // SSE spec.
+    function parseSseFrame(frame) {
+        var event = null, data = [], retry = null;
+        var lines = frame.split('\n');
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i];
+            if (line.length === 0) continue;          // blank line inside
+            if (line.charAt(0) === ':') continue;    // SSE comment
+            var ci = line.indexOf(':');
+            var field, value;
+            if (ci === -1) {
+                field = line; value = '';
+            } else {
+                field = line.slice(0, ci);
+                value = line.slice(ci + 1);
+                // RFC 8895: strip ALL leading U+0020 SPACE chars
+                // from the value. We use a regex so 1, 2, or N
+                // leading spaces are equivalent — the v1.2.17
+                // server only emits one, but tolerant parsing
+                // means future server changes don't break us.
+                value = value.replace(/^ +/, '');
+            }
+            if (field === 'event') event = value;
+            else if (field === 'data') data.push(value);
+            else if (field === 'retry') retry = parseInt(value, 10);
+        }
+        return {
+            event: event,
+            data:  data.length ? data.join('\n') : null,
+            retry: isNaN(retry) ? null : retry,
+        };
+    }
+
+    // openSse — open a Server-Sent-Events stream and dispatch events.
+    //
+    // Parameters
+    //   path        : URL path, e.g. '/submissions/sse/42'
+    //   handlers    : { onOpen?, onResult?, onPending?, onError?, onClose? }
+    //                 - onOpen()            — response headers arrived
+    //                 - onResult(json)      — server emitted "result"
+    //                 - onPending(json)     — server emitted "pending" (timeout)
+    //                 - onError(errLitecodeApiError) — auth/404/403/500/stream
+    //                 - onClose()           — stream finished or was aborted
+    //   opts        : { signal?, timeoutMs? }
+    //                 - signal    : external AbortSignal (e.g. user navigates away)
+    //                 - timeoutMs : if set, abort the stream after N ms idle
+    //
+    // Returns
+    //   { close: () => void, mode: 'fetch' }
+    //
+    // The "close" function is idempotent and safe to call multiple
+    // times (e.g. once from the timeout, once from the abort signal,
+    // once from the caller). The second+ calls are no-ops.
+    function openSse(path, handlers, opts) {
+        handlers = handlers || {};
+        opts     = opts     || {};
         var token = getAccessToken();
-        var sep = path.indexOf('?') === -1 ? '?' : '&';
-        var url = joinUrl(baseUrl(), path) + (token ? sep + 'access_token=' + encodeURIComponent(token) : '');
-        var es = new EventSource(url, { withCredentials: true });
-        if (onEvent) es.addEventListener('result', function (ev) {
-            try { onEvent(JSON.parse(ev.data)); } catch (e) { onEvent(ev.data); }
+        var url   = joinUrl(baseUrl(), path);
+
+        // Build the request. Authorization header is mandatory for
+        // the SSE endpoint; if there's no in-memory access token
+        // we surface a 401-ish error and return without ever
+        // opening the socket. The caller (problem.html) is
+        // expected to have called /auth/refresh on boot.
+        var headers = { 'Accept': 'text/event-stream' };
+        if (token) headers['Authorization'] = 'Bearer ' + token;
+
+        // AbortController wires together (a) the caller's external
+        // signal, (b) our internal timeout, and (c) the manual
+        // close() call. Any of those calls ctrl.abort(); the fetch
+        // is cancelled and the reader loop exits.
+        var ctrl = new AbortController();
+        if (opts.signal) {
+            if (opts.signal.aborted) {
+                // Caller aborted before we even started. Emit
+                // close synchronously and bail.
+                if (handlers.onClose) try { handlers.onClose(); } catch (_) {}
+                return { close: function () {}, mode: 'fetch' };
+            }
+            opts.signal.addEventListener('abort', function () { ctrl.abort(); });
+        }
+        var timeoutId = null;
+        if (opts.timeoutMs && opts.timeoutMs > 0) {
+            timeoutId = setTimeout(function () { ctrl.abort(); }, opts.timeoutMs);
+        }
+
+        var closed = false;
+        function close() {
+            if (closed) return;
+            closed = true;
+            try { ctrl.abort(); } catch (_) {}
+            if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
+        }
+
+        // emitError — single funnel for every failure mode. Wraps
+        // the cause in a LitecodeApiError so callers can `err.status
+        // === 401` etc. without re-implementing the shape.
+        function emitError(status, code, message) {
+            if (closed) return;
+            if (!handlers.onError) return;
+            try {
+                handlers.onError(LitecodeApiError(status, {
+                    code: code,
+                    message: message,
+                }, null));
+            } catch (_) { /* listener must not abort our flow */ }
+        }
+
+        // Kick off the fetch. We deliberately do NOT route through
+        // fetchWithAutoRefresh — SSE's "one-shot, single response"
+        // shape doesn't compose with the 401-replay pattern (you
+        // can't replay a half-consumed stream). The /submissions/sse
+        // endpoint is already protected by `require_authentication`
+        // on the server side; if our access token is stale, the
+        // caller should `tryRefresh()` and then re-issue the SSE
+        // request.
+        fetch(url, {
+            method:      'GET',
+            headers:     headers,
+            credentials: 'same-origin',
+            signal:      ctrl.signal,
+        }).then(function (resp) {
+            if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
+            if (!resp.ok) {
+                // Read the body (might be a JSON envelope per
+                // §5.7) so the caller can inspect details.
+                return resp.text().then(function (body) {
+                    var parsed = null;
+                    try { parsed = body ? JSON.parse(body) : null; } catch (_) {}
+                    emitError(
+                        resp.status,
+                        parsed && parsed.code ? parsed.code : 'INTERNAL_ERROR',
+                        parsed && parsed.message ? parsed.message : ('HTTP ' + resp.status)
+                    );
+                    if (handlers.onClose) try { handlers.onClose(); } catch (_) {}
+                });
+            }
+            // The response is 200 + text/event-stream. Hand the
+            // reader to the parser loop.
+            if (handlers.onOpen) try { handlers.onOpen(); } catch (_) {}
+            if (!resp.body || typeof resp.body.getReader !== 'function') {
+                // Old browser without streaming — surface as error.
+                emitError(0, 'INTERNAL_ERROR', '当前浏览器不支持 SSE 流式读取');
+                if (handlers.onClose) try { handlers.onClose(); } catch (_) {}
+                return;
+            }
+            var reader  = resp.body.getReader();
+            var decoder = new TextDecoder('utf-8');
+            var buffer  = '';
+            function pump() {
+                reader.read().then(function (r) {
+                    if (r.done) {
+                        // Stream ended. Flush whatever was left in
+                        // the buffer — the server may have shipped
+                        // a final frame without a trailing \n\n
+                        // (a known quirk of cpp-httplib's
+                        // set_content path).
+                        if (buffer.length > 0) {
+                            var f = parseSseFrame(buffer);
+                            dispatchFrame(f);
+                        }
+                        if (handlers.onClose) try { handlers.onClose(); } catch (_) {}
+                        return;
+                    }
+                    buffer += decoder.decode(r.value, { stream: true });
+                    var parsed = parseSseFrames(buffer);
+                    buffer = parsed.rest;
+                    for (var i = 0; i < parsed.frames.length; i++) {
+                        var f = parseSseFrame(parsed.frames[i]);
+                        dispatchFrame(f);
+                    }
+                    pump();
+                }, function (err) {
+                    // Reader error (network blip, server reset, etc).
+                    // Don't surface as onError if we were already in
+                    // the process of closing — abort errors look
+                    // indistinguishable from real ones.
+                    if (closed) {
+                        if (handlers.onClose) try { handlers.onClose(); } catch (_) {}
+                        return;
+                    }
+                    emitError(0, 'INTERNAL_ERROR',
+                        'SSE 连接中断：' + (err && err.message ? err.message : '网络错误'));
+                    if (handlers.onClose) try { handlers.onClose(); } catch (_) {}
+                });
+            }
+            function dispatchFrame(f) {
+                if (!f.event) return;        // heartbeat / unknown — ignore
+                var payload = null;
+                if (f.data) {
+                    try { payload = JSON.parse(f.data); }
+                    catch (_) { payload = f.data; }
+                }
+                if (f.event === 'result' && handlers.onResult) {
+                    try { handlers.onResult(payload); } catch (_) {}
+                } else if (f.event === 'pending' && handlers.onPending) {
+                    try { handlers.onPending(payload); } catch (_) {}
+                } else if (f.event === 'error' && handlers.onError) {
+                    // Server-emitted SSE error — keep the LitecodeApiError
+                    // shape so the caller's switch on err.status /
+                    // err.code keeps working.
+                    var status = (payload && payload.status) || 500;
+                    var code   = (payload && payload.code)   || 'INTERNAL_ERROR';
+                    var msg    = (payload && payload.message) || ('SSE error ' + status);
+                    try {
+                        handlers.onError(LitecodeApiError(status,
+                            { code: code, message: msg, details: payload && payload.details || null },
+                            null));
+                    } catch (_) {}
+                }
+            }
+            pump();
+        }, function (err) {
+            if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
+            if (closed) {
+                if (handlers.onClose) try { handlers.onClose(); } catch (_) {}
+                return;
+            }
+            // Network-level failure (DNS, refused, CORS, …).
+            emitError(0, 'INTERNAL_ERROR',
+                'SSE 连接失败：' + (err && err.message ? err.message : '网络错误'));
+            if (handlers.onClose) try { handlers.onClose(); } catch (_) {}
         });
-        if (onError) es.addEventListener('error', onError);
-        return es;
+
+        return { close: close, mode: 'fetch' };
     }
 
     // ────────────────────────────────────────────────────────────────────
@@ -519,6 +813,13 @@
         // Escapes
         rawFetch: rawFetch,
         sse:      openSse,
+
+        // SSE parsers (pure functions, exposed for the unit-test
+        // harness; production callers go through `sse()` above).
+        // The leading underscore marks these as "stable shape,
+        // internal use" — do not rely on them in app code.
+        _sseParseFrames: parseSseFrames,
+        _sseParseFrame:  parseSseFrame,
 
         // Auth namespace — see api.auth below for the canonical set.
         // Filled in after the auth object is defined so we can hoist.

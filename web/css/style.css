@@ -1550,6 +1550,52 @@ html.dark .lc-draft-banner {
     font-size: 11px;
 }
 
+/* =====================================================================
+   14a. SSE / polling status chip (Phase 5 ★ 异步判题轮询/SSE 客户端)
+   ---------------------------------------------------------------------
+   .lc-sse-status piggy-backs on .lc-saved-indicator for the chip
+   shape (already shared with the draft "已自动保存" chip) but adds
+   a state-aware colored dot so the user can tell at a glance
+   whether the wait is going over a live push (green) or has fallen
+   back to 1.5s polling (blue) or hit the 30s hard cap (orange).
+   The dot is the *only* thing that changes per state — the rest
+   of the chip is shared layout.
+   ===================================================================== */
+.lc-sse-status {
+    /* The chip shape is inherited from the .lc-saved-indicator
+       rule above (the HTML wraps the SSE chip in BOTH classes
+       so the gap / padding / radius tokens are reused). We
+       leave this selector empty to make the intent explicit and
+       serve as an extension hook for future tweaks. */
+}
+.lc-sse-status__dot--sse {
+    /* SSE is the happy path — green. */
+    background: var(--lc-color-success);
+    box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.22);
+    /* Subtle pulse so the chip feels "live" while the push
+       connection is open. Honors prefers-reduced-motion below. */
+    animation: lc-sse-pulse 1.6s ease-in-out infinite;
+}
+.lc-sse-status__dot--polling {
+    /* Polling is the fallback — info blue, no pulse. */
+    background: var(--lc-color-info);
+    box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.20);
+}
+.lc-sse-status__dot--timeout {
+    /* 30s hard cap — warning orange. */
+    background: var(--lc-color-warning);
+    box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.20);
+}
+
+@keyframes lc-sse-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .lc-sse-status__dot--sse { animation: none; }
+}
+
 @media (max-width: 600px) {
     .lc-draft-banner {
         flex-wrap: wrap;
