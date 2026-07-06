@@ -2120,3 +2120,101 @@ html.dark .lc-gauge--danger {
     }
     .lc-stat-card__value { font-size: 24px; }
 }
+
+/* ════════════════════════════════════════════════════════════════
+   §17  Ranking page — 排行榜 (Phase 5 ★ 排行榜页面)
+   ════════════════════════════════════════════════════════════════
+   Consumes GET /api/v1/stats/ranking (Phase 6). Until that endpoint
+   ships the page shows a graceful "coming soon" notice; the table +
+   pagination + medal styling below are the production render path.
+   Reuses .lc-avatar / .lc-pagination / .lc-card / .lc-loading tokens. */
+
+.lc-rank-table {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.lc-rank-head,
+.lc-rank-row {
+    display: grid;
+    grid-template-columns: 64px 1fr 92px 92px 104px;
+    align-items: center;
+    gap: var(--lc-space-3);
+    padding: var(--lc-space-3) var(--lc-space-4);
+}
+.lc-rank-head {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--lc-color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    border-bottom: 1px solid var(--lc-color-border);
+}
+.lc-rank-row {
+    border-radius: var(--lc-radius-md);
+    border: 1px solid transparent;
+    background: var(--lc-color-surface-1);
+}
+.lc-rank-row:hover { border-color: var(--lc-color-border-2); }
+.lc-rank-row--me {
+    border-color: var(--lc-color-link);
+    background: color-mix(in srgb, var(--lc-color-link) 8%, var(--lc-color-surface-1));
+}
+.lc-rank-cell--rank {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--lc-color-text-1);
+    font-variant-numeric: tabular-nums;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.lc-rank-cell--rank .lc-rank-medal { font-size: 18px; }
+.lc-rank-cell--user {
+    display: flex;
+    align-items: center;
+    gap: var(--lc-space-2);
+    min-width: 0;
+}
+.lc-rank-username {
+    font-weight: 600;
+    color: var(--lc-color-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.lc-rank-me-tag {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--lc-color-link);
+    border: 1px solid var(--lc-color-link);
+    border-radius: 999px;
+    padding: 1px 6px;
+    flex-shrink: 0;
+}
+.lc-rank-cell--num {
+    font-variant-numeric: tabular-nums;
+    color: var(--lc-color-text-1);
+    text-align: right;
+}
+.lc-rank-cell--num .lc-rank-sub {
+    display: block;
+    font-size: 11px;
+    color: var(--lc-color-text-muted);
+}
+
+@media (max-width: 640px) {
+    .lc-rank-head { display: none; }
+    .lc-rank-row {
+        grid-template-columns: 44px 1fr auto;
+        grid-template-areas:
+            "rank user solved"
+            "rank user rate";
+        row-gap: 2px;
+    }
+    .lc-rank-cell--rank { grid-area: rank; }
+    .lc-rank-cell--user { grid-area: user; }
+    .lc-rank-cell--solved { grid-area: solved; }
+    .lc-rank-cell--subs { display: none; }
+    .lc-rank-cell--rate { grid-area: rate; }
+}

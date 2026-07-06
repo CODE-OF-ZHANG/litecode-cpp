@@ -7,8 +7,6 @@
     <!--
       Phase 5 ★ CSP/SRI / SPEC §6.3 + A32
       Canonical CSP pinned in `web/js/csp.js` (single source of truth).
-      `script-src` allows cdn.jsdelivr.net so future lazy-loading of
-      marked + DOMPurify works without relaxing the policy.
     -->
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
@@ -17,17 +15,79 @@
     <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
+    <!--
+      Phase 5 ★ 排行榜页面（/ranking.html） — F11, SPEC §5.4 / §6.1.
+
+      Public page (no auth). Consumes the canonical ranking endpoint
+      `GET /api/v1/stats/ranking` (SPEC §5.4). That endpoint is a
+      Phase 6 item and is NOT registered yet (`stats_routes.h` is
+      empty → the route 404s), so — like profile.html's stats — this
+      page ships the full production render path (medal-decorated
+      table + pagination + self-highlight) and degrades gracefully to
+      a "coming soon" notice while the endpoint is absent (404 / 501 /
+      NOT_FOUND). When the API lands, no page change is needed: the
+      first successful response renders straight into the table.
+
+      Expected response shape (tolerant — normalizeRankItem accepts
+      several field-name spellings):
+        { data: { items: [ { rank, username, solved, submissions,
+                             accepted, acceptance_rate } ], total } }
+
+      URL: `?page=N` deep-links a page (static hosting, no path
+      params). RANK_PAGE_SIZE = 50 rows/page.
+    -->
     <div data-nav></div>
 
     <main class="lc-container">
-        <header class="lc-stack" style="margin-bottom: 24px;">
-            <h1>排行榜（占位）</h1>
-            <p class="lc-form-help">
-                Phase 5 ★ 排行榜页面将在后续 commit 落地；本占位页只承载
-                CSP + SRI + 框架接入。后续内容会读取
-                <code>GET /api/v1/stats/ranking</code>。
-            </p>
+        <header class="lc-stack" style="margin-bottom: 20px;">
+            <h1>排行榜</h1>
+            <p class="lc-form-help" id="subtitle" aria-live="polite">按解题数排名，通过率为辅助排序。</p>
         </header>
+
+        <!-- Loading -->
+        <div class="lc-loading" id="loading-state">
+            <span class="lc-spinner" aria-hidden="true"></span>
+            <span>加载中…</span>
+        </div>
+
+        <!-- Endpoint not available yet (Phase 6) -->
+        <section class="lc-card" id="unavailable-state" hidden>
+            <h2 style="margin-top:0;">排行榜即将上线</h2>
+            <p class="lc-profile-notice">
+                排行榜数据由统计接口 <code>GET /api/v1/stats/ranking</code>（Phase 6）
+                提供，目前尚未上线。接口就绪后本页无需改动即可显示全站排名。
+            </p>
+            <a class="lc-btn lc-btn--primary" href="/index.html">去题库刷题</a>
+        </section>
+
+        <!-- Error -->
+        <section class="lc-error" id="error-state" hidden>
+            <div class="lc-error__title">加载失败</div>
+            <p class="lc-form-help" id="error-message"></p>
+            <button type="button" class="lc-btn lc-btn--primary" id="retry-btn" style="margin-top:12px;">重试</button>
+        </section>
+
+        <!-- Empty -->
+        <section class="lc-empty" id="empty-state" hidden>
+            <div class="lc-empty__title">暂无排名数据</div>
+            <p class="lc-form-help">还没有用户产生已通过的提交。</p>
+        </section>
+
+        <!-- Ranking table -->
+        <section class="lc-card" id="table-state" hidden>
+            <div class="lc-rank-table">
+                <div class="lc-rank-head" role="row">
+                    <div>排名</div>
+                    <div>用户</div>
+                    <div class="lc-rank-cell--num">已解决</div>
+                    <div class="lc-rank-cell--num lc-rank-cell--subs">提交数</div>
+                    <div class="lc-rank-cell--num">通过率</div>
+                </div>
+                <div id="rank-rows"></div>
+            </div>
+        </section>
+
+        <nav class="lc-pagination" id="pagination" aria-label="排行榜分页" hidden></nav>
     </main>
 
     <!-- Load order is mandatory: csp.js → api.js → app.js. -->
@@ -36,7 +96,265 @@
     <script src="/js/app.js" defer></script>
 
     <script>
-        litecode.boot.shell({ title: 'LiteCode · 排行榜' });
+    (function () {
+        'use strict';
+
+        var RANK_PAGE_SIZE = 50;
+
+        // ── DOM helpers ────────────────────────────────────────────
+        function $(id) { return document.getElementById(id); }
+        function el(tag, attrs, children) {
+            var node = document.createElement(tag);
+            if (attrs) {
+                Object.keys(attrs).forEach(function (k) {
+                    var v = attrs[k];
+                    if (v == null) return;                 // skip null/undefined attrs
+                    if (k === 'class') node.className = v;
+                    else if (k === 'text') node.textContent = v;
+                    else if (k === 'dataset') {
+                        Object.keys(v).forEach(function (dk) { node.dataset[dk] = v[dk]; });
+                    } else if (k.charAt(0) === 'o' && k.charAt(1) === 'n') {
+                        node.addEventListener(k.slice(2).toLowerCase(), v);
+                    } else {
+                        node.setAttribute(k, v);
+                    }
+                });
+            }
+            (Array.isArray(children) ? children : (children == null ? [] : [children]))
+                .forEach(function (c) {
+                    if (c == null) return;
+                    node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+                });
+            return node;
+        }
+
+        // ── Pure helpers (also exported via __lcTest) ──────────────
+        function pickNum(o, keys) {
+            for (var i = 0; i < keys.length; i++) {
+                var v = o[keys[i]];
+                if (v != null && isFinite(Number(v))) return Number(v);
+            }
+            return 0;
+        }
+
+        // Normalize one server row into a stable shape, tolerant of
+        // several plausible field-name spellings the Phase 6 endpoint
+        // might use. `fallbackRank` is used when the row omits `rank`.
+        function normalizeRankItem(raw, fallbackRank) {
+            raw = raw || {};
+            var solved      = pickNum(raw, ['solved', 'solved_count', 'solved_problems']);
+            var submissions = pickNum(raw, ['submissions', 'submission_count', 'total_submissions']);
+            var accepted    = pickNum(raw, ['accepted', 'accepted_count', 'ac_count']);
+            var rate;
+            if (raw.acceptance_rate != null && isFinite(Number(raw.acceptance_rate))) {
+                rate = Number(raw.acceptance_rate);
+                if (rate > 1) rate = rate / 100;           // accept 0..1 or 0..100
+            } else {
+                rate = submissions > 0 ? accepted / submissions : 0;
+            }
+            return {
+                rank: (raw.rank != null && isFinite(Number(raw.rank))) ? Number(raw.rank) : fallbackRank,
+                username: String(raw.username == null ? '' : raw.username),
+                solved: solved,
+                submissions: submissions,
+                accepted: accepted,
+                acceptanceRate: rate,
+            };
+        }
+
+        function formatPercent(rate) { return (rate * 100).toFixed(1) + '%'; }
+        function rankMedal(rank) { return ({ 1: '🥇', 2: '🥈', 3: '🥉' })[rank] || ''; }
+        function rankFromOffset(page, index) { return (page - 1) * RANK_PAGE_SIZE + index + 1; }
+        function buildRankQuery(page) {
+            return '?limit=' + RANK_PAGE_SIZE + '&offset=' + ((page - 1) * RANK_PAGE_SIZE);
+        }
+        // The ranking endpoint isn't shipped until Phase 6; a missing
+        // route answers 404 (unregistered) or 501 (placeholder).
+        function isEndpointMissing(err) {
+            if (!err) return false;
+            return err.status === 404 || err.status === 501 || err.code === 'NOT_FOUND';
+        }
+
+        // ── Test surface (no-op in production) ─────────────────────
+        if (typeof __lcTest !== 'undefined') {
+            __lcTest.normalizeRankItem = normalizeRankItem;
+            __lcTest.formatPercent     = formatPercent;
+            __lcTest.rankMedal         = rankMedal;
+            __lcTest.rankFromOffset    = rankFromOffset;
+            __lcTest.buildRankQuery    = buildRankQuery;
+            __lcTest.isEndpointMissing = isEndpointMissing;
+            __lcTest.RANK_PAGE_SIZE    = RANK_PAGE_SIZE;
+        }
+
+        // ── State ──────────────────────────────────────────────────
+        var state = { page: 1, total: 0 };
+        var inflightToken = 0;
+
+        function readUrl() {
+            var sp = new URLSearchParams(window.location.search);
+            var p = parseInt(sp.get('page'), 10);
+            state.page = (isFinite(p) && p >= 1) ? p : 1;
+        }
+        function writeUrl() {
+            var sp = new URLSearchParams();
+            if (state.page > 1) sp.set('page', String(state.page));
+            var qs = sp.toString();
+            window.history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+        }
+        function totalPages() {
+            return Math.max(1, Math.ceil(state.total / RANK_PAGE_SIZE));
+        }
+
+        function showState(name) {
+            $('loading-state').hidden     = (name !== 'loading');
+            $('unavailable-state').hidden = (name !== 'unavailable');
+            $('error-state').hidden       = (name !== 'error');
+            $('empty-state').hidden       = (name !== 'empty');
+            $('table-state').hidden       = (name !== 'table');
+            if (name !== 'table') $('pagination').hidden = true;
+        }
+
+        // ── Rendering ──────────────────────────────────────────────
+        function renderRows(items) {
+            var me = (litecode.api.auth && litecode.api.auth.currentUser) || null;
+            var myName = me && me.username ? String(me.username).toLowerCase() : null;
+
+            var box = $('rank-rows');
+            box.textContent = '';
+            items.forEach(function (it, i) {
+                var isMe = myName && it.username.toLowerCase() === myName;
+                var row = el('div', {
+                    class: 'lc-rank-row' + (isMe ? ' lc-rank-row--me' : ''),
+                    role: 'row',
+                });
+
+                var medal = rankMedal(it.rank);
+                var rankCell = el('div', { class: 'lc-rank-cell--rank' }, [
+                    medal ? el('span', { class: 'lc-rank-medal', 'aria-hidden': 'true', text: medal }) : null,
+                    el('span', { text: '#' + it.rank }),
+                ]);
+
+                var userCell = el('div', { class: 'lc-rank-cell--user' }, [
+                    el('span', { class: 'lc-avatar', 'aria-hidden': 'true',
+                        text: (it.username || '?').charAt(0).toUpperCase() }),
+                    el('a', {
+                        class: 'lc-rank-username',
+                        href: '/profile.html?username=' + encodeURIComponent(it.username),
+                        text: it.username || '(匿名)',
+                    }),
+                    isMe ? el('span', { class: 'lc-rank-me-tag', text: '我' }) : null,
+                ]);
+
+                row.appendChild(rankCell);
+                row.appendChild(userCell);
+                row.appendChild(el('div', { class: 'lc-rank-cell--num lc-rank-cell--solved', text: String(it.solved) }));
+                row.appendChild(el('div', { class: 'lc-rank-cell--num lc-rank-cell--subs', text: String(it.submissions) }));
+                row.appendChild(el('div', { class: 'lc-rank-cell--num lc-rank-cell--rate' }, [
+                    el('span', { text: formatPercent(it.acceptanceRate) }),
+                    el('span', { class: 'lc-rank-sub', text: it.accepted + ' / ' + it.submissions }),
+                ]));
+                box.appendChild(row);
+            });
+        }
+
+        function renderPagination() {
+            var nav = $('pagination');
+            nav.textContent = '';
+            var tp = totalPages();
+            if (tp <= 1) { nav.hidden = true; return; }
+            nav.hidden = false;
+            var cur = state.page;
+
+            function pageBtn(label, target, opts) {
+                opts = opts || {};
+                var attrs = {
+                    type: 'button',
+                    class: 'lc-page-btn' + (opts.active ? ' lc-page-btn--active' : '')
+                                         + (opts.disabled ? ' lc-page-btn--disabled' : ''),
+                    text: label,
+                    'aria-label': opts.ariaLabel || ('第 ' + target + ' 页'),
+                    'aria-current': opts.active ? 'page' : null,
+                };
+                if (opts.disabled) attrs.disabled = 'disabled';
+                else attrs.onClick = function () { goToPage(target); };
+                return el('button', attrs);
+            }
+            function ellipsis() { return el('span', { class: 'lc-page-ellipsis', text: '…', 'aria-hidden': 'true' }); }
+
+            nav.appendChild(pageBtn('« 首页', 1, { disabled: cur === 1, ariaLabel: '首页' }));
+            nav.appendChild(pageBtn('‹ 上一页', cur - 1, { disabled: cur === 1, ariaLabel: '上一页' }));
+
+            var pages = [];
+            if (tp <= 7) { for (var i = 1; i <= tp; i++) pages.push(i); }
+            else {
+                pages.push(1);
+                if (cur > 3) pages.push('…');
+                var from = Math.max(2, cur - 1), to = Math.min(tp - 1, cur + 1);
+                for (var j = from; j <= to; j++) pages.push(j);
+                if (cur < tp - 2) pages.push('…');
+                pages.push(tp);
+            }
+            pages.forEach(function (p) {
+                nav.appendChild(p === '…' ? ellipsis() : pageBtn(String(p), p, { active: p === cur }));
+            });
+
+            nav.appendChild(pageBtn('下一页 ›', cur + 1, { disabled: cur === tp, ariaLabel: '下一页' }));
+            nav.appendChild(pageBtn('末页 »', tp, { disabled: cur === tp, ariaLabel: '末页' }));
+        }
+
+        function renderSummary() {
+            $('subtitle').textContent = state.total > 0
+                ? ('共 ' + state.total + ' 位用户上榜 · 按解题数排名')
+                : '按解题数排名，通过率为辅助排序。';
+        }
+
+        // ── Load ───────────────────────────────────────────────────
+        function goToPage(p) {
+            var tp = totalPages();
+            if (p < 1) p = 1;
+            if (p > tp) p = tp;
+            if (p === state.page) return;
+            state.page = p;
+            writeUrl();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            load();
+        }
+
+        function load() {
+            var token = ++inflightToken;
+            showState('loading');
+            litecode.api.get('/stats/ranking' + buildRankQuery(state.page), { noRetryOn401: true })
+                .then(function (resp) {
+                    if (token !== inflightToken) return;
+                    var data = (resp && resp.data) || {};
+                    var raw = data.items || [];
+                    state.total = Number(data.total) || raw.length;
+                    var items = raw.map(function (r, i) {
+                        return normalizeRankItem(r, rankFromOffset(state.page, i));
+                    });
+                    if (items.length === 0) { showState('empty'); renderSummary(); return; }
+                    renderRows(items);
+                    renderSummary();
+                    showState('table');
+                    renderPagination();
+                })
+                .catch(function (err) {
+                    if (token !== inflightToken) return;
+                    if (isEndpointMissing(err)) { showState('unavailable'); return; }
+                    showState('error');
+                    $('error-message').textContent =
+                        (err && err.message) ? err.message : ('HTTP ' + (err && err.status));
+                });
+        }
+
+        window.addEventListener('DOMContentLoaded', function () {
+            litecode.boot.shell({ title: 'LiteCode · 排行榜' });
+            readUrl();
+            $('retry-btn').addEventListener('click', load);
+            window.addEventListener('popstate', function () { readUrl(); load(); });
+            load();
+        });
+    })();
     </script>
 </body>
 </html>
