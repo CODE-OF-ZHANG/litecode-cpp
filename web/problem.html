@@ -112,6 +112,39 @@
                               aria-label="代码编辑器"></textarea>
                 </div>
 
+                <!--
+                  Draft restore banner — appears on every page load when
+                  a draft for the current (slug, language) pair exists
+                  in localStorage. The user must explicitly Restore
+                  (load the draft into the editor) or Discard (clear
+                  the storage entry). Without this banner, a stale
+                  draft could be silently loaded and over-written by
+                  the first keystroke — the SPEC §11 "刷新提示恢复"
+                  requirement is the explicit ask for a non-silent UX.
+                -->
+                <section class="lc-draft-banner" id="draft-banner" hidden
+                         aria-live="polite" role="region"
+                         aria-label="本地草稿提示">
+                    <div class="lc-draft-banner__icon" aria-hidden="true">📝</div>
+                    <div class="lc-draft-banner__body">
+                        <p class="lc-draft-banner__title">发现本地草稿</p>
+                        <p class="lc-form-help" id="draft-banner-meta">…</p>
+                    </div>
+                    <div class="lc-draft-banner__actions">
+                        <button type="button" class="lc-btn lc-btn--primary lc-btn--sm"
+                                id="draft-restore-btn">恢复</button>
+                        <button type="button" class="lc-btn lc-btn--ghost lc-btn--sm"
+                                id="draft-discard-btn">放弃</button>
+                    </div>
+                </section>
+
+                <div class="lc-saved-indicator" id="saved-indicator" hidden>
+                    <span class="lc-saved-indicator__dot" aria-hidden="true"></span>
+                    <span id="saved-indicator-text" class="lc-form-help">已保存</span>
+                    <button type="button" class="lc-btn lc-btn--ghost lc-btn--sm"
+                            id="show-draft-btn" hidden>查看草稿</button>
+                </div>
+
                 <div class="lc-editor-pane__submit-row">
                     <span id="draft-status" class="lc-form-help"
                           aria-live="polite"></span>
@@ -506,35 +539,223 @@
             else if (editor.textarea) editor.textarea.addEventListener('input', cb);
         }
 
-        // ── Draft persistence (localStorage, scoped to slug+lang) ──
+        // ── Draft persistence (localStorage, scoped to slug+lang) ────
+        //
+        //  SPEC §11 "★ 编辑器草稿持久化":
+        //    1. localStorage scoped per (slug, language) — keys
+        //       `litecode:draft:<slug>:<lang>` carry a JSON envelope
+        //       `{v, code, savedAt, lang}` so we can show "saved at"
+        //       timestamps in the restore banner without keeping a
+        //       separate index.
+        //    2. Auto-save 300ms after the last edit. Empty / equal-to-
+        //       default-template writes are skipped (no point saving
+        //       noise).
+        //    3. On successful AC, the draft is cleared (submission
+        //       succeeded → user is done with this attempt).
+        //    4. On every page load, IF a draft exists and differs
+        //       from the current default template, the restore banner
+        //       appears — the user must explicitly Restore or
+        //       Discard (this is the "刷新提示恢复" SPEC clause; a
+        //       silent auto-restore would race with the first
+        //       keystroke and look like the page lost their work).
+        //    5. The toolbar `#clear-draft-btn` and the banner's
+        //       Discard button both call `clearDraft()`. The toolbar
+        //       Reset button overwrites the editor AND the storage
+        //       entry with the default template (so a future refresh
+        //       doesn't re-prompt).
+        //
+        //  Storage format (v1):
+        //    JSON.stringify({
+        //      v: 1,                     // schema version, future-proof
+        //      code: "...",              // the source
+        //      savedAt: 1717680000000,   // Date.now() ms
+        //      lang: "cpp"               // captured at save time
+        //    })
+        //  We accept legacy bare-string drafts (saved before v1.2.26)
+        //  by treating them as "code only, savedAt=0". The next
+        //  auto-save rewrites them in the new envelope.
+        // ────────────────────────────────────────────────────────────
+        var DRAFT_SCHEMA_VERSION = 1;
         var draftTimer = null;
-        var lastSavedDraft = '';
+        var lastSavedDraft = '';     // last code we WROTE to storage
+        var pendingDraft = null;     // draft the banner is offering (or null)
         function draftKey(slug, lang) { return DRAFT_PREFIX + slug + ':' + lang; }
+
+        // Read the full envelope for the (slug, lang) pair. Returns
+        // { code, savedAt, lang } or null when nothing valid is
+        // stored. Tolerates legacy bare-string entries and silently
+        // drops corrupted JSON (private-mode quota exceeded, manual
+        // tampering, etc).
         function loadDraft(slug, lang) {
-            try { return window.localStorage.getItem(draftKey(slug, lang)) || ''; }
-            catch (_) { return ''; }
+            try {
+                var raw = window.localStorage.getItem(draftKey(slug, lang));
+                if (!raw) return null;
+                if (raw.charAt(0) === '{') {
+                    var parsed = JSON.parse(raw);
+                    if (parsed && typeof parsed.code === 'string') {
+                        return {
+                            code:    parsed.code,
+                            savedAt: Number(parsed.savedAt) || 0,
+                            lang:    parsed.lang || lang,
+                        };
+                    }
+                    return null;
+                }
+                // Legacy bare-string entry (v1.2.25 and earlier).
+                return { code: raw, savedAt: 0, lang: lang };
+            } catch (_) {
+                return null;
+            }
         }
         function saveDraft(slug, lang, code) {
-            try { window.localStorage.setItem(draftKey(slug, lang), code); }
-            catch (_) { /* quota / private mode; drop */ }
+            try {
+                var envelope = {
+                    v: DRAFT_SCHEMA_VERSION,
+                    code: code,
+                    savedAt: Date.now(),
+                    lang: lang,
+                };
+                window.localStorage.setItem(draftKey(slug, lang), JSON.stringify(envelope));
+                return true;
+            } catch (err) {
+                // QuotaExceededError on Safari, SecurityError in
+                // private mode, etc. Surface to the user once so a
+                // silent loss-of-work is visible.
+                if (window.console && console.warn) {
+                    console.warn('[draft] save failed:', err);
+                }
+                updateDraftStatus('草稿保存失败：' + (err && err.name ? err.name : '未知错误'));
+                return false;
+            }
         }
         function clearDraft(slug, lang) {
-            try { window.localStorage.removeItem(draftKey(slug, lang)); }
-            catch (_) {}
+            try { window.localStorage.removeItem(draftKey(slug, lang)); return true; }
+            catch (_) { return false; }
         }
+
+        function formatBytes(n) {
+            if (typeof n !== 'number' || !isFinite(n) || n < 0) return '? B';
+            if (n < 1024) return n + ' B';
+            if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+            return (n / (1024 * 1024)).toFixed(2) + ' MB';
+        }
+        function formatSavedAt(ts) {
+            if (!ts) return '时间未知';
+            var d = new Date(ts);
+            if (isNaN(d.getTime())) return '时间未知';
+            var now = Date.now();
+            var diff = now - ts;
+            // Relative time for sub-day windows; absolute for older.
+            if (diff < 60 * 1000)         return '刚刚';
+            if (diff < 60 * 60 * 1000)    return Math.floor(diff / 60000) + ' 分钟前';
+            if (diff < 24 * 60 * 60 * 1000) return Math.floor(diff / 3600000) + ' 小时前';
+            // Past 24h: show absolute date+time
+            var pad = function (n) { return n < 10 ? '0' + n : '' + n; };
+            return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+                + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+        }
+
         function updateDraftStatus(msg) {
             var el = $('draft-status');
             if (el) el.textContent = msg || '';
         }
+
+        // The persistent "saved · HH:MM:SS" chip below the editor.
+        // Hidden until the first auto-save fires.
+        function updateSavedIndicator(savedAt) {
+            var ind = $('saved-indicator');
+            var txt = $('saved-indicator-text');
+            if (!ind || !txt) return;
+            if (!savedAt) {
+                ind.hidden = true;
+                return;
+            }
+            ind.hidden = false;
+            txt.textContent = '已自动保存 · ' + formatSavedAt(savedAt);
+        }
+
+        // Show / hide the "发现本地草稿" banner. Always called from
+        // problem-load (or after Restore / Discard) so the banner
+        // state is in lock-step with what's in localStorage.
+        function showDraftBanner(draft) {
+            var banner = $('draft-banner');
+            var meta   = $('draft-banner-meta');
+            if (!banner || !meta) return;
+            if (!draft || !draft.code) {
+                banner.hidden = true;
+                pendingDraft = null;
+                return;
+            }
+            pendingDraft = draft;
+            var bytes = (function () {
+                try { return new Blob([draft.code]).size; }
+                catch (_) { return draft.code.length; }
+            })();
+            var langLabel = LANG_LABEL[draft.lang] || draft.lang || '?';
+            meta.textContent =
+                langLabel + ' · 保存于 ' + formatSavedAt(draft.savedAt)
+                + ' · ' + formatBytes(bytes);
+            banner.hidden = false;
+        }
+        function hideDraftBanner() {
+            var banner = $('draft-banner');
+            if (banner) banner.hidden = true;
+            pendingDraft = null;
+        }
+
+        // Re-show the banner from the toolbar (the "查看草稿" button
+        // becomes available after the user has already restored or
+        // discarded once, in case they want to re-evaluate).
+        function onShowDraft() {
+            if (!state.slug) return;
+            var draft = loadDraft(state.slug, state.lang);
+            if (draft && draft.code) showDraftBanner(draft);
+        }
+
+        function onRestoreDraft() {
+            if (!pendingDraft) return;
+            var code = pendingDraft.code;
+            hideDraftBanner();
+            setEditorValue(code);
+            // Mark the just-loaded draft as "saved" so the next
+            // auto-save won't redundantly re-write identical bytes.
+            lastSavedDraft = code;
+            updateDraftStatus('已恢复本机草稿（' + formatBytes(code.length) + '）');
+            updateSavedIndicator(pendingDraft.savedAt);
+            // Reveal the "查看草稿" button so the user can re-show
+            // the banner later if they want to re-evaluate.
+            var showBtn = $('show-draft-btn');
+            if (showBtn) showBtn.hidden = false;
+        }
+        function onDiscardDraft() {
+            if (!state.slug) return;
+            clearDraft(state.slug, state.lang);
+            hideDraftBanner();
+            updateSavedIndicator(null);
+            updateDraftStatus('已放弃本机草稿');
+            var showBtn = $('show-draft-btn');
+            if (showBtn) showBtn.hidden = true;
+        }
+
         function startDraftAutoSave(slug, lang) {
             onEditorChange(function () {
                 if (draftTimer) clearTimeout(draftTimer);
                 draftTimer = setTimeout(function () {
                     var code = getEditorValue();
+                    // Skip no-op writes (default template, or any
+                    // value byte-equal to what we last wrote).
                     if (code === lastSavedDraft) return;
-                    saveDraft(slug, lang, code);
+                    // Skip "empty" drafts — there's no point saving
+                    // a fresh empty editor.
+                    if (!code || !code.trim()) return;
+                    var ok = saveDraft(slug, lang, code);
+                    if (!ok) return;
                     lastSavedDraft = code;
-                    updateDraftStatus('草稿已自动保存 · ' + new Date().toLocaleTimeString());
+                    updateSavedIndicator(Date.now());
+                    updateDraftStatus('草稿已自动保存 · ' + formatSavedAt(Date.now()));
+                    // The user is now actively editing past the
+                    // banner's "pending" offer — drop it.
+                    if (pendingDraft) hideDraftBanner();
                 }, DRAFT_SAVE_DEBOUNCE);
             });
         }
@@ -702,16 +923,31 @@
                         return;
                     }
                     renderProblem(state.problem);
-                    // Initialize editor with the draft (if any) or the
-                    // default template, then wire up auto-save.
+                    // Initialize editor with the DEFAULT template, NOT
+                    // a saved draft. SPEC §11 "刷新提示恢复" requires an
+                    // explicit user gesture (Restore / Discard) before
+                    // any draft touches the editor — a silent auto-
+                    // restore would race with the first keystroke and
+                    // look like the page lost their work.
                     var lang = $('lang-select').value || 'cpp';
                     state.lang = lang;
-                    var draft = loadDraft(slug, lang);
-                    var initial = draft || DEFAULT_TEMPLATES[lang];
-                    lastSavedDraft = initial;
+                    var initial = DEFAULT_TEMPLATES[lang] || '';
+                    lastSavedDraft = '';
                     setEditorValue(initial);
                     startDraftAutoSave(slug, lang);
-                    updateDraftStatus(draft ? '已恢复本机草稿' : '');
+                    // If a draft exists in localStorage, surface the
+                    // banner so the user can Restore / Discard. The
+                    // banner is the only place the draft is shown;
+                    // the editor stays at the default template.
+                    var draft = loadDraft(slug, lang);
+                    if (draft && draft.code && draft.code !== initial) {
+                        showDraftBanner(draft);
+                        updateDraftStatus('已发现本地草稿，请选择恢复或放弃');
+                    } else {
+                        hideDraftBanner();
+                        updateSavedIndicator(null);
+                        updateDraftStatus('');
+                    }
                     // Default page title.
                     document.title = (state.problem.title || '题目') + ' · LiteCode';
                     showState('problem-pane');
@@ -749,18 +985,34 @@
                 var prev = state.lang;
                 var next = $('lang-select').value;
                 if (next === prev) return;
-                // Persist current editor into prev's draft
+                // Persist current editor into prev's draft (skip when
+                // the editor still shows the default template for prev;
+                // we don't want to write a no-op envelope).
                 if (state.slug) {
-                    saveDraft(state.slug, prev, getEditorValue());
+                    var cur = getEditorValue();
+                    var tplPrev = DEFAULT_TEMPLATES[prev] || '';
+                    if (cur && cur !== tplPrev) {
+                        saveDraft(state.slug, prev, cur);
+                    }
                 }
                 state.lang = next;
-                var draft = loadDraft(state.slug, next) || DEFAULT_TEMPLATES[next];
-                lastSavedDraft = draft;
-                setEditorValue(draft);
+                var tplNext = DEFAULT_TEMPLATES[next] || '';
+                var nextDraft = loadDraft(state.slug, next);
+                if (nextDraft && nextDraft.code && nextDraft.code !== tplNext) {
+                    setEditorValue(tplNext);
+                    lastSavedDraft = '';
+                    showDraftBanner(nextDraft);
+                    updateDraftStatus('已切换语言 · 已发现 ' + LANG_LABEL[next] + ' 草稿');
+                } else {
+                    setEditorValue(tplNext);
+                    lastSavedDraft = '';
+                    hideDraftBanner();
+                    updateSavedIndicator(null);
+                    updateDraftStatus('已切换语言');
+                }
                 if (editor.cm) {
                     editor.cm.setOption('mode', LANG_MODE[next] || LANG_MODE.cpp);
                 }
-                updateDraftStatus(draft ? '已切换语言并恢复草稿' : '已切换语言');
             });
 
             // Reset code: overwrite editor + draft with default template.
@@ -771,8 +1023,14 @@
                 }
                 var tpl = DEFAULT_TEMPLATES[state.lang] || '';
                 setEditorValue(tpl);
+                // Overwrite the draft with the default template so a
+                // future refresh doesn't re-prompt with this "stale"
+                // draft. lastSavedDraft is set so the next auto-save
+                // is a no-op.
                 saveDraft(state.slug, state.lang, tpl);
                 lastSavedDraft = tpl;
+                updateSavedIndicator(Date.now());
+                hideDraftBanner();
                 updateDraftStatus('已重置为默认模板');
             });
 
@@ -782,8 +1040,17 @@
                 if (!state.slug) return;
                 clearDraft(state.slug, state.lang);
                 lastSavedDraft = '';
+                updateSavedIndicator(null);
+                hideDraftBanner();
                 updateDraftStatus('草稿已清除（编辑器内容保留）');
+                var showBtn = $('show-draft-btn');
+                if (showBtn) showBtn.hidden = true;
             });
+
+            // Banner actions — explicit Restore / Discard / 查看草稿
+            $('draft-restore-btn').addEventListener('click', onRestoreDraft);
+            $('draft-discard-btn').addEventListener('click', onDiscardDraft);
+            $('show-draft-btn').addEventListener('click', onShowDraft);
 
             // Submit
             $('submit-btn').addEventListener('click', submit);

@@ -1457,3 +1457,105 @@ html.dark .lc-editor-shell .CodeMirror-activeline-background {
         max-height: none;
     }
 }
+
+/* =====================================================================
+   13. Draft persistence UI (Phase 5 ★ 编辑器草稿持久化)
+   ---------------------------------------------------------------------
+   SPEC §11 "刷新提示恢复" — every page load surfaces a Restore /
+   Discard banner when a draft exists in localStorage. The banner is
+   the ONLY way a stored draft reaches the editor; the auto-save
+   pipeline writes changes but never silently overwrites a banner
+   that's still pending.
+
+   `.lc-draft-banner`     Yellow/info banner above the editor with
+                          "发现本地草稿", timestamp, byte count, and
+                          Restore / Discard buttons.
+   `.lc-saved-indicator`  Persistent chip below the editor showing
+                          "已自动保存 · HH:MM:SS" after the first save
+                          fires. A small "查看草稿" button re-opens
+                          the banner if a draft is still in storage.
+   ===================================================================== */
+
+.lc-draft-banner {
+    display: flex;
+    align-items: center;
+    gap: var(--lc-space-3);
+    padding: var(--lc-space-3) var(--lc-space-4);
+    margin-top: var(--lc-space-2);
+    background: rgba(245, 158, 11, 0.10);   /* warn-tinged tint */
+    border: 1px solid rgba(245, 158, 11, 0.45);
+    border-left: 4px solid var(--lc-color-warning);
+    border-radius: var(--lc-radius-md);
+    color: var(--lc-color-text);
+}
+html.dark .lc-draft-banner {
+    background: rgba(251, 191, 36, 0.10);
+    border-color: rgba(251, 191, 36, 0.45);
+}
+
+.lc-draft-banner__icon {
+    font-size: 22px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+.lc-draft-banner__body {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.lc-draft-banner__title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--lc-color-text);
+}
+.lc-draft-banner__body .lc-form-help {
+    margin: 0;
+    color: var(--lc-color-text-2);
+}
+.lc-draft-banner__actions {
+    display: inline-flex;
+    gap: var(--lc-space-2);
+    flex-shrink: 0;
+}
+
+/* Saved indicator — small inline status chip below the editor. */
+.lc-saved-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px 4px 6px;
+    background: var(--lc-color-surface-2);
+    border: 1px solid var(--lc-color-border);
+    border-radius: 999px;
+    font-size: 12px;
+    color: var(--lc-color-text-2);
+    align-self: flex-start;
+    /* Sit just above the submit row; small enough not to push the
+       submit button down on tall viewports. */
+    margin-top: var(--lc-space-1);
+}
+.lc-saved-indicator__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--lc-color-success);
+    box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.18);
+    flex-shrink: 0;
+}
+.lc-saved-indicator .lc-btn {
+    padding: 2px 8px;
+    font-size: 11px;
+}
+
+@media (max-width: 600px) {
+    .lc-draft-banner {
+        flex-wrap: wrap;
+    }
+    .lc-draft-banner__actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+}
