@@ -1767,3 +1767,218 @@ html.dark .lc-gauge--danger {
     font-size: 13px;
     line-height: 1.6;
 }
+
+/* =====================================================================
+   15. Tabs + submission history pane (Phase 5 ★ 提交历史标签页)
+   ---------------------------------------------------------------------
+   v1.2.29 落地 problem.html 下方的"提交历史" tab 面板：
+   - 顶 tab strip 用 2 个 role=tab 按钮（题目 / 提交历史）
+   - 提交历史面板用 .lc-tab-panel 通用容器 + .lc-history-pane 专用
+   - 状态过滤 12 段（11 status + 全部）复用 v1.2.24 的 .lc-seg
+   - 列表行 5 块结构（status badge / id / lang / time / metrics）
+   - 分页器复用 v1.2.24 的 .lc-pagination 7 页紧凑窗口
+   - 折叠详情面板走 v1.2.27 既有 details 样式（pre 限高 + 等宽）
+   ===================================================================== */
+
+.lc-tabs {
+    display: flex;
+    gap: var(--lc-space-1);
+    border-bottom: 1px solid var(--lc-color-border);
+    margin-bottom: var(--lc-space-4);
+    /* The strip itself doesn't scroll horizontally on narrow
+       viewports — the two-tab layout is intentionally narrow. */
+}
+.lc-tab {
+    /* Reset button defaults so the strip looks like a nav. */
+    background: transparent;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    color: var(--lc-color-text-2);
+    cursor: pointer;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    padding: 10px 16px;
+    margin-bottom: -1px;     /* overlap the strip's border */
+    border-radius: 0;
+    transition: color 120ms ease, border-color 120ms ease;
+}
+.lc-tab:hover {
+    color: var(--lc-color-text-1);
+}
+.lc-tab[aria-selected="true"] {
+    color: var(--lc-color-text-1);
+    border-bottom-color: var(--lc-color-info);
+    font-weight: 600;
+}
+.lc-tab:focus-visible {
+    outline: 2px solid var(--lc-color-focus-ring, rgba(2, 132, 199, 0.45));
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+.lc-tab__count {
+    /* Tab badge — "提交历史 12" shows the row total when known. */
+    color: var(--lc-color-text-2);
+    font-size: 12px;
+    font-weight: 400;
+    margin-left: 4px;
+}
+
+.lc-tab-panel {
+    margin-top: var(--lc-space-3);
+}
+
+/* History pane — sits below the two-column layout. */
+.lc-history-pane {
+    border-top: 1px solid var(--lc-color-border);
+    padding-top: var(--lc-space-4);
+}
+.lc-history-pane__header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--lc-space-2);
+    margin-bottom: var(--lc-space-3);
+}
+.lc-history-pane__title {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--lc-color-text-1);
+}
+
+.lc-history-pane__body {
+    min-height: 80px;
+    position: relative;
+}
+
+/* The history list — each <li> gets a left color stripe matching
+   the row's status so a user can scan many rows vertically and
+   see "all WA" / "all TLE" without reading the badge. */
+.lc-history-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--lc-space-2);
+}
+.lc-history-row {
+    background: var(--lc-color-surface-1);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-md);
+    padding: var(--lc-space-3) var(--lc-space-4);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    /* The status-driven left stripe — `border-left-color` is set
+       inline by the row's render to match its .lc-status--*
+       palette. Default neutral border on the left for rows that
+       don't override. */
+    border-left: 4px solid var(--lc-color-border);
+    transition: border-color 120ms ease, transform 120ms ease;
+}
+.lc-history-row:hover {
+    border-color: var(--lc-color-info);
+}
+.lc-history-row__top {
+    display: flex;
+    align-items: center;
+    gap: var(--lc-space-2);
+    flex-wrap: wrap;
+}
+.lc-history-row__eyebrow {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--lc-color-text-2);
+}
+.lc-history-row__eyebrow--ac {
+    color: var(--lc-color-success);
+}
+.lc-history-row__id {
+    font-family: var(--lc-font-mono, ui-monospace, SFMono-Regular, monospace);
+    font-size: 12px;
+    color: var(--lc-color-text-2);
+}
+.lc-history-row__lang {
+    font-size: 12px;
+    color: var(--lc-color-text-2);
+    padding: 1px 6px;
+    border: 1px solid var(--lc-color-border);
+    border-radius: 4px;
+}
+.lc-history-row__time {
+    font-size: 12px;
+    color: var(--lc-color-text-2);
+    margin-left: auto;
+}
+.lc-history-row__metrics {
+    display: flex;
+    gap: var(--lc-space-3);
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--lc-color-text-1);
+}
+.lc-history-row__metric--muted {
+    color: var(--lc-color-text-2);
+}
+.lc-history-row__details {
+    margin-top: 4px;
+}
+.lc-history-row__details > summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--lc-color-text-2);
+    list-style: none;
+    user-select: none;
+}
+.lc-history-row__details > summary::before {
+    content: '▸ ';
+    display: inline-block;
+    transition: transform 120ms ease;
+}
+.lc-history-row__details[open] > summary::before {
+    content: '▾ ';
+}
+.lc-history-row__details-body {
+    /* Match the v1.2.27 .lc-result-panel details panel — same
+       pre styling for compile error / runtime stderr verbatim. */
+    background: var(--lc-color-surface-2);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-sm, 4px);
+    padding: var(--lc-space-2) var(--lc-space-3);
+    margin: 6px 0 0;
+    font-family: var(--lc-font-mono, ui-monospace, SFMono-Regular, monospace);
+    font-size: 12px;
+    line-height: 1.5;
+    max-height: 200px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--lc-color-text-1);
+}
+
+/* Color the left stripe by status — the JS sets the matching
+   class so a row reads as "AC passes" / "TLE" etc at a glance. */
+.lc-history-row--ac  { border-left-color: var(--lc-color-success); }
+.lc-history-row--wa  { border-left-color: var(--lc-color-danger); }
+.lc-history-row--tle { border-left-color: var(--lc-color-warning); }
+.lc-history-row--mle { border-left-color: var(--lc-color-warning); }
+.lc-history-row--re  { border-left-color: var(--lc-color-danger); }
+.lc-history-row--ole { border-left-color: var(--lc-color-warning); }
+.lc-history-row--pe  { border-left-color: var(--lc-color-warning); }
+.lc-history-row--ce  { border-left-color: var(--lc-color-text-2); }
+.lc-history-row--se  { border-left-color: var(--lc-color-danger); }
+.lc-history-row--pending,
+.lc-history-row--running { border-left-color: var(--lc-color-info); }
+
+@media (max-width: 600px) {
+    .lc-history-row__time {
+        margin-left: 0;
+        width: 100%;
+    }
+    .lc-history-row__metrics {
+        gap: var(--lc-space-2);
+    }
+}

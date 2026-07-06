@@ -49,6 +49,31 @@
         </div>
 
         <!--
+          Phase 5 ★ 提交历史标签页 (v1.2.29) — two-tab strip at the
+          top of the problem page. The default tab is "题目" (the
+          existing two-column layout); the second tab is "提交历史",
+          which lives BELOW the two-column section (per SPEC §6.2's
+          ASCII layout). The tabs are role=tablist / aria-selected
+          for screen-reader navigation, and keyboard-tabbable.
+
+          Tab-state is URL-hash backed (`#history` jumps directly
+          into the history view) so deep links survive a page
+          refresh — same UX the result-panel anchor
+          (`#submission-<id>`) already provides.
+        -->
+        <div id="tab-strip" class="lc-tabs" role="tablist"
+             aria-label="问题视图" hidden>
+            <button type="button" class="lc-tab" role="tab" id="tab-problem-btn"
+                    data-target="problem-pane" aria-controls="problem-pane"
+                    aria-selected="true" tabindex="0">题目</button>
+            <button type="button" class="lc-tab" role="tab" id="tab-history-btn"
+                    data-target="history-pane" aria-controls="history-pane"
+                    aria-selected="false" tabindex="-1">
+                提交历史 <span class="lc-tab__count" id="history-tab-count"></span>
+            </button>
+        </div>
+
+        <!--
           Two-column problem + editor layout (LeetCode-style).
 
           Left column  : 题目描述 / 样例 / 标签 / 通过率
@@ -259,6 +284,105 @@
                 </section>
             </aside>
         </div>
+
+        <!--
+          Phase 5 ★ 提交历史标签页 (v1.2.29)
+
+          Lives BELOW the two-column problem+editor section (per
+          SPEC §6.2 ASCII layout). Hidden by default — the tab
+          strip above flips `hidden` to bring it into view.
+
+          Wires:
+            - status filter chips (11 statuses + "全部" = 12 segments)
+            - paginated list of submission rows (default 20/page, 5 pages)
+            - per-row collapse: status badge / language / time / memory
+              / timestamps / error_message (CE/RE failure details)
+            - empty / loading / error states
+            - "刷新" button forces a refetch
+
+          Calls:
+            - GET /api/v1/submissions?problem_id=<id>&status=<s>&limit=&offset=
+            - GET /api/v1/submissions/:id (only on demand — when the
+              user expands a row, we re-fetch to surface `code`)
+
+          The endpoint already returns code-less rows (list shape per
+          src/routes/submission_routes.h:956-961). The detail fetch
+          adds the source so a user can copy their old attempt.
+
+          All user-supplied data goes through `textContent` /
+          `setAttribute` (no `innerHTML` / `eval`) — same XSS
+          contract v1.2.20's DOMPurify + v1.2.24's escapeText
+          established.
+        -->
+        <section id="history-pane" class="lc-tab-panel lc-history-pane" hidden
+                 aria-label="提交历史" role="tabpanel"
+                 aria-labelledby="tab-history-btn">
+            <header class="lc-history-pane__header">
+                <h2 class="lc-history-pane__title">我的提交历史</h2>
+                <p class="lc-form-help" id="history-summary">—</p>
+            </header>
+
+            <!-- Status filter chips. The "全部" chip is the default;
+                the 11 status chips are clickable to scope the
+                list. The active chip gets a colored border. -->
+            <div class="lc-seg" id="history-filter" role="tablist"
+                 aria-label="按状态过滤">
+                <button type="button" class="lc-seg__btn lc-seg__btn--active"
+                        data-status="" aria-selected="true">全部</button>
+                <button type="button" class="lc-seg__btn"
+                        data-status="ac" aria-selected="false">AC</button>
+                <button type="button" class="lc-seg__btn"
+                        data-status="wa" aria-selected="false">WA</button>
+                <button type="button" class="lc-seg__btn"
+                        data-status="tle" aria-selected="false">TLE</button>
+                <button type="button" class="lc-seg__btn"
+                        data-status="mle" aria-selected="false">MLE</button>
+                <button type="button" class="lc-seg__btn"
+                        data-status="re" aria-selected="false">RE</button>
+                <button type="button" class="lc-seg__btn"
+                        data-status="ole" aria-selected="false">OLE</button>
+                <button type="button" class="lc-seg__btn"
+                        data-status="pe" aria-selected="false">PE</button>
+                <button type="button" class="lc-seg__btn"
+                        data-status="ce" aria-selected="false">CE</button>
+                <button type="button" class="lc-seg__btn"
+                        data-status="se" aria-selected="false">SE</button>
+            </div>
+
+            <!-- List body: 5 mutually-exclusive states (loading /
+                 error / empty / list / pagination). The list itself
+                 is rendered by JS — the container is just a host. -->
+            <div class="lc-history-pane__body">
+                <div id="history-loading" class="lc-loading" hidden
+                     aria-live="polite">
+                    <span class="lc-spinner" aria-hidden="true"></span>
+                    <span>加载提交历史…</span>
+                </div>
+
+                <div id="history-error" class="lc-error" hidden
+                     role="alert">
+                    <p class="lc-error__title">加载失败</p>
+                    <p class="lc-form-help" id="history-error-message">—</p>
+                    <button type="button"
+                            class="lc-btn lc-btn--primary lc-btn--sm"
+                            id="history-retry-btn">重试</button>
+                </div>
+
+                <div id="history-empty" class="lc-empty" hidden>
+                    <p class="lc-empty__title">还没有提交记录</p>
+                    <p class="lc-form-help" id="history-empty-hint">
+                        提交一次代码后会在这里看到结果。
+                    </p>
+                </div>
+
+                <ol id="history-list" class="lc-history-list"
+                    aria-label="提交记录"></ol>
+            </div>
+
+            <!-- Pagination footer. Hidden when total ≤ limit. -->
+            <nav id="history-pagination" class="lc-pagination"
+                 aria-label="分页" hidden></nav>
+        </section>
     </main>
 
     <!--
@@ -1147,6 +1271,25 @@
             } else {
                 updateDraftStatus('判题完成 · 草稿已保留，可继续修改');
             }
+            // The just-finished submission belongs at the top of
+            // the user's history list. If the history tab is
+            // currently in view (or has been loaded before), kick
+            // a re-fetch so the row appears without a manual
+            // refresh. We always go back to page 0 / clear the
+            // status filter so the new row isn't hidden behind a
+            // "只看 WA" chip from earlier.
+            if (tabHistoryState.loaded) {
+                tabHistoryState.page = 0;
+                tabHistoryState.status = '';
+                tabHistorySetFilterChips('');
+                tabHistoryLoad();
+            } else {
+                // First time the user submits; if they switch to
+                // the history tab later, the load handler will
+                // fire. We just update the "未读" hint by clearing
+                // the loaded flag so tabShow knows to fetch.
+                tabHistoryState.loaded = false;
+            }
         }
 
         // pollResult — legacy 1.5s polling fallback. Used when:
@@ -1417,6 +1560,15 @@
                     }
                     // Default page title.
                     document.title = (state.problem.title || '题目') + ' · LiteCode';
+                    // Reveal the tab strip now that we have a real
+                    // problem to show + history to query against.
+                    var strip = $('tab-strip');
+                    if (strip) strip.hidden = false;
+                    // If the URL was `…#history`, jump straight to
+                    // the history tab now that data is ready.
+                    if (initialHash && initialHash.open) {
+                        tabShow('history');
+                    }
                     showState('problem-pane');
                 })
                 .catch(function (err) {
@@ -1429,6 +1581,423 @@
                         showState('error-state');
                     }
                 });
+        }
+
+        // ── Submission history (Phase 5 ★ 提交历史标签页) ──────────
+        //
+        //  Two-tab model: "题目" (the two-column layout above) +
+        //  "提交历史" (this section). Both tabs share the same
+        //  litecode.api.* surface and a unified state machine.
+        //
+        //  Data flow
+        //  ---------
+        //    tabHistoryLoad() →
+        //      GET /api/v1/submissions?problem_id=<id>&status=<s>&limit=20&offset=<N>
+        //      → { items: [...], total, limit, offset }
+        //      → tabHistoryRenderList()
+        //
+        //    tabHistoryExpandDetail(row) →
+        //      GET /api/v1/submissions/:id (adds `code` field)
+        //      → swap the row's details panel with code+error
+        //
+        //  Tab state lives in tabHistoryState { status, page, loaded }
+        //  and is reflected in the URL hash (`#history` / `#history&status=ac&page=2`)
+        //  so deep links survive a refresh.
+        //
+        //  Resilience
+        //  ----------
+        //    - 401 → forceSignOut via api.js global handler (user gets bounced
+        //      to /login.html automatically)
+        //    - 5xx / network → surface in the panel + retry button
+        //    - empty filter result → empty state (not error)
+        //    - after a NEW submission lands (handleTerminalRow), we
+        //      re-fetch the history so the new row shows up at the top
+        //      without a manual refresh
+
+        var HISTORY_PAGE_SIZE = 20;
+        var tabHistoryState = {
+            status: '',        // '' = 全部; otherwise one of the 11 status codes
+            page:   0,         // 0-indexed
+            loaded: false,     // has the user ever visited the tab?
+        };
+        var historyInflight = 0;   // monotonic token to drop stale fetches
+
+        // Build the { problem_id, limit, offset, status? } filter
+        // object that maps 1:1 to the
+        // /api/v1/submissions query string. Accepts optional
+        // state / tab-state overrides so the unit-test harness
+        // (web/test/history.test.js) can drive the function
+        // without touching the live `state` and `tabHistoryState`
+        // closures. Production callers pass no arguments.
+        function tabHistoryBuildParams(_stateOverride, _tabOverride) {
+            var s = _stateOverride || state;
+            var t = _tabOverride   || tabHistoryState;
+            var p = {
+                problem_id: s.problem ? s.problem.id : '',
+                limit:      HISTORY_PAGE_SIZE,
+                offset:     t.page * HISTORY_PAGE_SIZE,
+            };
+            if (t.status) p.status = t.status;
+            return p;
+        }
+
+        function tabHistoryBuildQuery(_stateOverride, _tabOverride) {
+            var parts = [];
+            var p = tabHistoryBuildParams(_stateOverride, _tabOverride);
+            Object.keys(p).forEach(function (k) {
+                if (p[k] === '' || p[k] == null) return;
+                parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(p[k]));
+            });
+            return parts.length ? '?' + parts.join('&') : '';
+        }
+
+        // tabHistoryShowState — flip the 4 mutually-exclusive body
+        // blocks (loading / error / empty / list). The list itself
+        // stays in the DOM and is re-rendered in place; we just hide
+        // or show the wrapping slots.
+        function tabHistoryShowState(name) {
+            ['history-loading', 'history-error', 'history-empty'].forEach(function (id) {
+                $(id).hidden = true;
+            });
+            var list = $('history-list');
+            if (name === 'list') {
+                list.hidden = false;
+                return;
+            }
+            list.hidden = true;
+            while (list.firstChild) list.removeChild(list.firstChild);
+            if (name) $(name).hidden = false;
+        }
+
+        // tabHistorySetFilterChips — visual lockstep between the
+        // "全部 / AC / WA / …" seg-buttons and tabHistoryState.status.
+        function tabHistorySetFilterChips(status) {
+            var btns = document.querySelectorAll('#history-filter .lc-seg__btn');
+            for (var i = 0; i < btns.length; i++) {
+                var b = btns[i];
+                var isActive = (b.getAttribute('data-status') || '') === (status || '');
+                b.classList.toggle('lc-seg__btn--active', isActive);
+                b.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            }
+        }
+
+        // tabHistoryFormatTime — convert a server ISO-ish timestamp
+        // ("2026-07-06 12:34:56") into a friendly relative string
+        // matching the same vocabulary the saved-indicator uses
+        // (v1.2.26: 刚刚 / N 分钟前 / N 小时前 / absolute date).
+        function tabHistoryFormatTime(s) {
+            if (!s) return '—';
+            // Server format is "YYYY-MM-DD HH:MM:SS" (local time, no
+            // timezone). We parse it explicitly so we don't depend
+            // on Date's locale-dependent parser.
+            var m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+            if (!m) return String(s);
+            var ts = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+            var now = Date.now();
+            var diff = now - ts;
+            if (diff < 60 * 1000)         return '刚刚';
+            if (diff < 60 * 60 * 1000)    return Math.floor(diff / 60000) + ' 分钟前';
+            if (diff < 24 * 60 * 60 * 1000) return Math.floor(diff / 3600000) + ' 小时前';
+            return m[1] + '-' + m[2] + '-' + m[3] + ' ' + m[4] + ':' + m[5];
+        }
+
+        // tabHistoryRowNode — build one <li> for a single submission
+        // row. Pure DOM construction (no innerHTML, no eval) so a
+        // hostile server-side error_message can never reach the
+        // page as HTML. The returned node is appended by the caller.
+        function tabHistoryRowNode(row) {
+            var status = row.status || 'pending';
+            var li = el('li', {
+                class: 'lc-history-row lc-history-row--' + status,
+            });
+            li.dataset.id = String(row.id);
+
+            // Top row: status badge + submission id + language +
+            // timestamps. The whole row is a flex container; the
+            // status badge gets a left color stripe.
+            var top = el('div', { class: 'lc-history-row__top' });
+
+            var badge = el('span', {
+                class: 'lc-status lc-status--' + status,
+                text: STATUS_LABEL[status] || status,
+            });
+            top.appendChild(badge);
+
+            // AC row → soft "✓ 通过" eyebrow; failure rows stay neutral.
+            if (status === 'ac') {
+                top.appendChild(el('span', {
+                    class: 'lc-history-row__eyebrow lc-history-row__eyebrow--ac',
+                    text: '通过',
+                }));
+            } else if (status === 'pending' || status === 'running') {
+                top.appendChild(el('span', {
+                    class: 'lc-history-row__eyebrow',
+                    text: '判题中…',
+                }));
+            }
+
+            top.appendChild(el('span', {
+                class: 'lc-history-row__id',
+                text: '#' + row.id,
+            }));
+            top.appendChild(el('span', {
+                class: 'lc-history-row__lang',
+                text: row.language === 'cpp' ? 'C++'
+                    : row.language === 'c' ? 'C'
+                    : (row.language || '?'),
+            }));
+
+            // Right-aligned: timestamps (relative + absolute on hover).
+            var ts = el('span', {
+                class: 'lc-history-row__time',
+                text: tabHistoryFormatTime(row.created_at),
+                title: row.created_at || '',
+            });
+            top.appendChild(ts);
+
+            li.appendChild(top);
+
+            // Metrics row: time / memory / finished_at. Only emit
+            // elements that have a value — unfinished rows leave
+            // the metrics blank.
+            var metrics = el('div', { class: 'lc-history-row__metrics' });
+            if (row.time_used != null) {
+                metrics.appendChild(el('span', {
+                    class: 'lc-history-row__metric',
+                    text: '耗时 ' + row.time_used + ' ms',
+                }));
+            }
+            if (row.memory_used != null) {
+                metrics.appendChild(el('span', {
+                    class: 'lc-history-row__metric',
+                    text: '内存 ' + Math.round(row.memory_used / 1024) + ' MB',
+                }));
+            }
+            if (row.finished_at) {
+                metrics.appendChild(el('span', {
+                    class: 'lc-history-row__metric lc-history-row__metric--muted',
+                    text: '完成于 ' + tabHistoryFormatTime(row.finished_at),
+                    title: row.finished_at,
+                }));
+            }
+            li.appendChild(metrics);
+
+            // Expandable details: error_message verbatim. AC rows
+            // skip the panel; failure rows get a click-to-expand
+            // <details> with the error in a <pre> so very long
+            // compile output doesn't break the layout.
+            if (row.error_message && status !== 'ac') {
+                var det = el('details', { class: 'lc-history-row__details' });
+                det.appendChild(el('summary', {
+                    class: 'lc-form-help',
+                    text: '查看错误输出',
+                }));
+                det.appendChild(el('pre', {
+                    class: 'lc-history-row__details-body',
+                    text: row.error_message,
+                }));
+                li.appendChild(det);
+            }
+
+            return li;
+        }
+
+        // tabHistoryRenderPagination — paginator footer. Mirrors
+        // v1.2.24's index.html page-button styling so the user
+            // sees the same control vocabulary across the SPA.
+        function tabHistoryRenderPagination(total) {
+            var nav = $('history-pagination');
+            var totalPages = Math.max(1, Math.ceil(total / HISTORY_PAGE_SIZE));
+            if (totalPages <= 1) { nav.hidden = true; return; }
+            nav.hidden = false;
+            while (nav.firstChild) nav.removeChild(nav.firstChild);
+            function pageBtn(label, page, opts) {
+                opts = opts || {};
+                var btn = el('button', {
+                    type: 'button',
+                    class: 'lc-page-btn' + (opts.active ? ' lc-page-btn--active' : '')
+                        + (opts.disabled ? ' lc-page-btn--disabled' : ''),
+                    text: label,
+                });
+                if (opts.disabled) btn.disabled = true;
+                else btn.addEventListener('click', function () { tabHistoryGoToPage(page); });
+                if (opts.active) btn.setAttribute('aria-current', 'page');
+                return btn;
+            }
+            nav.appendChild(pageBtn('« 首页', 0, { disabled: tabHistoryState.page === 0 }));
+            nav.appendChild(pageBtn('‹ 上一页', tabHistoryState.page - 1, {
+                disabled: tabHistoryState.page === 0,
+            }));
+            // Page numbers — show all if ≤ 7, else compact window
+            // (1 … cur-1 cur cur+1 … tp) like v1.2.24.
+            var cur = tabHistoryState.page;
+            if (totalPages <= 7) {
+                for (var i = 0; i < totalPages; i++) {
+                    nav.appendChild(pageBtn(String(i + 1), i, { active: i === cur }));
+                }
+            } else {
+                nav.appendChild(pageBtn('1', 0, { active: cur === 0 }));
+                if (cur > 3) nav.appendChild(el('span', { class: 'lc-page-ellipsis', text: '…' }));
+                for (var j = Math.max(1, cur - 1); j <= Math.min(totalPages - 2, cur + 1); j++) {
+                    nav.appendChild(pageBtn(String(j + 1), j, { active: j === cur }));
+                }
+                if (cur < totalPages - 4) nav.appendChild(el('span', { class: 'lc-page-ellipsis', text: '…' }));
+                nav.appendChild(pageBtn(String(totalPages), totalPages - 1, {
+                    active: cur === totalPages - 1,
+                }));
+            }
+            nav.appendChild(pageBtn('下一页 ›', tabHistoryState.page + 1, {
+                disabled: tabHistoryState.page >= totalPages - 1,
+            }));
+            nav.appendChild(pageBtn('末页 »', totalPages - 1, {
+                disabled: tabHistoryState.page >= totalPages - 1,
+            }));
+        }
+
+        // tabHistoryRenderList — given a parsed response { items,
+        // total, limit, offset }, re-render the list body. Each
+        // row's status badge, time, memory, and (when present)
+        // error_message are written via textContent. No innerHTML
+        // anywhere in this function.
+        function tabHistoryRenderList(resp) {
+            var list = $('history-list');
+            while (list.firstChild) list.removeChild(list.firstChild);
+            var items = (resp && resp.items) || [];
+            if (!items.length) {
+                tabHistoryShowState('history-empty');
+                $('history-pagination').hidden = true;
+                $('history-summary').textContent = '共 0 条记录';
+                return;
+            }
+            tabHistoryShowState('list');
+            items.forEach(function (row) {
+                list.appendChild(tabHistoryRowNode(row));
+            });
+            var total = Number(resp.total) || items.length;
+            $('history-summary').textContent =
+                '共 ' + total + ' 条记录 · 第 ' + (tabHistoryState.page + 1) + ' / '
+                + Math.max(1, Math.ceil(total / HISTORY_PAGE_SIZE)) + ' 页';
+            tabHistoryRenderPagination(total);
+        }
+
+        // tabHistoryLoad — the only place that talks to the server.
+        // All other functions above are pure DOM/UI.
+        function tabHistoryLoad() {
+            if (!state.problem || !state.problem.id) return;
+            var myToken = ++historyInflight;
+            tabHistoryShowState('history-loading');
+            $('history-pagination').hidden = true;
+            litecode.api.get('/submissions' + tabHistoryBuildQuery(), { noRetryOn401: true })
+                .then(function (resp) {
+                    if (myToken !== historyInflight) return;   // a newer fetch took over
+                    var data = (resp && resp.data) || {};
+                    tabHistoryState.loaded = true;
+                    tabHistoryRenderList(data);
+                    // Show the total on the tab strip ("提交历史 12").
+                    var countEl = $('history-tab-count');
+                    if (countEl) {
+                        var total = Number(data.total) || 0;
+                        countEl.textContent = total > 0 ? ' ' + total : '';
+                    }
+                })
+                .catch(function (err) {
+                    if (myToken !== historyInflight) return;
+                    if (err && err.status === 401) {
+                        // Let api.js's forceSignOut handle the bounce
+                        // to /login.html — no need to render a local
+                        // error in the panel.
+                        tabHistoryShowState(null);
+                        return;
+                    }
+                    $('history-error-message').textContent = (err && err.message)
+                        ? err.message : '网络错误，请稍后重试';
+                    tabHistoryShowState('history-error');
+                });
+        }
+
+        function tabHistoryGoToPage(page) {
+            if (page < 0) return;
+            tabHistoryState.page = page;
+            tabHistorySyncHash();
+            tabHistoryLoad();
+        }
+        function tabHistorySetStatus(status) {
+            tabHistoryState.status = status || '';
+            tabHistoryState.page = 0;
+            tabHistorySetFilterChips(tabHistoryState.status);
+            tabHistorySyncHash();
+            tabHistoryLoad();
+        }
+
+        // tabHistorySyncHash — mirror the tab + filter + page to
+        // the URL hash so deep links survive a refresh. Shape:
+        //   #history                — open the history tab, default filter
+        //   #history&status=ac      — filter by AC
+        //   #history&status=ac&page=2 — filter + paginate
+        // Empty filters are omitted; the tab token alone signals
+        // "open the history view".
+        function tabHistorySyncHash() {
+            if (currentTab !== 'history') {
+                // Clear the hash if the user is back on the problem
+                // tab. Avoids leaving stale #history when navigating
+                // away to other pages.
+                if (window.location.hash &&
+                    window.location.hash.indexOf('history') !== -1) {
+                    history.replaceState(null, '', window.location.pathname + window.location.search);
+                }
+                return;
+            }
+            var parts = ['history'];
+            if (tabHistoryState.status) parts.push('status=' + tabHistoryState.status);
+            if (tabHistoryState.page > 0) parts.push('page=' + (tabHistoryState.page + 1));
+            history.replaceState(null, '',
+                window.location.pathname + window.location.search + '#' + parts.join('&'));
+        }
+
+        // tabHistoryParseHash — restore the tab + filter + page
+        // from the URL hash on initial load. Unknown tokens are
+        // ignored (defense against URL tampering).
+        function tabHistoryParseHash() {
+            var h = window.location.hash || '';
+            if (h.indexOf('history') === -1) return null;
+            var status = '';
+            var page = 0;
+            var m;
+            var re = /[?&](?:status|page)=([^&]+)/g;
+            while ((m = re.exec(h)) !== null) {
+                if (m[0].indexOf('status=') === 1) status = decodeURIComponent(m[1]);
+                else if (m[0].indexOf('page=') === 1) {
+                    var p = parseInt(m[1], 10);
+                    if (isFinite(p) && p > 0) page = p - 1;
+                }
+            }
+            return { open: true, status: status, page: page };
+        }
+
+        // currentTab — single source of truth for which view is
+        // visible. 'problem' (default) or 'history'.
+        var currentTab = 'problem';
+        function tabShow(name) {
+            currentTab = name;
+            var problemPane = $('problem-pane');
+            var historyPane = $('history-pane');
+            if (name === 'history') {
+                problemPane.hidden = true;
+                historyPane.hidden = false;
+                $('tab-problem-btn').setAttribute('aria-selected', 'false');
+                $('tab-problem-btn').setAttribute('tabindex', '-1');
+                $('tab-history-btn').setAttribute('aria-selected', 'true');
+                $('tab-history-btn').setAttribute('tabindex', '0');
+                if (!tabHistoryState.loaded) tabHistoryLoad();
+            } else {
+                problemPane.hidden = false;
+                historyPane.hidden = true;
+                $('tab-problem-btn').setAttribute('aria-selected', 'true');
+                $('tab-problem-btn').setAttribute('tabindex', '0');
+                $('tab-history-btn').setAttribute('aria-selected', 'false');
+                $('tab-history-btn').setAttribute('tabindex', '-1');
+            }
+            tabHistorySyncHash();
         }
 
         // ── Event wiring ───────────────────────────────────────────
@@ -1563,6 +2132,56 @@
                 if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
             });
 
+            // Tab strip — click + keyboard (Left/Right arrow)
+            // navigation between tabs, per ARIA tabs pattern.
+            var tabBtns = [
+                $('tab-problem-btn'),
+                $('tab-history-btn'),
+            ];
+            tabBtns.forEach(function (btn) {
+                if (!btn) return;
+                btn.addEventListener('click', function () {
+                    var target = btn.getAttribute('data-target') || 'problem-pane';
+                    tabShow(target === 'history-pane' ? 'history' : 'problem');
+                });
+                btn.addEventListener('keydown', function (e) {
+                    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+                    e.preventDefault();
+                    var idx = tabBtns.indexOf(btn);
+                    var next = (idx + (e.key === 'ArrowRight' ? 1 : -1) + tabBtns.length) % tabBtns.length;
+                    var n = tabBtns[next];
+                    if (n) { n.focus(); n.click(); }
+                });
+            });
+
+            // Status filter chips — clicking flips the active
+            // status, resets to page 0, and re-fetches.
+            var filterBtns = document.querySelectorAll('#history-filter .lc-seg__btn');
+            filterBtns.forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    var s = btn.getAttribute('data-status') || '';
+                    if (s === tabHistoryState.status) return;
+                    tabHistorySetStatus(s);
+                });
+            });
+
+            // Retry button on the error state.
+            var retryHistory = $('history-retry-btn');
+            if (retryHistory) retryHistory.addEventListener('click', function () { tabHistoryLoad(); });
+
+            // Hash → initial tab. If the URL is `…#history` or
+            // `…#history&status=ac&page=2`, jump straight into the
+            // history view with that filter+pagination restored.
+            var initialHash = tabHistoryParseHash();
+            if (initialHash && initialHash.open) {
+                tabHistoryState.status = initialHash.status || '';
+                tabHistoryState.page   = initialHash.page   || 0;
+                tabHistorySetFilterChips(tabHistoryState.status);
+                // showState is called inside tabShow; the tab switch
+                // ALSO triggers the first load when the panel
+                // becomes visible (loaded=false branch).
+            }
+
             // Load CodeMirror + problem detail. We run the editor
             // load in parallel with the problem fetch — the editor
             // can finish mounting before or after the data arrives
@@ -1574,6 +2193,28 @@
             });
             loadProblem();
         });
+
+        // ── Test surface ────────────────────────────────────────────
+        //  Phase 5 ★ 提交历史标签页 (v1.2.29) exposes a handful of
+        //  pure helpers (filter param construction, time formatting,
+        //  status label map) to a test sandbox so
+        //  `web/test/history.test.js` can drive them in Node without
+        //  spinning up a browser. The block is a no-op in production
+        //  because `__lcTest` is undefined at runtime — the IIFE
+        //  sees `typeof __lcTest === 'undefined'` and skips.
+        //  Mirrors v1.2.28's `_sseParseFrames` underscore-prefixed
+        //  export on `litecode.api`.
+        if (typeof __lcTest !== 'undefined') {
+            __lcTest.STATUS_LABEL              = STATUS_LABEL;
+            __lcTest.TERMINAL_STATUSES         = TERMINAL_STATUSES;
+            __lcTest.STATUS_ICON               = STATUS_ICON;
+            __lcTest.STATUS_HELP               = STATUS_HELP;
+            __lcTest.HISTORY_PAGE_SIZE         = HISTORY_PAGE_SIZE;
+            __lcTest.tabHistoryBuildParams     = tabHistoryBuildParams;
+            __lcTest.tabHistoryBuildQuery      = tabHistoryBuildQuery;
+            __lcTest.tabHistoryFormatTime      = tabHistoryFormatTime;
+            __lcTest.tabHistoryParseHash       = tabHistoryParseHash;
+        }
     })();
     </script>
 </body>
