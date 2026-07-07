@@ -2544,3 +2544,73 @@ html.dark .lc-pill--muted {
         grid-template-columns: 1fr;
     }
 }
+
+/* =====================================================================
+   18. Modal + JSON code block (Phase 5 ★ 管理后台 - 审计日志页面)
+   ---------------------------------------------------------------------
+   Used by the audit-log detail drawer. The drawer is a centred panel
+   over a dimmed backdrop; click on the backdrop or ESC closes it.
+   `aria-modal="false"` because we intentionally do NOT trap focus —
+   the audit table is the primary reading surface and we want the
+   admin to be able to skim rows while the drawer is open.
+
+   `.lc-code-block` is a generic pretty-printed JSON container (used
+   here for the payload; reusable for any future read-only JSON dump).
+   White-space is preserved verbatim so callers can pretty-print with
+   JSON.stringify(parsed, null, 2) and get a readable tree.
+   ===================================================================== */
+
+.lc-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--lc-space-4);
+}
+.lc-modal[hidden] { display: none; }
+
+.lc-modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+}
+html.dark .lc-modal__backdrop {
+    background: rgba(0, 0, 0, 0.6);
+}
+
+.lc-modal__panel {
+    position: relative;
+    z-index: 1;
+    width: min(720px, 100%);
+    max-height: calc(100vh - var(--lc-space-8));
+    overflow: auto;
+    background: var(--lc-color-surface);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-lg);
+    box-shadow: var(--lc-shadow-lg);
+    padding: var(--lc-space-5);
+}
+
+.lc-code-block {
+    margin: 0;
+    padding: var(--lc-space-3) var(--lc-space-4);
+    background: var(--lc-color-surface-2);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-md);
+    overflow-x: auto;
+    font-family: var(--lc-font-mono);
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--lc-color-text);
+    max-height: 360px;
+    overflow-y: auto;
+}
+.lc-code-block code {
+    font-family: inherit;
+    color: inherit;
+    background: transparent;
+    padding: 0;
+    white-space: pre;
+}

@@ -19,15 +19,280 @@
     <div data-nav></div>
 
     <main class="lc-container">
-        <header class="lc-stack" style="margin-bottom: 24px;">
-            <h1>审计日志（占位）</h1>
-            <p class="lc-form-help">
-                Phase 5 ★ 管理后台 - 审计日志页面将在后续 commit 落地；
-                本占位页只承载 CSP + SRI + 框架接入。后续内容会读取
-                <code>GET /api/v1/admin/audit-logs</code>。
-            </p>
+        <!--
+          Page header. Phase 5 ★ 管理后台 - 审计日志页面 — the
+          compliance-facing page that answers "what did admins do,
+          and when, and from where?" for the audit_logs table
+          (SPEC §4.2d / §15.6 / A17 / A18 / A20 / A27).
+
+          Three responsibilities live at the header:
+            1) Title + one-line summary ("X 条审计记录").
+            2) Manual "刷新" button — auto-refresh runs on a 30s
+               timer below (matches the dashboard's pause-on-hidden
+               pattern).
+            3) Auto-refresh chip ("实时" / "已暂停") so the admin
+               can see whether the polling loop is active.
+
+          API contract (Phase 6 ★ 审计日志 API):
+            GET /api/v1/admin/audit-logs
+                ?limit=N&offset=N
+                &admin_id=N           (optional, filter to one admin)
+                &action=str           (optional, e.g. "problem.delete")
+                &target_type=str      (optional, e.g. "problem")
+                &target_id=str        (optional, e.g. slug or user id)
+                &since=YYYY-MM-DD     (optional, created_at >= since)
+                &until=YYYY-MM-DD     (optional, created_at <  until)
+              → { data: { items: [AuditRow, ...], total, limit, offset } }
+            AuditRow = { id, admin_id?, action, target_type?, target_id?,
+                         payload?, ip?, created_at }
+
+          No write endpoints — audit_logs is append-only. The detail
+          drawer reads the row's full payload from the same response
+          (we already have it, no second round-trip needed).
+        -->
+        <header class="lc-row lc-row--between"
+                style="margin-bottom: var(--lc-space-5);">
+            <div class="lc-stack-sm">
+                <h1>审计日志</h1>
+                <p class="lc-form-help" id="header-summary">
+                    浏览管理员的关键操作记录（删题 / 改角色 / 批量导入 / 登录失败等）。
+                </p>
+            </div>
+            <div class="lc-row" style="gap: var(--lc-space-2);">
+                <span class="lc-sse-status"
+                      id="auto-refresh-chip"
+                      data-mode="polling"
+                      title="每 30 秒自动刷新；切到后台标签时自动暂停">
+                    <span class="lc-sse-status__dot lc-sse-status__dot--polling"
+                          aria-hidden="true"></span>
+                    <span id="auto-refresh-label">实时</span>
+                </span>
+                <button type="button" class="lc-btn"
+                        id="reload-btn"
+                        title="立即刷新一次">刷新</button>
+            </div>
         </header>
+
+        <!--
+          Filter card. Same model as /admin/users.html +
+          /admin/problems.html so admins get one consistent filter
+          vocabulary across the admin pages.
+
+          Fields:
+            - q          — client-side text filter over the current
+                          page. Searches action / target_id / ip /
+                          payload (stringified). Server-side filtering
+                          is by exact-match fields below; the search
+                          box is a fast "find within what I already
+                          have" affordance.
+            - action     — segmented control (全部 / 删题 / 改角色 /
+                          批量导入 / 登录失败 / 自定义). Action list
+                          mirrors audit_log_repo.h's constants; "自定义"
+                          reveals a text input for arbitrary action
+                          strings (forward-compat for new actions).
+            - target_type — segmented control (全部 / 题目 / 用户 /
+                          系统). Maps to the `target_type` column on
+                          the audit_logs table.
+            - since / until — optional date filters. The backend
+                          accepts 'YYYY-MM-DD HH:MM:SS' strings per
+                          audit_log_repo.h::validate_datetime(). For
+                          the input element we keep HTML5's 'date'
+                          which gives 'YYYY-MM-DD' — the backend
+                          treats a date as midnight on that day, so
+                          "since 2026-07-01" + "until 2026-07-07"
+                          reads as "rows from 2026-07-01 00:00:00
+                          (inclusive) through 2026-07-07 00:00:00
+                          (exclusive)" — the half-open interval the
+                          audit_log_repo.h filter uses.
+        -->
+        <section class="lc-card lc-problem-filters" aria-label="审计日志筛选">
+            <div class="lc-problem-filters__row">
+                <label class="lc-form-row lc-problem-filters__search"
+                       for="search-input">
+                    <span class="lc-form-label" for="search-input">搜索</span>
+                    <input type="search" id="search-input"
+                           class="lc-input"
+                           placeholder="按 action / target_id / ip / payload 内容"
+                           autocomplete="off"
+                           aria-describedby="search-help">
+                    <span id="search-help" class="lc-form-help">
+                        客户端即时筛选当前页内已加载的日志；切换筛选条件或翻页
+                        后会重新从后端拉取。10-100 条常见场景下几乎无感。
+                    </span>
+                </label>
+            </div>
+
+            <div class="lc-problem-filters__row"
+                 role="group" aria-label="操作类型筛选">
+                <span class="lc-form-label">操作类型</span>
+                <div class="lc-seg" id="action-seg" role="tablist">
+                    <button type="button" class="lc-seg__btn lc-seg__btn--active"
+                            data-action="" role="tab" aria-selected="true">全部</button>
+                    <button type="button" class="lc-seg__btn"
+                            data-action="problem.create" role="tab" aria-selected="false">新建题</button>
+                    <button type="button" class="lc-seg__btn"
+                            data-action="problem.update" role="tab" aria-selected="false">改题</button>
+                    <button type="button" class="lc-seg__btn"
+                            data-action="problem.delete" role="tab" aria-selected="false">删题</button>
+                    <button type="button" class="lc-seg__btn"
+                            data-action="problem.bulk_import" role="tab" aria-selected="false">批量导入</button>
+                    <button type="button" class="lc-seg__btn"
+                            data-action="user.role_change" role="tab" aria-selected="false">改角色</button>
+                    <button type="button" class="lc-seg__btn"
+                            data-action="auth.login_failure" role="tab" aria-selected="false">登录失败</button>
+                </div>
+            </div>
+
+            <div class="lc-problem-filters__row"
+                 role="group" aria-label="对象类型筛选">
+                <span class="lc-form-label">对象类型</span>
+                <div class="lc-seg" id="target-seg" role="tablist">
+                    <button type="button" class="lc-seg__btn lc-seg__btn--active"
+                            data-target="" role="tab" aria-selected="true">全部</button>
+                    <button type="button" class="lc-seg__btn"
+                            data-target="problem" role="tab" aria-selected="false">题目</button>
+                    <button type="button" class="lc-seg__btn"
+                            data-target="user" role="tab" aria-selected="false">用户</button>
+                    <button type="button" class="lc-seg__btn"
+                            data-target="system" role="tab" aria-selected="false">系统</button>
+                </div>
+            </div>
+
+            <div class="lc-problem-filters__row">
+                <label class="lc-form-row"
+                       style="flex: 1 1 220px; min-width: 0;">
+                    <span class="lc-form-label" for="since-input">起始日期</span>
+                    <input type="date" id="since-input"
+                           class="lc-input"
+                           autocomplete="off"
+                           aria-describedby="date-help">
+                </label>
+                <label class="lc-form-row"
+                       style="flex: 1 1 220px; min-width: 0;">
+                    <span class="lc-form-label" for="until-input">截止日期</span>
+                    <input type="date" id="until-input"
+                           class="lc-input"
+                           autocomplete="off"
+                           aria-describedby="date-help">
+                </label>
+            </div>
+
+            <div class="lc-problem-filters__row lc-row lc-row--between">
+                <span class="lc-form-help" id="filter-summary"
+                      aria-live="polite">共 0 条</span>
+                <button type="button" class="lc-btn lc-btn--ghost lc-btn--sm"
+                        id="reset-filters-btn">重置筛选</button>
+            </div>
+        </section>
+
+        <!--
+          Result table + states. Same vocabulary as /admin/users.html:
+            - .lc-admin-table (shared)
+            - .lc-empty / .lc-error / .lc-loading
+            - .lc-pagination
+            - "endpoint pending" 404 fallback (Phase 6 ★ API may
+              not be shipped yet — show a softer hint instead of a
+              red banner)
+        -->
+        <section class="lc-stack-lg" aria-label="审计日志列表">
+            <div class="lc-admin-table-wrap">
+                <table class="lc-admin-table" id="audit-table"
+                       aria-label="审计日志列表" hidden>
+                    <thead>
+                        <tr>
+                            <th scope="col">ID</th>
+                            <th scope="col">时间</th>
+                            <th scope="col">管理员</th>
+                            <th scope="col">操作</th>
+                            <th scope="col">对象</th>
+                            <th scope="col">IP</th>
+                            <th scope="col">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="audit-tbody"></tbody>
+                </table>
+            </div>
+
+            <div class="lc-empty" id="empty-state" hidden>
+                <p class="lc-empty__title">没有符合条件的审计记录</p>
+                <p class="lc-form-help">试试放宽筛选条件，或点击"刷新"。</p>
+            </div>
+
+            <div class="lc-error" id="error-state" hidden role="alert">
+                <p class="lc-error__title">加载失败</p>
+                <p class="lc-form-help" id="error-message"></p>
+                <button type="button" class="lc-btn lc-btn--primary lc-btn--sm"
+                        id="retry-btn">重试</button>
+            </div>
+
+            <!--
+              Phase 6 endpoint may not be shipped yet. When the
+              backend returns 404 (path NOT_FOUND), surface a soft
+              hint instead of a red banner so the admin knows the
+              page is wired and ready to use as soon as the API
+              lands.
+            -->
+            <div class="lc-empty" id="pending-state" hidden>
+                <p class="lc-empty__title">审计日志 API 尚未发布</p>
+                <p class="lc-form-help">
+                    Phase 6 ★ <code>GET /api/v1/admin/audit-logs</code> 仍在排期中。
+                    本页面在 API 就绪后可立即使用 — 数据契约已与后端对齐
+                    （items/total/limit/offset + admin_id/action/target_type/target_id/
+                    since/until 筛选）。写入侧（删题/改角色/批量导入）早已生效，
+                    查询侧落地后即可在此查阅历史。
+                </p>
+            </div>
+
+            <div class="lc-loading" id="loading-state" hidden
+                 aria-live="polite">
+                <span class="lc-spinner" aria-hidden="true"></span>
+                <span>加载中…</span>
+            </div>
+
+            <nav class="lc-pagination" id="pagination"
+                 aria-label="分页" hidden></nav>
+        </section>
     </main>
+
+    <!--
+      Detail drawer — inline (not a modal) so the admin can read the
+      payload alongside the table. Hidden until a row's "查看" button
+      is clicked. Closes on backdrop click, ESC, or the close button.
+
+      The payload is JSON text straight from the server (it round-
+      trips via CAST AS CHAR on the C++ side, so the JS gets a
+      string). We pretty-print it ourselves instead of innerHTML'ing
+      — defensive: even if a future payload field carries user input,
+      we treat it as opaque text. See renderPayload() below.
+    -->
+    <div class="lc-modal" id="detail-modal" hidden
+         role="dialog" aria-modal="false"
+         aria-labelledby="detail-title">
+        <div class="lc-modal__backdrop" data-act="close-modal"></div>
+        <div class="lc-modal__panel" role="document">
+            <header class="lc-row lc-row--between"
+                    style="margin-bottom: var(--lc-space-3);">
+                <h2 id="detail-title" style="margin: 0; font-size: 18px;">
+                    审计记录详情
+                </h2>
+                <button type="button" class="lc-btn lc-btn--ghost lc-btn--sm"
+                        data-act="close-modal"
+                        aria-label="关闭详情">关闭</button>
+            </header>
+            <div class="lc-stack-sm" id="detail-body">
+                <!-- Filled by JS. -->
+            </div>
+            <h3 class="lc-section-title" style="margin: var(--lc-space-4) 0 var(--lc-space-2);">
+                Payload
+            </h3>
+            <pre class="lc-code-block" id="detail-payload"><code>—</code></pre>
+            <p class="lc-form-help" id="detail-payload-help"
+               style="margin-top: var(--lc-space-2);">
+                完整原始 JSON（来自 <code>audit_logs.payload</code> 列）。
+                字段含义视具体 action 而定 — 见 SPEC §4.2d + 各写点路由。
+            </p>
+        </div>
+    </div>
 
     <!-- Load order is mandatory: csp.js → api.js → app.js. -->
     <script src="/js/csp.js" defer></script>
@@ -35,7 +300,859 @@
     <script src="/js/app.js" defer></script>
 
     <script>
-        litecode.boot.shell({ title: 'LiteCode · 审计日志', requireAdmin: true });
+    // ────────────────────────────────────────────────────────────────────
+    //  Admin Audit Logs Page (Phase 5 ★ 管理后台 - 审计日志页面)
+    //
+    //  Responsibilities:
+    //    1) Admin guard via litecode.boot.shell({ requireAdmin: true }).
+    //    2) Render four top-level states (loading / error / pending /
+    //       content). Same showState() pattern as the other admin
+    //       pages so the mental model stays consistent.
+    //    3) GET /api/v1/admin/audit-logs with the filter state held in
+    //       the URL (replaceState). Filters are applied server-side;
+    //       the search input is a current-page client filter so the
+    //       admin can find a known-bad row without re-issuing the
+    //       query.
+    //    4) Per-row "查看" button opens the detail drawer with the
+    //       full payload pretty-printed. The drawer is also reachable
+    //       by clicking the ID cell — admins love keyboard-driven
+    //       triage.
+    //    5) Auto-refresh every 30 s while the tab is visible (the
+    //       audit log changes infrequently; 30s is a friendlier
+    //       default than the dashboard's 10s). Pauses on hidden +
+    //       refreshes immediately on visible.
+    //
+    //  XSS posture:
+    //    - Every user-supplied value goes through textContent or
+    //      setAttribute, never innerHTML.
+    //    - The payload is JSON text from the server. We try to
+    //      JSON.parse and pretty-print, but if parsing fails
+    //      (truncated / weird bytes) we fall back to raw text —
+    //      never interpolated as HTML.
+    //    - Action / target_type strings are whitelisted into the
+    //      lc-pill modifier class. A hostile action value can't
+    //      inject markup through the className setter.
+    //
+    //  Soft 404 (Phase 6 endpoint pending):
+    //    When the backend returns 404 (path NOT_FOUND), we show
+    //    the "pending-state" card instead of the generic red
+    //    error. This mirrors /admin/users.html's behavior so the
+    //    admin doesn't think the whole feature is broken.
+    //
+    //  Test hooks (`__lcTest`): exported only when running under
+    //  the harness — production doesn't touch this object.
+    // ────────────────────────────────────────────────────────────────────
+    (function () {
+        'use strict';
+
+        // ── Constants ────────────────────────────────────────────────
+        var REFRESH_INTERVAL_MS = 30 * 1000;     // 30 s
+        var DEFAULT_LIMIT       = 20;            // matches backend default
+        var PROFILE_URL         = '/profile.html?u=';
+
+        // Well-known action labels. SPEC §4.2d + audit_log_repo.h
+        // keep these as string constants; we mirror them here so the
+        // table pill is human-readable. Unknown actions fall through
+        // to the raw string.
+        var ACTION_LABEL = {
+            'problem.create':       '新建题',
+            'problem.update':       '改题',
+            'problem.delete':       '删题',
+            'problem.restore':      '恢复题',
+            'problem.bulk_import':  '批量导入',
+            'user.role_change':     '改角色',
+            'user.password_change': '改密码',
+            'auth.login_failure':   '登录失败',
+        };
+
+        // Pill class for known actions. Unrecognized actions still
+        // get a pill, just a neutral one — the visual rhythm is
+        // preserved.
+        var ACTION_PILL_CLASS = {
+            'problem.create':       'lc-pill lc-pill--ok',
+            'problem.update':       'lc-pill',
+            'problem.delete':       'lc-pill lc-pill--down',
+            'problem.restore':      'lc-pill',
+            'problem.bulk_import':  'lc-pill',
+            'user.role_change':     'lc-pill lc-pill--admin',
+            'user.password_change': 'lc-pill',
+            'auth.login_failure':   'lc-pill lc-pill--warning',
+        };
+
+        // target_type → human label. Unknown target_type falls
+        // through to the raw string. SPEC §4.2d lists "problem" /
+        // "user" / "tag" as the in-use target types; "system" is
+        // reserved for forward-compat global events.
+        var TARGET_LABEL = {
+            problem: '题目',
+            user:    '用户',
+            tag:     '标签',
+            system:  '系统',
+        };
+
+        // ── State ───────────────────────────────────────────────────
+        var state = {
+            action:      '',
+            target_type: '',
+            page:        1,
+            limit:       DEFAULT_LIMIT,
+            search:      '',
+            since:       '',     // 'YYYY-MM-DD' from <input type="date">
+            until:       '',
+            refreshTimer: null,
+            paused:      false,
+            inflight:    0,
+        };
+        var lastPayload   = null;
+        var searchTimer   = null;
+        var currentDetail = null;     // last row opened in drawer
+
+        // ── DOM refs ────────────────────────────────────────────────
+        function $(id) { return document.getElementById(id); }
+        var els = {};
+
+        // ── Element builder (mirrors app.js's el()) ─────────────────
+        function el(tag, attrs, children) {
+            var node = document.createElement(tag);
+            if (attrs) {
+                Object.keys(attrs).forEach(function (k) {
+                    if (k === 'class')      node.className = attrs[k];
+                    else if (k === 'text')  node.textContent = attrs[k];
+                    else if (k === 'html')  node.innerHTML = attrs[k];
+                    else if (k === 'dataset') {
+                        Object.keys(attrs[k]).forEach(function (dk) {
+                            node.dataset[dk] = attrs[k][dk];
+                        });
+                    } else if (k.charAt(0) === 'o' && k.charAt(1) === 'n') {
+                        node.addEventListener(k.slice(2).toLowerCase(), attrs[k]);
+                    } else {
+                        node.setAttribute(k, attrs[k]);
+                    }
+                });
+            }
+            if (children !== undefined && children !== null) {
+                (Array.isArray(children) ? children : [children]).forEach(function (c) {
+                    if (c === null || c === undefined) return;
+                    if (typeof c === 'string') node.appendChild(document.createTextNode(c));
+                    else node.appendChild(c);
+                });
+            }
+            return node;
+        }
+
+        // ── Formatters ──────────────────────────────────────────────
+        function relTime(iso) {
+            if (!iso) return '—';
+            // Backend returns 'YYYY-MM-DD HH:MM:SS' (UTC per
+            // DATE_FORMAT). Append 'Z' so Date.parse treats it as
+            // UTC and we get a sensible diff.
+            var s = String(iso).replace(' ', 'T');
+            if (s.charAt(s.length - 1) !== 'Z') s += 'Z';
+            var t = Date.parse(s);
+            if (!Number.isFinite(t)) return String(iso);
+            var diff = Math.floor((Date.now() - t) / 1000);
+            if (diff < 0)         return String(iso);   // clock skew
+            if (diff < 60)        return diff + ' 秒前';
+            if (diff < 3600)      return Math.floor(diff / 60) + ' 分钟前';
+            if (diff < 86400)     return Math.floor(diff / 3600) + ' 小时前';
+            if (diff < 30 * 86400) return Math.floor(diff / 86400) + ' 天前';
+            return String(iso);
+        }
+
+        function fmtAbsolute(iso) {
+            if (!iso) return '—';
+            return String(iso) + ' UTC';
+        }
+
+        function actionLabel(action) {
+            if (!action) return '—';
+            return ACTION_LABEL[action] || action;
+        }
+        function actionPillClass(action) {
+            // Unknown actions still get a pill — neutral style.
+            return ACTION_PILL_CLASS[action] || 'lc-pill';
+        }
+        function targetLabel(t) {
+            if (!t) return '—';
+            return TARGET_LABEL[t] || t;
+        }
+
+        // Pretty-print a payload string. We trust the server's CAST
+        // AS CHAR round-trip so the input is valid JSON text, but
+        // the parse is wrapped in try/catch — a future payload that
+        // carries binary content would fall through to raw text
+        // rendering, which is safe (textContent, never innerHTML).
+        function prettyJson(text) {
+            if (text === null || text === undefined || text === '') return '—';
+            try {
+                var parsed = JSON.parse(String(text));
+                return JSON.stringify(parsed, null, 2);
+            } catch (_) {
+                return String(text);
+            }
+        }
+
+        // ── URL state ───────────────────────────────────────────────
+        // Filters live in the URL so a deep link like
+        // ?action=problem.delete&page=2&since=2026-07-01 round-trips.
+        // The drawer state is intentionally NOT URL-stored — it's a
+        // transient UI layer.
+        function readUrl() {
+            var sp = new URLSearchParams(window.location.search);
+            var action = sp.get('action') || '';
+            var target = sp.get('target_type') || '';
+            var page   = parseInt(sp.get('page') || '1', 10);
+            if (!Number.isFinite(page) || page < 1) page = 1;
+            var limit  = parseInt(sp.get('limit') || String(DEFAULT_LIMIT), 10);
+            if (!Number.isFinite(limit) || limit < 1) limit = DEFAULT_LIMIT;
+            var q      = sp.get('q') || '';
+            var since  = sp.get('since') || '';
+            var until  = sp.get('until') || '';
+            return {
+                action:      action,
+                target_type: target,
+                page:        page,
+                limit:       limit,
+                search:      q,
+                since:       since,
+                until:       until,
+            };
+        }
+        function writeUrl(replace) {
+            var sp = new URLSearchParams();
+            if (state.action)       sp.set('action', state.action);
+            if (state.target_type)  sp.set('target_type', state.target_type);
+            if (state.page > 1)     sp.set('page', String(state.page));
+            if (state.limit !== DEFAULT_LIMIT) sp.set('limit', String(state.limit));
+            if (state.search)       sp.set('q', state.search);
+            if (state.since)        sp.set('since', state.since);
+            if (state.until)        sp.set('until', state.until);
+            var qs = sp.toString();
+            var url = window.location.pathname + (qs ? '?' + qs : '');
+            if (replace) window.history.replaceState(null, '', url);
+            else         window.history.pushState(null, '', url);
+        }
+
+        // ── Render: action / target_type segmented controls ───────
+        function renderSeg(segId, current, onPick) {
+            var seg = $(segId);
+            while (seg.firstChild) seg.removeChild(seg.firstChild);
+            // We rebuild from the static buttons in the HTML so the
+            // labels stay aligned with what the page header advertises.
+            // Buttons carry the dataset keys we want to filter by.
+            var btns = seg.querySelectorAll('button[data-' +
+                (segId === 'action-seg' ? 'action' : 'target') + ']');
+            btns.forEach(function (btn) {
+                var key = btn.dataset[segId === 'action-seg' ? 'action' : 'target'] || '';
+                var active = (current === key);
+                var newBtn = el('button', {
+                    type: 'button',
+                    class: 'lc-seg__btn' + (active ? ' lc-seg__btn--active' : ''),
+                    role: 'tab',
+                    'aria-selected': active ? 'true' : 'false',
+                    text: btn.textContent,
+                    dataset: segId === 'action-seg'
+                        ? { action: key }
+                        : { target: key },
+                    onClick: function () { onPick(key); },
+                });
+                seg.appendChild(newBtn);
+            });
+        }
+
+        // ── Render: summary text ────────────────────────────────────
+        function renderSummary() {
+            var total = (lastPayload && typeof lastPayload.total === 'number')
+                ? lastPayload.total : 0;
+            var parts = ['共 ' + total + ' 条'];
+            if (state.action)       parts.push('操作=' + actionLabel(state.action));
+            if (state.target_type)  parts.push('对象=' + targetLabel(state.target_type));
+            if (state.search)       parts.push('搜索="' + state.search + '"');
+            if (state.since)        parts.push('起始=' + state.since);
+            if (state.until)        parts.push('截止=' + state.until);
+            $('filter-summary').textContent = parts.join(' · ');
+            var head = $('header-summary');
+            if (head) {
+                head.textContent = '浏览管理员的关键操作记录（共 '
+                    + total + ' 条）。所有写操作（删题 / 改角色 / 批量导入）'
+                    + '都会写入本表，登录失败 N>=5 时也会记录。';
+            }
+        }
+
+        // ── Render: one row of the audit table ─────────────────────
+        function renderRow(r) {
+            var id      = r.id || 0;
+            var action  = r.action || '';
+            var target  = r.target_type || '';
+            var targetId = r.target_id || '';
+            var ip      = r.ip || '';
+            var when    = r.created_at || '';
+            var adminId = r.admin_id;
+
+            var tr = el('tr', { dataset: { id: id, action: action } });
+
+            // ID — small mono, clickable to open the detail drawer.
+            tr.appendChild(el('td', null, [
+                el('button', {
+                    type: 'button',
+                    class: 'lc-btn lc-btn--ghost lc-btn--sm',
+                    text: '#' + String(id),
+                    title: '点击查看完整 payload',
+                    dataset: { act: 'open-detail', id: id },
+                })
+            ]));
+
+            // Time — absolute + relative.
+            tr.appendChild(el('td', null, [
+                el('span', {
+                    class: 'lc-form-help',
+                    text: relTime(when),
+                    title: fmtAbsolute(when),
+                })
+            ]));
+
+            // Admin. Two states:
+            //   - admin_id present + known user → link to profile
+            //   - admin_id NULL ("system event" e.g. login_failure)
+            //     → "系统事件" with a tooltip
+            // The backend doesn't currently surface admin_username
+            // inline (no JOIN in Phase 6 list path), so we render
+            // admin_id as a numeric handle. The detail drawer could
+            // resolve username via /api/v1/admin/users/:id in a
+            // future iteration.
+            var adminCell = el('td', null, []);
+            if (adminId && typeof adminId === 'number' && adminId > 0) {
+                adminCell.appendChild(el('a', {
+                    href: '/admin/users.html?q=' + encodeURIComponent('id:' + adminId),
+                    text: '#' + adminId,
+                    target: '_blank',
+                    rel: 'noopener',
+                    title: '在用户管理中查看 id=' + adminId,
+                }));
+            } else if (r.action === 'auth.login_failure') {
+                // Login failures are anonymous by design.
+                adminCell.appendChild(el('span', {
+                    class: 'lc-form-help',
+                    text: '匿名',
+                    title: '登录失败由未登录客户端触发，未关联具体用户',
+                }));
+            } else {
+                adminCell.appendChild(el('span', {
+                    class: 'lc-form-help',
+                    text: '—',
+                    title: 'system event',
+                }));
+            }
+            tr.appendChild(adminCell);
+
+            // Action pill — class is whitelisted to known actions.
+            tr.appendChild(el('td', null, [
+                el('span', {
+                    class: actionPillClass(action),
+                    text: actionLabel(action),
+                    title: action,
+                })
+            ]));
+
+            // Target (type + id). The slug / id is rendered as a
+            // soft hint so the column doesn't get over-long for
+            // batch imports with hundreds of items.
+            var targetTypeLabel = targetLabel(target);
+            var targetCell = el('td', null, []);
+            targetCell.appendChild(el('span', {
+                class: 'lc-pill',
+                text: targetTypeLabel,
+                title: target ? ('target_type=' + target) : '无对象',
+            }));
+            if (targetId) {
+                targetCell.appendChild(document.createTextNode(' '));
+                targetCell.appendChild(el('span', {
+                    class: 'lc-form-help',
+                    text: String(targetId),
+                    title: 'target_id=' + targetId,
+                }));
+            }
+            tr.appendChild(targetCell);
+
+            // IP.
+            tr.appendChild(el('td', null, [
+                el('span', {
+                    class: 'lc-form-help',
+                    text: ip || '—',
+                    title: ip ? ('来源 IP：' + ip) : '',
+                })
+            ]));
+
+            // Action — "查看" button to open the detail drawer.
+            tr.appendChild(el('td', null, [
+                el('button', {
+                    type: 'button',
+                    class: 'lc-btn lc-btn--sm',
+                    text: '查看',
+                    title: '查看完整 payload',
+                    dataset: { act: 'open-detail', id: id },
+                })
+            ]));
+
+            return tr;
+        }
+
+        // ── Render: rows ────────────────────────────────────────────
+        function renderRows() {
+            var tbody = $('audit-tbody');
+            while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+
+            var items = (lastPayload && Array.isArray(lastPayload.items))
+                ? lastPayload.items : [];
+
+            // Client-side filter — apply over a string projection so
+            // we can grep into the payload text too (the server
+            // filter doesn't expose payload substring search).
+            var q = state.search.trim().toLowerCase();
+            var filtered = q ? items.filter(function (r) {
+                if (!r) return false;
+                var hay = (
+                    (r.action || '') + ' ' +
+                    (r.target_type || '') + ' ' +
+                    (r.target_id || '') + ' ' +
+                    (r.ip || '') + ' ' +
+                    (r.payload || '')
+                ).toLowerCase();
+                return hay.indexOf(q) !== -1;
+            }) : items;
+
+            if (!filtered.length) {
+                $('audit-table').hidden = true;
+                $('empty-state').hidden = false;
+                return;
+            }
+            $('empty-state').hidden = true;
+            $('audit-table').hidden = false;
+            filtered.forEach(function (r) {
+                tbody.appendChild(renderRow(r));
+            });
+        }
+
+        // ── Render: pagination ──────────────────────────────────────
+        function totalPages() {
+            var t = (lastPayload && typeof lastPayload.total === 'number')
+                ? lastPayload.total : 0;
+            if (t <= 0) return 1;
+            return Math.max(1, Math.ceil(t / state.limit));
+        }
+
+        function renderPagination() {
+            var nav = $('pagination');
+            while (nav.firstChild) nav.removeChild(nav.firstChild);
+            var tp = totalPages();
+            if (tp <= 1) { nav.hidden = true; return; }
+            nav.hidden = false;
+
+            var cur = state.page;
+            function pageBtn(label, target, opts) {
+                opts = opts || {};
+                var attrs = {
+                    type: 'button',
+                    class: 'lc-page-btn'
+                        + (opts.active ? ' lc-page-btn--active' : '')
+                        + (opts.disabled ? ' lc-page-btn--disabled' : ''),
+                    text: label,
+                    'aria-label': opts.ariaLabel || ('第 ' + target + ' 页'),
+                    'aria-current': opts.active ? 'page' : null,
+                };
+                if (opts.disabled) attrs.disabled = true;
+                else attrs.onClick = function () { goToPage(target); };
+                return el('button', attrs);
+            }
+            function ellipsis() {
+                return el('span', { class: 'lc-page-ellipsis',
+                                    text: '…', 'aria-hidden': 'true' });
+            }
+
+            nav.appendChild(pageBtn('« 首页', 1, { disabled: cur === 1 }));
+            nav.appendChild(pageBtn('‹ 上一页', cur - 1, { disabled: cur === 1 }));
+
+            var pages = [];
+            if (tp <= 7) {
+                for (var i = 1; i <= tp; i++) pages.push(i);
+            } else {
+                pages.push(1);
+                if (cur > 3) pages.push('…');
+                var from = Math.max(2, cur - 1);
+                var to   = Math.min(tp - 1, cur + 1);
+                for (var j = from; j <= to; j++) pages.push(j);
+                if (cur < tp - 2) pages.push('…');
+                pages.push(tp);
+            }
+            pages.forEach(function (p) {
+                if (p === '…') nav.appendChild(ellipsis());
+                else nav.appendChild(pageBtn(String(p), p, { active: p === cur }));
+            });
+
+            nav.appendChild(pageBtn('下一页 ›', cur + 1, { disabled: cur === tp }));
+            nav.appendChild(pageBtn('末页 »', tp, { disabled: cur === tp }));
+        }
+
+        // ── State transitions ───────────────────────────────────────
+        function onActionChange(a) {
+            state.action = a;
+            state.page = 1;
+            writeUrl(true);
+            renderSeg('action-seg', state.action, onActionChange);
+            load();
+        }
+
+        function onTargetChange(t) {
+            state.target_type = t;
+            state.page = 1;
+            writeUrl(true);
+            renderSeg('target-seg', state.target_type, onTargetChange);
+            load();
+        }
+
+        function onDateChange() {
+            state.since = (els.sinceInput && els.sinceInput.value) || '';
+            state.until = (els.untilInput && els.untilInput.value) || '';
+            // Defense: HTML5 date inputs should reject malformed
+            // values, but the backend's audit_log_repo accepts a
+            // wider range (HH:MM:SS). If the admin types
+            // something invalid the request will surface as a 400
+            // error — show that to them, don't swallow.
+            state.page = 1;
+            writeUrl(true);
+            load();
+        }
+
+        function goToPage(p) {
+            var tp = totalPages();
+            if (p < 1) p = 1;
+            if (p > tp) p = tp;
+            if (p === state.page) return;
+            state.page = p;
+            writeUrl(true);
+            var t = $('audit-table');
+            if (t && t.scrollIntoView) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            load();
+        }
+
+        function onSearchInput() {
+            if (searchTimer) clearTimeout(searchTimer);
+            searchTimer = setTimeout(function () {
+                state.search = els.searchInput.value || '';
+                writeUrl(true);
+                renderRows();
+                renderSummary();
+            }, 250);
+        }
+
+        function resetFilters() {
+            state.action      = '';
+            state.target_type = '';
+            state.page        = 1;
+            state.search      = '';
+            state.since       = '';
+            state.until       = '';
+            els.searchInput.value = '';
+            els.sinceInput.value  = '';
+            els.untilInput.value  = '';
+            writeUrl(true);
+            renderSeg('action-seg', state.action, onActionChange);
+            renderSeg('target-seg', state.target_type, onTargetChange);
+            load();
+        }
+
+        // ── Detail drawer ───────────────────────────────────────────
+        function findRowById(id) {
+            var items = (lastPayload && Array.isArray(lastPayload.items))
+                ? lastPayload.items : [];
+            for (var i = 0; i < items.length; i++) {
+                if (items[i] && String(items[i].id) === String(id)) return items[i];
+            }
+            return null;
+        }
+
+        function openDetail(id) {
+            var row = findRowById(id);
+            if (!row) return;
+            currentDetail = row;
+
+            $('detail-title').textContent =
+                '审计记录 #' + String(row.id) + ' · ' + actionLabel(row.action);
+
+            var body = $('detail-body');
+            while (body.firstChild) body.removeChild(body.firstChild);
+
+            // Each "field" is a small two-column row: label + value.
+            // We render this as a definition list (<dl>) so screen
+            // readers pick up the structure.
+            var dl = el('dl', {
+                class: 'lc-stack-sm',
+                style: 'display: grid; grid-template-columns: max-content 1fr;'
+                     + ' gap: var(--lc-space-2) var(--lc-space-4);'
+                     + ' margin: 0;',
+            });
+            function addField(label, valueNode) {
+                dl.appendChild(el('dt', {
+                    class: 'lc-form-label',
+                    style: 'margin: 0;',
+                    text: label,
+                }));
+                dl.appendChild(el('dd', {
+                    style: 'margin: 0; word-break: break-all;',
+                })).appendChild(valueNode);
+            }
+            addField('操作 ID', el('span', { class: 'lc-form-help',
+                                              text: '#' + String(row.id) }));
+            addField('时间', el('span', { class: 'lc-form-help',
+                                          text: fmtAbsolute(row.created_at) }));
+            addField('管理员',
+                row.admin_id
+                    ? el('a', {
+                        href: '/admin/users.html?q=' + encodeURIComponent('id:' + row.admin_id),
+                        text: '#' + row.admin_id,
+                        target: '_blank',
+                        rel: 'noopener',
+                      })
+                    : el('span', { class: 'lc-form-help',
+                                   text: row.action === 'auth.login_failure'
+                                       ? '匿名（登录失败）' : '—' }));
+            addField('操作', el('span', { class: actionPillClass(row.action),
+                                          text: actionLabel(row.action),
+                                          title: row.action || '' }));
+            addField('对象类型', el('span', { class: 'lc-pill',
+                                              text: targetLabel(row.target_type),
+                                              title: row.target_type || '' }));
+            addField('对象 ID', el('span', { class: 'lc-form-help',
+                                             text: row.target_id || '—' }));
+            addField('IP', el('span', { class: 'lc-form-help',
+                                         text: row.ip || '—' }));
+            body.appendChild(dl);
+
+            var codeEl = $('detail-payload').firstElementChild;
+            if (codeEl) {
+                codeEl.textContent = prettyJson(row.payload);
+            }
+
+            $('detail-modal').hidden = false;
+        }
+
+        function closeDetail() {
+            $('detail-modal').hidden = true;
+            currentDetail = null;
+        }
+
+        // ── Top-level state machine ────────────────────────────────
+        function showState(name) {
+            ['loading-state', 'empty-state', 'error-state',
+             'pending-state'].forEach(function (id) {
+                $(id).hidden = true;
+            });
+            $('audit-table').hidden = true;
+            if (name === 'loading') {
+                $('loading-state').hidden = false;
+            } else if (name === 'error') {
+                $('error-state').hidden = false;
+            } else if (name === 'empty') {
+                $('empty-state').hidden = false;
+            } else if (name === 'pending') {
+                $('pending-state').hidden = false;
+            } else {
+                $('audit-table').hidden = false;
+            }
+        }
+
+        function showHeaderStatus(mode, label) {
+            var chip = $('auto-refresh-chip');
+            var dot = chip.querySelector('.lc-sse-status__dot');
+            if (dot) {
+                dot.className = 'lc-sse-status__dot lc-sse-status__dot--' + mode;
+            }
+            chip.dataset.mode = mode;
+            $('auto-refresh-label').textContent = label;
+        }
+
+        // ── Load ───────────────────────────────────────────────────
+        function load() {
+            var token = ++state.inflight;
+            showState('loading');
+            showHeaderStatus('polling', '刷新中…');
+
+            var qs = '?limit='  + encodeURIComponent(state.limit)
+                   + '&offset=' + encodeURIComponent((state.page - 1) * state.limit);
+            if (state.action)      qs += '&action=' + encodeURIComponent(state.action);
+            if (state.target_type) qs += '&target_type=' + encodeURIComponent(state.target_type);
+            if (state.since)       qs += '&since=' + encodeURIComponent(state.since);
+            if (state.until)       qs += '&until=' + encodeURIComponent(state.until);
+
+            litecode.api.get('/admin/audit-logs' + qs)
+                .then(function (resp) {
+                    if (token !== state.inflight) return;
+                    lastPayload = (resp && resp.data)
+                        ? resp.data : { items: [], total: 0 };
+                    renderSummary();
+                    renderRows();
+                    renderPagination();
+                    if ((lastPayload.items || []).length === 0) {
+                        showState('empty');
+                    } else {
+                        showState('table');
+                    }
+                    showHeaderStatus('polling', '实时');
+                })
+                .catch(function (err) {
+                    if (token !== state.inflight) return;
+                    if (err && err.status === 404) {
+                        // Phase 6 endpoint may not be shipped yet —
+                        // show a softer "endpoint pending" hint
+                        // rather than the generic red banner.
+                        showState('pending');
+                        $('error-message').textContent = '';
+                        showHeaderStatus('timeout', '已暂停');
+                        return;
+                    }
+                    showState('error');
+                    $('error-message').textContent = (err && err.message)
+                        ? err.message : '网络错误，请稍后重试';
+                    if (err && err.status === 403) {
+                        $('error-message').textContent = '您没有访问审计日志的权限';
+                    } else if (err && err.status === 401) {
+                        $('error-message').textContent = '登录状态已过期';
+                    }
+                    showHeaderStatus('timeout', '已暂停');
+                });
+        }
+
+        // ── Auto-refresh loop ───────────────────────────────────────
+        function startAutoRefresh() {
+            stopAutoRefresh();
+            state.refreshTimer = setInterval(function () {
+                if (state.paused) return;
+                load();
+            }, REFRESH_INTERVAL_MS);
+        }
+        function stopAutoRefresh() {
+            if (state.refreshTimer) {
+                clearInterval(state.refreshTimer);
+                state.refreshTimer = null;
+            }
+        }
+        function onVisibilityChange() {
+            if (document.hidden) {
+                state.paused = true;
+                showHeaderStatus('timeout', '已暂停');
+            } else {
+                state.paused = false;
+                showHeaderStatus('polling', '实时');
+                // Refresh immediately on resume so the page never
+                // shows stale data after a tab switch.
+                load();
+            }
+        }
+
+        // ── Modal wiring (event delegation) ─────────────────────────
+        function wireModal() {
+            var modal = $('detail-modal');
+            modal.addEventListener('click', function (ev) {
+                var t = ev.target;
+                if (!t) return;
+                var act = t.dataset && t.dataset.act;
+                if (act === 'close-modal') closeDetail();
+            });
+            document.addEventListener('keydown', function (ev) {
+                if (ev && ev.key === 'Escape' && !modal.hidden) closeDetail();
+            });
+            // Row clicks — both the ID cell and the "查看" button
+            // share the same data-act hook. Event delegation on
+            // tbody keeps the wiring lightweight even when the
+            // table re-renders.
+            $('audit-tbody').addEventListener('click', function (ev) {
+                var t = ev.target;
+                if (!t) return;
+                var act = t.dataset && t.dataset.act;
+                if (act === 'open-detail') {
+                    var id = t.dataset.id;
+                    if (id) openDetail(id);
+                }
+            });
+        }
+
+        // ── Boot ────────────────────────────────────────────────────
+        document.addEventListener('DOMContentLoaded', function () {
+            litecode.boot.shell({
+                title: 'LiteCode · 审计日志',
+                requireAdmin: true,
+            }).then(function () {
+                // Hydrate from URL.
+                var u = readUrl();
+                state.action      = u.action;
+                state.target_type = u.target_type;
+                state.page        = u.page;
+                state.limit       = u.limit;
+                state.search      = u.search;
+                state.since       = u.since;
+                state.until       = u.until;
+
+                els.searchInput = $('search-input');
+                els.sinceInput  = $('since-input');
+                els.untilInput  = $('until-input');
+                els.searchInput.value = state.search;
+                els.sinceInput.value  = state.since;
+                els.untilInput.value  = state.until;
+
+                renderSeg('action-seg', state.action, onActionChange);
+                renderSeg('target-seg', state.target_type, onTargetChange);
+
+                // Filter wiring.
+                els.searchInput.addEventListener('input', onSearchInput);
+                els.sinceInput .addEventListener('change', onDateChange);
+                els.untilInput .addEventListener('change', onDateChange);
+                $('reset-filters-btn').addEventListener('click', resetFilters);
+                $('retry-btn').addEventListener('click', function () { load(); });
+                $('reload-btn').addEventListener('click', function () { load(); });
+                document.addEventListener('visibilitychange', onVisibilityChange);
+
+                wireModal();
+
+                // popstate — back/forward navigation.
+                window.addEventListener('popstate', function () {
+                    var p = readUrl();
+                    state.action      = p.action;
+                    state.target_type = p.target_type;
+                    state.page        = p.page;
+                    state.limit       = p.limit;
+                    state.search      = p.search;
+                    state.since       = p.since;
+                    state.until       = p.until;
+                    els.searchInput.value = p.search;
+                    els.sinceInput.value  = p.since;
+                    els.untilInput.value  = p.until;
+                    renderSeg('action-seg', state.action, onActionChange);
+                    renderSeg('target-seg', state.target_type, onTargetChange);
+                    load();
+                });
+
+                load();
+                startAutoRefresh();
+            });
+        });
+
+        // Test hooks — exported only when running under the harness.
+        if (typeof __lcTest !== 'undefined') {
+            __lcTest.auditLogs = {
+                ACTION_LABEL: ACTION_LABEL,
+                ACTION_PILL_CLASS: ACTION_PILL_CLASS,
+                TARGET_LABEL: TARGET_LABEL,
+                DEFAULT_LIMIT: DEFAULT_LIMIT,
+                REFRESH_INTERVAL_MS: REFRESH_INTERVAL_MS,
+                prettyJson: prettyJson,
+                relTime: relTime,
+                fmtAbsolute: fmtAbsolute,
+                actionLabel: actionLabel,
+                targetLabel: targetLabel,
+                renderRow: renderRow,
+            };
+        }
+    })();
     </script>
 </body>
 </html>
