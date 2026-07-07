@@ -5,10 +5,26 @@
 // Per-page conveniences layered on top of api.js. Owns:
 //   - Navigation bar (`[data-nav]` slot; replaces itself on auth changes)
 //   - Toast / inline-notification surface wired to `litecode:api-error`
-//   - Dark-mode bootstrap (CSS variable theme; respects user override)
+//   - Dark-mode toggle (`litecode.theme.{get,set,toggle,reset}` +
+//     [data-act="theme-toggle"] button in the nav bar)
 //   - `litecode.guard.{requireAuth,requireAdmin,requireGuest}` redirect
 //   - Re-exports `litecode.markdown` (owned by markdown.js — see
 //     that file for the SRI-pinned DOMPurify + marked pipeline)
+//
+// Dark-mode load order (SPEC §6.3 / A34 — no flash on refresh):
+//
+//   <head>
+//     <script src="/js/theme-boot.js"></script>     ← sync, in <head>
+//     <link rel="stylesheet" href="/css/style.css"> ← after boot
+//     <script src="/js/csp.js" defer></script>
+//     <script src="/js/api.js" defer></script>
+//     <script src="/js/app.js" defer></script>
+//   </head>
+//
+// theme-boot.js reads `litecode:theme` from localStorage and applies
+// the right `.dark` class + `data-theme-chosen` attribute before the
+// stylesheet paints, so dark-mode users never see a flash of light.
+// app.js then exposes the toggle button + public API on top.
 //
 // All pages should include api.js FIRST and app.js AFTER, then call
 // either:
@@ -238,14 +254,16 @@
 
             var right = el('div', { class: 'lc-nav-right' });
 
-            // Theme toggle is always available.
+            // Theme toggle is always available. Icon + label are
+            // synced to the current mode in syncThemeButton() right
+            // after renderNav() inserts the button.
             var themeBtn = el('button', {
                 type: 'button',
                 class: 'lc-icon-btn',
-                'aria-label': '切换深色模式',
-                title: '切换深色模式',
+                'aria-label': LABEL_TOGGLE,
+                title:       LABEL_TOGGLE,
                 dataset: { act: 'theme-toggle' },
-                text: '🌗',
+                text: '🌗',  // placeholder; syncThemeButton() overwrites
             });
             themeBtn.addEventListener('click', toggleTheme);
             right.appendChild(themeBtn);
@@ -283,6 +301,12 @@
             bar.appendChild(right);
             slot.appendChild(bar);
         });
+
+        // Sync the theme toggle's icon / aria-pressed to whatever
+        // theme-boot.js painted before this nav was rendered. Without
+        // this the button would keep the placeholder 🌗 emoji and
+        // a11y state until the user clicks it.
+        syncThemeButton();
 
         navState.mounted = true;
     }
@@ -378,14 +402,44 @@
     //  - If absent, falls back to `prefers-color-scheme: dark`
     //  - Toggled via [data-act="theme-toggle"] or `litecode.theme.toggle()`
     //  - Class lives on <html> so CSS custom-property cascades work
+    //  - `data-theme-chosen` attribute on <html> signals "user has made
+    //    an explicit choice"; style.css uses it to gate the @media
+    //    system-preference fallback so an explicit choice wins.
+    //
+    //  No-flash ordering:
+    //    1. web/js/theme-boot.js (sync, in <head> BEFORE stylesheet)
+    //       reads localStorage and applies the right class +
+    //       data-theme-chosen attribute before the first paint.
+    //    2. bootShell() runs after app.js parses; it does NOT need
+    //       to re-apply the theme (theme-boot.js already did it),
+    //       but it DOES need to keep the toggle button in sync
+    //       with the actual state, since the button is rendered
+    //       later by renderNav().
     // ────────────────────────────────────────────────────────────────────
 
+    var ICON_LIGHT = '🌞';  // shown when current mode is dark (click to go light)
+    var ICON_DARK  = '🌙';  // shown when current mode is light (click to go dark)
+    var LABEL_TOGGLE = '切换深色模式';
+
+    function currentTheme() {
+        return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+    }
+
     function applyTheme(theme) {
+        // `applyTheme` is called from bootShell on first run for the
+        // system-preference fallback path (when localStorage is empty).
+        // In that case theme-boot.js left `data-theme-chosen` absent
+        // and CSS @media (prefers-color-scheme: dark) is doing the work.
+        // If we add `.dark` here we MUST also set the attribute, otherwise
+        // a future system-preference change would try to flip back over
+        // our explicit class. So applyTheme always commits the choice.
         var html = document.documentElement;
-        // We use a class, not data-theme, so `prefers-color-scheme`
-        // media queries can still be overridden by an explicit choice.
         if (theme === 'dark') html.classList.add('dark');
         else                  html.classList.remove('dark');
+        // Always lock the choice — even the system-preference path
+        // becomes an explicit choice once we've painted it. The user
+        // can always clear localStorage to follow the OS again.
+        html.setAttribute('data-theme-chosen', '1');
     }
 
     function readStoredTheme() {
@@ -396,18 +450,51 @@
         try { localStorage.setItem(THEME_KEY, theme); }
         catch (_) { /* ignore */ }
     }
+    function clearStoredTheme() {
+        try { localStorage.removeItem(THEME_KEY); }
+        catch (_) { /* ignore */ }
+    }
     function detectInitialTheme() {
-        var stored = readStoredTheme();
-        if (stored === 'dark' || stored === 'light') return stored;
-        // Match what the OS / browser is asking for.
-        var mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
-        return (mq && mq.matches) ? 'dark' : 'light';
+        // Returns what the page IS currently showing. theme-boot.js
+        // applied either the stored choice or the system preference
+        // before paint, so this just reports reality.
+        return currentTheme();
     }
     function toggleTheme() {
-        var now = document.documentElement.classList.contains('dark') ? 'dark' : 'light';
-        var next = (now === 'dark') ? 'light' : 'dark';
+        var next = currentTheme() === 'dark' ? 'light' : 'dark';
         writeStoredTheme(next);
         applyTheme(next);
+        // The toggle button's icon/label need to flip to match the
+        // new state. We dispatch a `litecode:theme-changed` event so
+        // any nav-bar re-render (or other listener) can sync without
+        // each consumer polling currentTheme().
+        root.dispatchEvent(new CustomEvent('litecode:theme-changed', {
+            detail: { theme: next }
+        }));
+    }
+
+    // Sync the toggle button's icon + aria-pressed to the current state.
+    // Called by renderNav() after the button is built, and by the
+    // `litecode:theme-changed` event listener installed at boot.
+    function syncThemeButton() {
+        var btns = document.querySelectorAll('[data-act="theme-toggle"]');
+        if (!btns.length) return;
+        var theme = currentTheme();
+        var isDark = theme === 'dark';
+        btns.forEach(function (btn) {
+            // Icon hints the action: 🌙 in light mode (click → dark),
+            // 🌞 in dark mode (click → light). Same logical pattern
+            // as GitHub / Notion / Vercel.
+            btn.textContent = isDark ? ICON_DARK : ICON_LIGHT;
+            // aria-pressed is the canonical state for toggle buttons —
+            // screen readers announce "pressed" / "not pressed" so the
+            // user knows the current mode without seeing the icon.
+            btn.setAttribute('aria-pressed', isDark ? 'true' : 'false');
+            // Tooltip + accessible name reflect the next action.
+            var nextLabel = isDark ? '切换到浅色模式' : '切换到深色模式';
+            btn.setAttribute('aria-label', nextLabel);
+            btn.setAttribute('title', nextLabel);
+        });
     }
 
     // ────────────────────────────────────────────────────────────────────
@@ -498,22 +585,32 @@
     function bootShell(opts) {
         opts = opts || {};
 
-        // Theme first to avoid a flash of light when the user prefers dark.
-        applyTheme(detectInitialTheme());
-
-        wireGlobalErrors();
-
-        // Match `prefers-color-scheme` after first paint so a system
-        // change without a manual toggle still moves the UI.
+        // Theme was already applied by theme-boot.js (sync, in <head>,
+        // before the stylesheet loads) so first paint is correct.
+        // bootShell only needs to:
+        //   1. install the prefers-color-scheme listener so a system
+        //      change without an explicit choice still moves the UI
+        //      AND keeps the toggle button in sync via syncThemeButton.
+        //   2. listen for the litecode:theme-changed event so a
+        //      re-rendered nav (or other surface) refreshes its
+        //      button state when the user toggles.
         if (window.matchMedia) {
             var mq = window.matchMedia('(prefers-color-scheme: dark)');
             var listener = function (e) {
                 if (readStoredTheme()) return;        // explicit choice wins
                 applyTheme(e.matches ? 'dark' : 'light');
+                syncThemeButton();
             };
             if (mq.addEventListener) mq.addEventListener('change', listener);
             else if (mq.addListener) mq.addListener(listener);
         }
+
+        // Wire once: when the user toggles, every page's toggle button
+        // (and any other theme-aware surface) re-syncs. Idempotent
+        // because listenersInstalled is checked at boot, not per call.
+        root.addEventListener('litecode:theme-changed', syncThemeButton);
+
+        wireGlobalErrors();
 
         if (opts.title) document.title = opts.title;
 
@@ -703,10 +800,27 @@
         user:  function () { return navState.user || api.auth.currentUser; },
     };
     root.litecode.theme   = {
-        get:    function () {
-            return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+        // Returns the theme currently being shown (dark / light).
+        // Mirrors `document.documentElement.classList.contains('dark')`
+        // but reads through the same helper the rest of the module uses.
+        get:    function () { return currentTheme(); },
+        // Sets + persists + applies. Fires the `litecode:theme-changed`
+        // event so other listeners (the toggle button) re-sync.
+        set:    function (t) {
+            if (t !== 'dark' && t !== 'light') return;
+            writeStoredTheme(t);
+            applyTheme(t);
+            syncThemeButton();
         },
-        set:    function (t) { writeStoredTheme(t); applyTheme(t); },
+        // Clears the persisted choice and re-follows the OS via the
+        // `prefers-color-scheme` media query. Useful for a future
+        // "reset to system" affordance or for tests.
+        reset:  function () {
+            clearStoredTheme();
+            var mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
+            applyTheme((mq && mq.matches) ? 'dark' : 'light');
+            syncThemeButton();
+        },
         toggle: toggleTheme,
     };
     root.litecode.toast   = {

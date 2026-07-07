@@ -2,8 +2,12 @@
 //   1. CSP meta tag byte-for-byte matches the csp.js canonical
 //      CSP_VALUE (defense-in-depth — if a page is edited with a
 //      typo, the browser will accept a weaker policy silently).
-//   2. <script src=...> load order is csp.js → api.js → app.js
-//      (with markdown.js, if present, between csp.js and app.js).
+//   2. <script src=...> load order has theme-boot.js (sync, optional)
+//      followed by csp.js → api.js → app.js (all `defer`).
+//      theme-boot.js runs synchronously BEFORE the stylesheet to
+//      apply the no-flash dark-mode class. The deferred chain
+//      csp.js → api.js → app.js still has to be intact (with
+//      markdown.js, if present, between csp.js and app.js).
 //
 // The XSS test harness (web/test/markdown-xss.html) is excluded:
 // it is a standalone page not served in production and has no
@@ -68,13 +72,20 @@ pages.forEach(function (p) {
     var m2;
     while ((m2 = re2.exec(html)) !== null) scripts.push(m2[1]);
     var order = scripts.map(function (s) { return s.replace(/^.*\//, ''); });
-    if (!order[0] || order[0] !== 'csp.js') {
-        console.log('  ✗ ' + rel + '  first script is not csp.js: ' + JSON.stringify(order));
+
+    // Allow an optional synchronous head script (theme-boot.js) BEFORE
+    // the deferred csp.js chain. Synchronous scripts in <head> block the
+    // parser until they run — that's exactly what theme-boot.js needs to
+    // do for the no-flash dark-mode experience.
+    var chain = order.slice();
+    if (chain[0] === 'theme-boot.js') chain.shift();
+    if (!chain[0] || chain[0] !== 'csp.js') {
+        console.log('  ✗ ' + rel + '  first non-boot script is not csp.js: ' + JSON.stringify(order));
         failed++;
         return;
     }
-    var apiIdx = order.indexOf('api.js');
-    var appIdx = order.indexOf('app.js');
+    var apiIdx = chain.indexOf('api.js');
+    var appIdx = chain.indexOf('app.js');
     if (apiIdx === -1) { console.log('  ✗ ' + rel + '  no api.js'); failed++; return; }
     if (appIdx === -1) { console.log('  ✗ ' + rel + '  no app.js'); failed++; return; }
     if (apiIdx <= 0 || appIdx <= 0 || apiIdx >= appIdx) {
@@ -82,7 +93,7 @@ pages.forEach(function (p) {
         failed++;
         return;
     }
-    var mdIdx = order.indexOf('markdown.js');
+    var mdIdx = chain.indexOf('markdown.js');
     if (mdIdx !== -1 && (mdIdx <= 0 || mdIdx >= appIdx)) {
         console.log('  ✗ ' + rel + '  markdown.js out of place: ' + JSON.stringify(order));
         failed++;

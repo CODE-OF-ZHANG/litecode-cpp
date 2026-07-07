@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme-chosen>
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -16,6 +16,16 @@
           content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
 
     <title>LiteCode · 题库</title>
+
+    <!--
+      Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap.
+      Loaded synchronously BEFORE the stylesheet so the first paint
+      already reflects the user's stored preference (or the system
+      preference if they haven't chosen). See web/js/theme-boot.js
+      for the contract. External script keeps CSP strict (no
+      'unsafe-inline' needed).
+    -->
+    <script src="/js/theme-boot.js"></script>
     <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
