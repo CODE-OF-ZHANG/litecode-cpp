@@ -44,6 +44,7 @@ add_executable(test_judge_scheduler  unit/test_judge_scheduler.cpp)
 add_executable(test_submission       unit/test_submission.cpp)
 add_executable(test_submission_sse   unit/test_submission_sse.cpp)
 add_executable(test_auth_cookie_storage unit/test_auth_cookie_storage.cpp)
+add_executable(test_stats_profile     unit/test_stats_profile.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -649,3 +650,35 @@ target_include_directories(test_auth_cookie_storage PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/db)
 add_test(NAME auth_cookie_storage  COMMAND test_auth_cookie_storage)
+
+# stats_routes.h (Phase 6 ★) — GET /api/v1/stats/profile/:username
+# (SPEC §5.4, A15). End-to-end tests spin up the full HttpServer +
+# ConnectionPool + RateLimiter + JWT stack, seed users / problems /
+# submissions via raw SQL (avoiding cross-repo ODR collisions on
+# user_repo.h::detail::req_string), and assert the envelope shape
+# end-to-end. The pure unit tests (extract_username_from_path +
+# serialize_by_status + serialize_by_difficulty + serialize_user_meta
+# + serialize_user_stats + compute_user_stats) run without MySQL
+# (the compute_user_stats test SKIPs when ping fails). Same link set
+# as test_submission (the route handler uses require_authentication
+# + reads via user_repo / submission_repo / problem_repo).
+target_link_libraries(test_stats_profile PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    jwt-cpp::jwt-cpp
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp)
+target_include_directories(test_stats_profile PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+# stats_routes.h pulls in user_repo.h + submission_repo.h +
+# problem_repo.h (Phase 2 + Phase 3 + Phase 4 repos), pushing the
+# binary past MSVC's COFF section limit (C1128). /bigobj is the
+# documented workaround (same fix as test_submission /
+# test_admin_problem_crud / test_admin_bulk_import).
+if(MSVC)
+    target_compile_options(test_stats_profile PRIVATE /bigobj)
+endif()
+add_test(NAME stats_profile        COMMAND test_stats_profile)
