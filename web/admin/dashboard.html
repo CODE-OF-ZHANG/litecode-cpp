@@ -783,7 +783,7 @@
                 var status = String(row.status || '');
                 var tr = el('tr');
                 // ID
-                tr.appendChild(el('td', null, [
+                tr.appendChild(el('td', { dataset: { label: '#' } }, [
                     el('span', {
                         class: 'lc-form-help',
                         text: '#' + String(row.id || '—'),
@@ -792,7 +792,7 @@
                 ]));
                 // Status badge — class is whitelisted to lc-status--<known>
                 var safeStatus = STATUS_ORDER.indexOf(status) !== -1 ? status : 'pending';
-                tr.appendChild(el('td', null, [
+                tr.appendChild(el('td', { dataset: { label: '状态' } }, [
                     el('span', {
                         class: 'lc-status lc-status--' + safeStatus,
                         text: STATUS_LABEL[safeStatus] || status || '—',
@@ -801,7 +801,7 @@
                 // User (link to profile; null-safe)
                 var user = row.username || (row.user_id != null ? '#' + row.user_id : '—');
                 if (row.username) {
-                    tr.appendChild(el('td', null, [
+                    tr.appendChild(el('td', { dataset: { label: '用户' } }, [
                         el('a', {
                             href: PROFILE_URL + encodeURIComponent(row.username),
                             text: row.username,
@@ -811,14 +811,14 @@
                         })
                     ]));
                 } else {
-                    tr.appendChild(el('td', null, [
+                    tr.appendChild(el('td', { dataset: { label: '用户' } }, [
                         el('span', { class: 'lc-form-help', text: String(user) })
                     ]));
                 }
                 // Problem slug (link to /problem.html)
                 var slug = row.problem_slug || row.slug;
                 if (slug) {
-                    tr.appendChild(el('td', null, [
+                    tr.appendChild(el('td', { dataset: { label: '题目' } }, [
                         el('a', {
                             href: PROBLEM_URL + encodeURIComponent(slug),
                             text: slug,
@@ -828,24 +828,24 @@
                         })
                     ]));
                 } else if (row.problem_id != null) {
-                    tr.appendChild(el('td', null, [
+                    tr.appendChild(el('td', { dataset: { label: '题目' } }, [
                         el('span', { class: 'lc-form-help',
                                      text: '#' + row.problem_id })
                     ]));
                 } else {
-                    tr.appendChild(el('td', null, [
+                    tr.appendChild(el('td', { dataset: { label: '题目' } }, [
                         el('span', { class: 'lc-form-help', text: '—' })
                     ]));
                 }
                 // Language
-                tr.appendChild(el('td', null, [
+                tr.appendChild(el('td', { dataset: { label: '语言' } }, [
                     el('span', {
                         class: 'lc-pill',
                         text: LANG_LABEL[row.language] || row.language || '—',
                     })
                 ]));
                 // Time used
-                tr.appendChild(el('td', null, [
+                tr.appendChild(el('td', { dataset: { label: '耗时' } }, [
                     el('span', {
                         class: 'lc-form-help',
                         text: (typeof row.time_used === 'number')
@@ -853,7 +853,7 @@
                     })
                 ]));
                 // Submitted at
-                tr.appendChild(el('td', null, [
+                tr.appendChild(el('td', { dataset: { label: '提交时间' } }, [
                     el('span', {
                         class: 'lc-form-help',
                         text: relTime(row.created_at),

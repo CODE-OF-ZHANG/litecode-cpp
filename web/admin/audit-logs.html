@@ -595,7 +595,7 @@
             var tr = el('tr', { dataset: { id: id, action: action } });
 
             // ID — small mono, clickable to open the detail drawer.
-            tr.appendChild(el('td', null, [
+            tr.appendChild(el('td', { dataset: { label: 'ID' } }, [
                 el('button', {
                     type: 'button',
                     class: 'lc-btn lc-btn--ghost lc-btn--sm',
@@ -606,7 +606,7 @@
             ]));
 
             // Time — absolute + relative.
-            tr.appendChild(el('td', null, [
+            tr.appendChild(el('td', { dataset: { label: '时间' } }, [
                 el('span', {
                     class: 'lc-form-help',
                     text: relTime(when),
@@ -623,7 +623,7 @@
             // admin_id as a numeric handle. The detail drawer could
             // resolve username via /api/v1/admin/users/:id in a
             // future iteration.
-            var adminCell = el('td', null, []);
+            var adminCell = el('td', { dataset: { label: '管理员' } }, []);
             if (adminId && typeof adminId === 'number' && adminId > 0) {
                 adminCell.appendChild(el('a', {
                     href: '/admin/users.html?q=' + encodeURIComponent('id:' + adminId),
@@ -649,7 +649,7 @@
             tr.appendChild(adminCell);
 
             // Action pill — class is whitelisted to known actions.
-            tr.appendChild(el('td', null, [
+            tr.appendChild(el('td', { dataset: { label: '操作' } }, [
                 el('span', {
                     class: actionPillClass(action),
                     text: actionLabel(action),
@@ -661,7 +661,7 @@
             // soft hint so the column doesn't get over-long for
             // batch imports with hundreds of items.
             var targetTypeLabel = targetLabel(target);
-            var targetCell = el('td', null, []);
+            var targetCell = el('td', { dataset: { label: '对象' } }, []);
             targetCell.appendChild(el('span', {
                 class: 'lc-pill',
                 text: targetTypeLabel,
@@ -678,7 +678,7 @@
             tr.appendChild(targetCell);
 
             // IP.
-            tr.appendChild(el('td', null, [
+            tr.appendChild(el('td', { dataset: { label: 'IP' } }, [
                 el('span', {
                     class: 'lc-form-help',
                     text: ip || '—',
@@ -687,7 +687,7 @@
             ]));
 
             // Action — "查看" button to open the detail drawer.
-            tr.appendChild(el('td', null, [
+            tr.appendChild(el('td', { dataset: { label: '查看' } }, [
                 el('button', {
                     type: 'button',
                     class: 'lc-btn lc-btn--sm',

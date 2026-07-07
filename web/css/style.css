@@ -2640,3 +2640,365 @@ html.lc-route-pending body {
     visibility: hidden;
     pointer-events: none;
 }
+
+/* =====================================================================
+   22. Mobile responsive — Phase 5 ★ 移动端响应式 (SPEC §6.3 / §11)
+   ---------------------------------------------------------------------
+   Goal: at < 768px viewports, multi-column layouts collapse to a
+   single stacked column and dense tables become card-like lists so
+   the user never has to horizontally scroll the page. Tokens are
+   reused from earlier sections; this block is purely about layout
+   switching + tightening.
+
+   Breakpoint rationale
+   ────────────────────
+   · <= 1024px : problem split-view (problem + editor) + Markdown
+                 editor (textarea + preview) collapse to a single
+                 column. The admin split-pane (problem-edit) uses
+                 the same breakpoint. (Already wired in §12 + §18.)
+   · <=  768px : the canonical "phone" breakpoint. Nav tightens,
+                 container padding shrinks, cards lose padding,
+                 admin tables flip to stacked cards via data-label,
+                 modal goes near-full-screen, health strip stacks.
+   · <=  640px : admin table → card stack + problem-edit form grid
+                 stacks horizontally-paired inputs.
+   · <=  540px : result-panel gauges stack vertically (already wired
+                 in §14).
+   · <=  480px : nav links scroll horizontally (no hamburger — the
+                 site has only 4 nav items so a scroll strip is
+                 simpler than a toggle drawer), password rules
+                 collapse to 1 column (already wired in §9b).
+   · <=  420px : ranking + history rows tighten to single column;
+                 segmented controls wrap.
+
+   All rules in this section are PURELY additive overrides — they
+   don't introduce new tokens, only swap grid-template / display /
+   padding to a stacked or shrunk variant. Dark mode + reduced-
+   motion + focus-ring tokens are inherited from §1.
+   ===================================================================== */
+
+/* ≤ 1024px — already partially wired for problem split + md editor;
+   also collapses editor pane sticky behaviour and un-caps heights. */
+@media (max-width: 1024px) {
+    .lc-md-editor {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ≤ 900px — problem split-view collapses earlier than the editor's
+   own breakpoint so a small tablet (iPad portrait) sees a single
+   column rather than two cramped halves. */
+@media (max-width: 900px) {
+    .lc-problem-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .lc-problem-pane {
+        max-height: none;
+    }
+    .lc-editor-pane {
+        position: static;
+    }
+    .lc-editor-shell {
+        height: 360px;
+        max-height: none;
+    }
+}
+
+/* ≤ 768px — the canonical mobile breakpoint.
+   ───────────────────────────────────────────── */
+@media (max-width: 768px) {
+    /* Container + page padding shrinks so a 360px viewport has room
+       for actual content instead of being swallowed by chrome. */
+    .lc-container {
+        padding: var(--lc-space-4) var(--lc-space-3);
+    }
+    .lc-container--narrow { padding: var(--lc-space-4) var(--lc-space-3); }
+
+    /* Cards lose their generous padding so text doesn't sit in a
+       sea of whitespace on a narrow viewport. */
+    .lc-card {
+        padding: var(--lc-space-4);
+    }
+    .lc-problem-filters { padding: var(--lc-space-4); }
+    .lc-problem-pane   { padding: var(--lc-space-4); }
+    .lc-result-panel   { padding: var(--lc-space-3); }
+    .lc-form-section   { padding: var(--lc-space-3); }
+    .lc-auth-card      { padding: var(--lc-space-5); }
+
+    /* Nav — slightly tighter. The horizontal-scroll fallback at
+       ≤ 480px (below) takes over for true phone widths. */
+    .lc-nav {
+        padding: 0 var(--lc-space-3);
+        gap: var(--lc-space-2);
+        height: 52px;
+    }
+    .lc-nav-links { margin-left: var(--lc-space-2); gap: 0; flex-wrap: nowrap; }
+    .lc-nav-link { padding: 4px 10px; font-size: 13px; white-space: nowrap; }
+    .lc-nav-username { display: none; }
+    .lc-nav-brand { font-size: 16px; }
+
+    /* Hide the brand subtitle text on the smallest widths — the
+       brand mark itself stays so the user keeps a home link. */
+
+    /* Problem row meta stacks beneath the title (already wired in
+       §11) — keep the rule here too as belt-and-braces for pages
+       that mount .lc-problem-list inside an admin table card. */
+    .lc-problem-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--lc-space-2);
+    }
+    .lc-problem-row__title { white-space: normal; }
+    .lc-problem-row__meta { font-size: 11px; }
+    .lc-tag-chips { flex-wrap: wrap; }
+
+    /* Editor toolbar — language selector + actions wrap onto two
+       rows so the toolbar doesn't horizontally scroll. */
+    .lc-editor-pane__toolbar {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--lc-space-2);
+    }
+    .lc-editor-pane__toolbar-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+
+    /* Submit row — language select + submit button stack to avoid
+       horizontal overflow on small phones. */
+    .lc-editor-pane__submit-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .lc-editor-pane__submit-row .lc-btn {
+        width: 100%;
+    }
+
+    /* Auth pages — card max-width grows so a 360px phone has
+       ~320px usable content. */
+    .lc-auth-card {
+        max-width: 100%;
+    }
+
+    /* Toasts span the viewport so they don't sit cropped off the
+       right edge of a 360px screen. */
+    .lc-toasts {
+        left: 12px;
+        right: 12px;
+        max-width: none;
+    }
+
+    /* Modal — on phone the drawer fills the viewport minus a small
+       margin so the user can read every payload field without
+       scrolling inside the panel. */
+    .lc-modal { padding: var(--lc-space-2); }
+    .lc-modal__panel {
+        max-height: calc(100vh - var(--lc-space-4));
+        padding: var(--lc-space-4);
+    }
+
+    /* Health strip — 3 columns → 1 column (already wired in §19, but
+       keeping the rule here so future sidebar moves stay consistent). */
+    .lc-health-strip { grid-template-columns: 1fr; }
+
+    /* Admin table — tighten cell padding on phone widths. The full
+       collapse to card-stack lives at the <= 640px breakpoint below;
+       this breakpoint just makes the existing horizontal-scrollable
+       view more compact so the user has to swipe less. */
+    .lc-admin-table thead th,
+    .lc-admin-table tbody td {
+        padding: 8px 10px;
+        font-size: 13px;
+    }
+
+    /* Pagination — wrap and shrink so a 360px viewport shows at
+       least the active page + neighbours without horizontal scroll. */
+    .lc-page-btn {
+        padding: 4px 9px;
+        font-size: 12px;
+        min-width: 30px;
+    }
+
+    /* Sample test case pre — keep horizontal scroll but cap height
+       so a long sample doesn't push the editor off-screen. */
+    .lc-sample__pre {
+        max-height: 240px;
+    }
+
+    /* Reduce h1/h2 slightly so 6+ character Chinese titles fit on
+       one line in a 360px container. */
+    h1 { font-size: 24px; }
+    h2 { font-size: 19px; }
+    h3 { font-size: 16px; }
+}
+
+/* ≤ 640px — admin tables collapse to stacked card lists.
+   ────────────────────────────────────────────────────────
+   Strategy: hide the table head, render each row as a block (not a
+   table row), and use each <td data-label="..."> as a label/value
+   pair via CSS ::before. The JS renderers (problems.html /
+   users.html / audit-logs.html / dashboard.html) set
+   `td.dataset.label` on every cell so this CSS can render the label
+   inline.
+
+   A11y: the cell labels are duplicated by data-label for screen-
+   readers; we keep the original text in the value slot so AT users
+   still hear column names from the now-hidden thead. Thead is
+   visually hidden but still in the accessibility tree (clip path). */
+@media (max-width: 640px) {
+    .lc-admin-table,
+    .lc-admin-table thead,
+    .lc-admin-table tbody,
+    .lc-admin-table tr,
+    .lc-admin-table td {
+        display: block;
+        width: 100%;
+        min-width: 0;
+    }
+    /* Visually hide the head row but keep it in the a11y tree so AT
+       users still get the column vocabulary. */
+    .lc-admin-table thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+    }
+    .lc-admin-table tbody tr {
+        margin-bottom: var(--lc-space-3);
+        background: var(--lc-color-surface);
+        border: 1px solid var(--lc-color-border);
+        border-radius: var(--lc-radius-md);
+        padding: var(--lc-space-2);
+        box-shadow: var(--lc-shadow-sm);
+    }
+    .lc-admin-table tbody td {
+        display: flex;
+        align-items: baseline;
+        gap: var(--lc-space-3);
+        padding: 6px 8px;
+        border-bottom: 1px solid var(--lc-color-border);
+    }
+    .lc-admin-table tbody td:last-child {
+        border-bottom: 0;
+    }
+    /* Inject the column label as a flex item via ::before. The JS
+       renderers set td.dataset.label; CSS reads attr(data-label). */
+    .lc-admin-table tbody td::before {
+        content: attr(data-label);
+        flex: 0 0 80px;
+        font-size: 12px;
+        color: var(--lc-color-text-muted);
+        font-weight: 500;
+        /* Truncate overflow rather than wrap the label — keeps each
+           row to a single readable line. */
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .lc-admin-table tbody td > * {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+    /* The action cell (last column on every admin table) gets a
+       slightly different layout — labels hidden, buttons full-width
+       and stacked. */
+    .lc-admin-table tbody td[data-label="操作"]::before { display: none; }
+    .lc-admin-table tbody td[data-label="操作"] {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 4px;
+    }
+    .lc-admin-table tbody td[data-label="操作"] .lc-btn {
+        width: 100%;
+    }
+    /* Bulk-import file picker buttons + admin form rows that render
+       inside .lc-admin-table also collapse. */
+    .lc-admin-table-wrap { overflow-x: visible; }
+}
+
+/* ≤ 540px — narrow-phone tweaks (additional to the 640px + 480px
+   rules above).
+   ──────────────────────────────────────────────────────────── */
+@media (max-width: 540px) {
+    /* Result-panel gauges already stack at this breakpoint (wired in
+       §14). Status row + actions also stack so a 360px viewport
+       doesn't horizontally overflow the result panel. */
+    .lc-result-panel__header { flex-direction: column; align-items: flex-start; }
+    .lc-result-panel__actions { width: 100%; justify-content: flex-end; }
+    .lc-result-panel__status-row { gap: var(--lc-space-2); }
+
+    /* Admin form sections — paired fields stack instead of running
+       side-by-side. Applies to the problem-edit form which uses a
+       2-col grid for time/memory limits. */
+    .lc-form-section .lc-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: var(--lc-space-2);
+    }
+}
+
+/* ≤ 480px — phone-width polish.
+   ──────────────────────────── */
+@media (max-width: 480px) {
+    /* Nav links scroll horizontally instead of wrapping — the brand
+       stays put on the left so the user always has a home link. */
+    .lc-nav-links {
+        overflow-x: auto;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+    }
+    .lc-nav-links::-webkit-scrollbar { display: none; }
+
+    /* Hide the "登录 / 注册" buttons' default spacing on a 360px
+       screen — the auth buttons sit on the right with the theme
+       toggle, and a wrapped 登录→注册 pair is hard to read. */
+    .lc-nav-right .lc-btn { padding: 4px 10px; font-size: 13px; }
+
+    /* Stat grid — already 1-col on phones via auto-fit, but tighten
+       card padding so 4 stats still fit comfortably. */
+    .lc-stat-card { padding: var(--lc-space-3); }
+    .lc-stat-card__value { font-size: 22px; }
+
+    /* Profile header — avatar + name stack vertically instead of
+       sitting side-by-side when the username is long (Chinese
+       usernames can be 10+ characters which crowds a 360px row). */
+    .lc-profile-head { gap: var(--lc-space-3); }
+
+    /* History rows already wrap their time row below 600px; below
+       480px also constrain the metric cluster. */
+    .lc-history-row { padding: var(--lc-space-3); }
+    .lc-history-row__metrics { font-size: 11px; gap: var(--lc-space-2); }
+
+    /* Container-side buttons like "重置筛选" get full width so the
+       user can hit them with a thumb. */
+    .lc-problem-filters__row .lc-row--between {
+        flex-direction: column;
+        align-items: stretch;
+        gap: var(--lc-space-2);
+    }
+    .lc-problem-filters__row .lc-row--between .lc-btn { width: 100%; }
+
+    /* Password strength rules collapse to one column (already wired
+       in §9b; keep the rule here too for pages that mount the same
+       meter inline). */
+    .lc-pw-rules { grid-template-columns: 1fr; }
+
+    /* Sample row — input/output textareas stack so the editor
+       doesn't horizontally scroll on a 360px viewport. */
+    .lc-sample-row__io-row { flex-direction: column; }
+}
+
+/* ≤ 420px — extra-narrow phones (older / smaller Android).
+   ──────────────────────────────────────────────────────── */
+@media (max-width: 420px) {
+    .lc-container { padding: var(--lc-space-3) var(--lc-space-2); }
+    .lc-card { padding: var(--lc-space-3); }
+    .lc-nav { padding: 0 var(--lc-space-2); }
+    .lc-pagination { gap: 2px; }
+    .lc-page-btn { min-width: 28px; padding: 4px 7px; }
+}

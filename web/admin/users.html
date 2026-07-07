@@ -384,14 +384,14 @@
             var tr = el('tr', { dataset: { id: id, username: name, role: role } });
 
             // ID (small mono-ish)
-            tr.appendChild(el('td', null, [
+            tr.appendChild(el('td', { dataset: { label: 'ID' } }, [
                 el('span', { class: 'lc-form-help', text: String(id),
                              title: '数据库主键 id=' + id })
             ]));
 
             // Username (link to profile; opens in a new tab so the
             // admin doesn't lose list state).
-            tr.appendChild(el('td', null, [
+            tr.appendChild(el('td', { dataset: { label: '用户名' } }, [
                 el('a', {
                     href: PROFILE_URL + encodeURIComponent(name),
                     text: name,
@@ -402,13 +402,13 @@
             ]));
 
             // Email (optional; "—" when missing).
-            tr.appendChild(el('td', null, [
+            tr.appendChild(el('td', { dataset: { label: '邮箱' } }, [
                 el('span', { class: 'lc-form-help',
                              text: email || '—' })
             ]));
 
             // Role pill.
-            tr.appendChild(el('td', null, [
+            tr.appendChild(el('td', { dataset: { label: '角色' } }, [
                 el('span', {
                     class: ROLE_BADGE_CLASS[role] || 'lc-pill',
                     text: ROLE_LABELS[role] || role,
@@ -416,21 +416,21 @@
             ]));
 
             // Created at.
-            tr.appendChild(el('td', null, [
+            tr.appendChild(el('td', { dataset: { label: '注册时间' } }, [
                 el('span', { class: 'lc-form-help',
                              text: u.created_at || '—',
                              title: '注册时间（UTC ISO）' })
             ]));
 
             // Last login.
-            tr.appendChild(el('td', null, [
+            tr.appendChild(el('td', { dataset: { label: '最后登录' } }, [
                 el('span', { class: 'lc-form-help',
                              text: u.last_login ? relTime(u.last_login) : '—',
                              title: u.last_login ? u.last_login + ' UTC' : '从未登录' })
             ]));
 
             // Last login IP.
-            tr.appendChild(el('td', null, [
+            tr.appendChild(el('td', { dataset: { label: '最后登录 IP' } }, [
                 el('span', { class: 'lc-form-help',
                              text: u.last_login_ip || '—' })
             ]));
@@ -443,7 +443,7 @@
                 ? '降为普通用户'
                 : '提升为管理员';
 
-            var actions = el('td', null, []);
+            var actions = el('td', { dataset: { label: '操作' } }, []);
             if (isSelf) {
                 actions.appendChild(el('span', {
                     class: 'lc-form-help',

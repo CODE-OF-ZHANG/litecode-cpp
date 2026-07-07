@@ -381,7 +381,7 @@
             var tr = el('tr', { dataset: { slug: p.slug } });
 
             // Slug (monospace-ish, link to public detail for preview).
-            tr.appendChild(el('td', null, [
+            tr.appendChild(el('td', { dataset: { label: 'Slug' } }, [
                 el('a', {
                     href: PROBLEM_DETAIL + encodeURIComponent(p.slug),
                     text: p.slug || '',
@@ -392,7 +392,7 @@
             ]));
 
             // Title (with link to public detail; preview in new tab).
-            tr.appendChild(el('td', null, [
+            tr.appendChild(el('td', { dataset: { label: '标题' } }, [
                 el('a', {
                     href: PROBLEM_DETAIL + encodeURIComponent(p.slug),
                     text: p.title || '',
@@ -403,13 +403,13 @@
             ]));
 
             // Difficulty pill.
-            tr.appendChild(el('td', null, [
+            tr.appendChild(el('td', { dataset: { label: '难度' } }, [
                 el('span', { class: diffCellClass, text: diffLabel })
             ]));
 
             // Tags: API list endpoint omits tags (only detail has them),
             // so we render "—" with a tooltip pointing at the detail page.
-            tr.appendChild(el('td', null, [
+            tr.appendChild(el('td', { dataset: { label: '标签' } }, [
                 el('span', {
                     class: 'lc-form-help',
                     text: '—',
@@ -418,7 +418,7 @@
             ]));
 
             // AC rate.
-            tr.appendChild(el('td', null, [
+            tr.appendChild(el('td', { dataset: { label: '通过率' } }, [
                 el('span', {
                     class: 'lc-form-help',
                     text: rate + ' (' + ac + ' / ' + sub + ')',
@@ -427,7 +427,7 @@
             ]));
 
             // Time / memory.
-            tr.appendChild(el('td', null, [
+            tr.appendChild(el('td', { dataset: { label: '时间 / 内存' } }, [
                 el('span', {
                     class: 'lc-form-help',
                     text: timeLimit + ' ms / ' + memLimit + ' MB',
@@ -435,7 +435,7 @@
             ]));
 
             // Actions.
-            tr.appendChild(el('td', null, [
+            tr.appendChild(el('td', { dataset: { label: '操作' } }, [
                 el('a', {
                     href: PROBLEM_EDIT + '?slug=' + encodeURIComponent(p.slug),
                     class: 'lc-btn lc-btn--sm',
