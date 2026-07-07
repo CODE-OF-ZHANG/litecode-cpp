@@ -25,6 +25,18 @@
 // in the background). It does NOT block the page render — fetchProfile
 // is fire-and-forget so the user sees a nav immediately.
 //
+// Phase 5 ★ 前端权限拦截 (SPEC §6.3 / §15.3 / A24):
+//   app.js also installs a SYNCHRONOUS admin-route gate at IIFE load
+//   time — before DOMContentLoaded, before any paint. If the URL is
+//   /admin/* and sessionStorage already has a cached non-admin user,
+//   we `location.replace('/index.html')` immediately so the admin UI
+//   never flashes. For the no-cache case (first visit / fresh tab),
+//   the async `boot.shell({ requireAdmin: true })` redirects to
+//   /login.html (unauthenticated) or /index.html (non-admin) after
+//   hydration. While the async gate runs, the page is hidden via
+//   `html.lc-route-pending { visibility: hidden }` in style.css so
+//   the admin UI stays invisible until the gate resolves.
+//
 // Phase 5 ★ 前端框架 deliverable. See web/index.html for the canonical
 // page-boot pattern.
 
@@ -37,6 +49,81 @@
         // where the nav mounts but logout/login throw mysterious
         // `undefined` errors every call.
         throw new Error('litecode.app.js: api.js must be loaded before app.js');
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    //  Synchronous admin-route gate (Phase 5 ★ 前端权限拦截 / SPEC A24)
+    //
+    //  Runs the moment app.js is parsed — before DOMContentLoaded, before
+    //  any paint. The script load order is csp.js → api.js → app.js
+    //  (defer), so by the time we run the <body> is already parsed but
+    //  the browser hasn't composited a frame yet. That window is the
+    //  right place to install a no-flash permission check.
+    //
+    //  Two paths get protected:
+    //   1) `cached_user.role !== 'admin'` and URL is /admin/*:
+    //      Synchronous `location.replace('/index.html')`. The browser
+    //      cancels the in-flight render and starts over on /index.html
+    //      — admin UI never paints.
+    //
+    //   2) Cached user absent OR cached user IS admin: fall through
+    //      to the async `boot.shell({ requireAdmin: true })` below
+    //      to do the full hydrate-from-cookie check. While that async
+    //      gate runs, the body is hidden via `html.lc-route-pending`
+    //      (set synchronously here, removed by boot.shell). Without
+    //      this a logged-out user could still see the admin shell
+    //      render for ~50ms before the cookie probe rejects.
+    //
+    //  The /admin/* allowlist is intentionally explicit (rather than
+    //  `pathname.indexOf('/admin/') === 0`) so a future typo'd admin
+    //  path doesn't sneak through. We DO keep the prefix check as a
+    //  forward-compat fallback so any future admin page gets the
+    //  gate automatically — admins only ever add pages under /admin/.
+    // ────────────────────────────────────────────────────────────────────
+
+    var ADMIN_ROUTES = [
+        '/admin/dashboard.html',
+        '/admin/users.html',
+        '/admin/problems.html',
+        '/admin/problem-edit.html',
+        '/admin/audit-logs.html',
+    ];
+
+    function isAdminRoute(path) {
+        var p = path || (root.location && root.location.pathname) || '';
+        if (ADMIN_ROUTES.indexOf(p) !== -1) return true;
+        // Forward-compat: any future /admin/<file>.html also gates.
+        return p.indexOf('/admin/') === 0 && /\.html$/.test(p);
+    }
+
+    var onAdminRoute = isAdminRoute();
+
+    if (onAdminRoute) {
+        // Hide the body while the async gate resolves. App.js removes
+        // this class once boot.shell confirms the user is admin (or
+        // navigates away). The CSS rule lives in web/css/style.css §21.
+        document.documentElement.classList.add('lc-route-pending');
+
+        // If we have a cached user from a prior page and they're not
+        // an admin, redirect NOW. No flash, no API round-trip — the
+        // cached role is the single source of truth for the common
+        // "navigate within the SPA while logged in as non-admin" case.
+        try {
+            var cachedRaw = root.sessionStorage &&
+                root.sessionStorage.getItem('litecode:user');
+            if (cachedRaw) {
+                var cached = JSON.parse(cachedRaw);
+                if (cached && cached.role && cached.role !== 'admin') {
+                    root.location.replace('/index.html');
+                    // Bail out — the IIFE finishes but the page is
+                    // being torn down. Subsequent boot.shell on the
+                    // next page (index.html) will mount normally.
+                }
+            }
+        } catch (_) {
+            // Malformed JSON in sessionStorage — fall through, let
+            // the async gate figure it out from a fresh /auth/profile.
+        }
     }
 
     // ────────────────────────────────────────────────────────────────────
@@ -452,10 +539,23 @@
             return new Promise(function () { /* never resolves */ });
         }
 
+        // Resolve the user (or null), then apply the requireAdmin gate
+        // by delegating to litecode.guard.requireAdmin — single source
+        // of truth for the redirect policy so callers that use either
+        // boot.shell({requireAdmin}) or guard.requireAdmin() see the
+        // same behavior (login.html on no-user, index.html on non-admin).
         return hydrateUser().then(function (user) {
-            if (opts.requireAdmin && (!user || user.role !== 'admin')) {
-                toast('error', '没有管理员权限');
-                window.location.replace('/index.html');
+            if (opts.requireAdmin) {
+                return gate.requireAdmin(user, {
+                    silent: false,
+                    onAllowed: function (u) {
+                        // Allow the admin UI to paint now that the
+                        // async gate has cleared. This must run AFTER
+                        // hydrateUser so the cached-role race is gone.
+                        document.documentElement.classList.remove('lc-route-pending');
+                        return u;
+                    },
+                });
             }
             return user;
         });
@@ -473,13 +573,76 @@
     //  Returns Promise<user>. If the auth gate fails, api.js fires the
     //  `litecode:api-unauthorized` event, clears tokens, and redirects to
     //  /login.html — the caller never sees a value.
+    //
+    //  Phase 5 ★ 前端权限拦截 / SPEC §6.3 / A24:
+    //    requireAdmin differentiates the two failure modes — no user
+    //    at all → /login.html (so they can sign in and retry this
+    //    exact URL via the `?next=` round-trip); authenticated but
+    //    role !== 'admin' → /index.html (they're signed in fine,
+    //    just not allowed here). v1.2.21+ cookie path means a fresh
+    //    tab is "no user" until /auth/refresh succeeds, so this
+    //    path is more common than it looks.
     // ────────────────────────────────────────────────────────────────────
 
+    function nextUrl() {
+        return encodeURIComponent(
+            (root.location.pathname || '') +
+            (root.location.search  || '')
+        );
+    }
+
+    var gate = {
+        // Synchronous check on a hydrated user object. Used by both
+        // bootShell({requireAdmin}) and guard.requireAdmin(). The
+        // caller decides what to do with the verdict:
+        //   silent:true  → return verdict + redirect logic without
+        //                 any toast (used when the caller is going
+        //                 to show its own UI feedback).
+        //   onAllowed    → called when the user IS an admin; lets the
+        //                 caller un-hide the page or kick off extra
+        //                 side effects. The default is identity.
+        //
+        // Returns:
+        //   - on allowed: the user (after onAllowed has run)
+        //   - on denied:  null (the function has already redirected)
+        //   - always:     a Promise that resolves once the redirect
+        //                 has been issued; awaiting it lets the caller
+        //                 know not to do any further work.
+        requireAdmin: function (user, opts) {
+            opts = opts || {};
+            var onAllowed = opts.onAllowed || function (u) { return u; };
+            var silent   = !!opts.silent;
+
+            // Case 1: no user at all → login page with ?next= so they
+            // come back here after signing in.
+            if (!user) {
+                if (!silent) toast('warn', '请先登录');
+                root.location.replace('/login.html?next=' + nextUrl());
+                return new Promise(function () { /* never */ });
+            }
+            // Case 2: signed in but wrong role → home page. We still
+            // toast so the user understands why they were bounced
+            // (otherwise it looks like a navigation glitch).
+            if (user.role !== 'admin') {
+                if (!silent) toast('error', '没有管理员权限');
+                root.location.replace('/index.html');
+                return new Promise(function () { /* never */ });
+            }
+            return Promise.resolve(onAllowed(user));
+        },
+    };
+
     var guard = {
+        // Public alias so callers that prefer the imperative
+        // `litecode.guard.requireAdmin()` style get the same
+        // policy. Async-only — pulls a fresh profile from the
+        // server, so it costs one /auth/profile round-trip. For
+        // boot-time gating use boot.shell({requireAdmin:true})
+        // which re-uses the cached user (no extra request).
         requireAuth: function () {
             if (!api.auth.isLoggedIn()) {
-                var next = encodeURIComponent(window.location.pathname + window.location.search);
-                window.location.replace('/login.html?next=' + next);
+                var next = nextUrl();
+                root.location.replace('/login.html?next=' + next);
                 return new Promise(function () {});
             }
             // Hydrate (or refresh) the user, then return it.
@@ -488,18 +651,13 @@
 
         requireAdmin: function () {
             return guard.requireAuth().then(function (user) {
-                if (!user || user.role !== 'admin') {
-                    toast('error', '需要管理员权限');
-                    window.location.replace('/index.html');
-                    return new Promise(function () {});
-                }
-                return user;
+                return gate.requireAdmin(user, { silent: false });
             });
         },
 
         requireGuest: function () {
             if (api.auth.isLoggedIn()) {
-                window.location.replace('/index.html');
+                root.location.replace('/index.html');
                 return new Promise(function () {});
             }
             return Promise.resolve(null);

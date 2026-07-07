@@ -2614,3 +2614,29 @@ html.dark .lc-modal__backdrop {
     padding: 0;
     white-space: pre;
 }
+
+/* =====================================================================
+   21. Admin route gate — no-flash permission interception
+   ---------------------------------------------------------------------
+   Phase 5 ★ 前端权限拦截 (SPEC §6.3 / A24). app.js installs a
+   synchronous admin-route gate at IIFE load: if the URL is /admin/*
+   it adds `lc-route-pending` to <html> and either redirects
+   immediately (cached non-admin) or kicks off the async hydrate
+   gate (no cache / unknown user). The async gate removes the class
+   in boot.shell.resolve — so the body stays invisible until the
+   permission verdict is in.
+
+   `visibility: hidden` (instead of `display: none`) keeps the
+   layout box intact so the browser still has a stable first paint
+   target; once the class is removed the page just appears without
+   a reflow. `pointer-events: none` is a belt-and-braces guard for
+   any focusable element that may have been tab-targetable during
+   the brief hidden window.
+
+   The class is only ever present on <html>, so the rule is cheap.
+   ===================================================================== */
+
+html.lc-route-pending body {
+    visibility: hidden;
+    pointer-events: none;
+}
