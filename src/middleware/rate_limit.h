@@ -227,6 +227,22 @@ inline RateLimitQuota bulk_import_quota(const RateLimitConfig& cfg) {
     };
 }
 
+// stats_ranking_quota — SPEC §5.4 "GET /api/v1/stats/ranking" public
+// leaderboard. Per-IP, 1-minute window. The leaderboard is a hot read
+// (a single user might hit it many times to paginate / refresh) so
+// the cap is generous vs. the auth endpoints. We give it its own
+// bucket name ("stats.ranking") so its state is independent of
+// problems_public (an attacker scraping the problem space can't
+// exhaust the leaderboard quota and vice versa).
+inline RateLimitQuota stats_ranking_quota(const RateLimitConfig& cfg) {
+    return RateLimitQuota{
+        "stats.ranking",
+        cfg.stats_ranking_per_minute_per_ip,
+        std::chrono::minutes(1),
+        RateLimitKeyType::ByIp,
+    };
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 //  Section: RateLimitDecision
 //

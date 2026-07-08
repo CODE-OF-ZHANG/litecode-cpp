@@ -10,6 +10,19 @@
 //       profile.html (v1.2.30) renders client-side, so a Phase 5 page
 //       rewrite to point at this endpoint is a one-line fetch switch.
 //
+//   - GET /api/v1/stats/ranking — public, 30/min/IP
+//
+//       Returns the all-time leaderboard, sorted by
+//       `solved_count DESC, submission_count ASC, user_id ASC`. The
+//       first tier is "who solved the most distinct live problems";
+//       the second tier is "who reached that count with the fewest
+//       attempts" (a tiebreaker that rewards efficiency, the
+//       Codeforces/LeetCode convention); the third tier is a
+//       deterministic `user_id ASC` so the rank is stable across
+//       page refreshes (otherwise two users with identical stats
+//       could swap places on every request, confusing the
+//       "current user" highlight on /ranking.html).
+//
 // Wire shape (response, 200):
 //   {
 //     "user": {
@@ -38,11 +51,34 @@
 //     "request_id": "..."
 //   }
 //
-// Failure modes:
+//   /api/v1/stats/ranking wire shape (200):
+//   {
+//     "items": [
+//       {
+//         "rank":             1,
+//         "user":  { "id": 42, "username": "alice", "role": "user" },
+//         "solved_count":     25,
+//         "submission_count": 80,
+//         "acceptance_rate":  31.25
+//       },
+//       ...
+//     ],
+//     "total":   17,    // # of users with ≥ 1 AC on a live problem
+//     "limit":   100,
+//     "offset":  0,
+//     "request_id": "..."
+//   }
+//
+// Failure modes (profile):
 //   - No / bad access token        → 401 UNAUTHORIZED
 //   - Username path component has
 //     bad shape (regex / length)   → 400 INVALID_INPUT with details.field=username
 //   - User does not exist          → 404 NOT_FOUND with details.username
+//   - Any repo throw               → 500 INTERNAL_ERROR
+//
+// Failure modes (ranking):
+//   - Bad limit/offset             → 400 INVALID_INPUT with details.field
+//   - 30/min/IP rate limit exceeded→ 429 RATE_LIMITED (+ Retry-After + X-RateLimit-* headers)
 //   - Any repo throw               → 500 INTERNAL_ERROR
 //
 // Design notes:
@@ -59,6 +95,13 @@
 //     does NOT count in the difficulty breakdown — the public
 //     difficulty list never shows tombstones, and the per-user
 //     breakdown follows the same rule.
+//   - The leaderboard query is implemented in a single SQL with a
+//     derived-table aggregation (`submissions GROUP BY user_id`) JOINed
+//     back to `users`. We then `WHERE` on `solved_count > 0` so a
+//     user who has submitted but never AC'd doesn't show up at the
+//     bottom with rank=N+1. This matches the SPEC §11 F11
+//     "按解题数/通过率排名" semantic — solving zero problems is
+//     not a "rank" position.
 //   - We deliberately do NOT include `code` / `password_hash` /
 //     `last_login_ip` in the response. The profile page has no need
 //     for them, and surfacing them is a confidentiality regression
@@ -94,18 +137,21 @@
 //   litecode::register_stats_routes(server, pool, limiter, lax_rate_limit(), jwt_cfg);
 //   auto h = start_server(&server);
 //   auto r = h.client->Get("/api/v1/stats/profile/alice");
+//   auto r2 = h.client->Get("/api/v1/stats/ranking?limit=20");
 
 #pragma once
 
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <typeinfo>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -115,6 +161,7 @@
 #include "../db/connection_pool.h"              // ConnectionPool
 #include "../db/problem_repo.h"                 // problem_repo::count (live problems)
 #include "../db/submission_repo.h"              // submission_repo::count
+#include "../middleware/rate_limit.h"           // consume_rate_limit / RateLimitQuota
 #include "../logger.h"                          // LOG_INFO / LOG_WARN / LOG_ERROR
 #include "../middleware/auth_middleware.h"      // require_authentication / Claims
 #include "../routes/error_handler.h"            // ApiException / ErrorCode / send_error
@@ -404,6 +451,166 @@ inline std::unordered_map<std::string, int> count_solved_by_difficulty(
     }
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+//  Leaderboard helpers (Phase 6 ★ GET /api/v1/stats/ranking)
+//
+//  The leaderboard is one page-worth of users with at least 1 AC on
+//  a live problem, sorted by `solved_count DESC, submission_count
+//  ASC, user_id ASC`. Each row carries enough to render a row in
+//  /ranking.html: rank, user (id/username/role), solved_count,
+//  submission_count, acceptance_rate.
+//
+//  Implementation note: the SQL is one statement with a derived
+//  table. The derived table aggregates per-user counts once, then
+//  we JOIN it back to `users` for username / role / id and apply
+//  the WHERE / ORDER BY / LIMIT in the outer SELECT. This shape
+//  matches what MySQL 8.x's optimizer expects (a `GROUP BY` over
+//  submissions with a non-correlated subquery in WHERE is the
+//  canonical "rank users by solve count" pattern).
+//
+//  Soft-deleted problems are excluded (same rule as the per-user
+//  stats). Admin users appear in the ranking if they have
+//  submissions too — there is no "admin role" filter because the
+//  front-end wants to show the entire community.
+// ────────────────────────────────────────────────────────────────────────────
+
+// LeaderboardRow — a single row in the leaderboard, projection of
+// (user, aggregate) JOIN. Same shape as the response items[]. Used
+// by the route handler and the unit tests.
+struct LeaderboardRow {
+    int                user_id           = 0;
+    std::string        username;
+    std::string        role;
+    int                solved_count      = 0;
+    int                submission_count  = 0;
+    double             acceptance_rate   = 0.0;
+};
+
+// kLeaderboardDefaultLimit — SPEC §5.4 "默认 100 名". Surfaced as a
+// constant so the front-end (`/ranking.html`) and the route handler
+// agree on the default without cross-referencing headers.
+inline constexpr int kLeaderboardDefaultLimit = 100;
+// kLeaderboardMaxLimit — defense-in-depth upper bound. SPEC §5.4
+// doesn't pin a hard cap, but unbounded LIMITs on a per-IP
+// 30/min quota are still a DoS surface (an attacker can request
+// 10M rows in one shot). 200 is generous for an OJ and keeps the
+// page payload under ~50KB JSON.
+inline constexpr int kLeaderboardMaxLimit     = 200;
+
+// count_ranked_users — returns the total # of users that appear in
+// the leaderboard (i.e. have ≥ 1 AC on a live problem). Mirrors the
+// WHERE clause in list_leaderboard() so the response `total` field
+// matches the actual listable population.
+inline int count_ranked_users(ConnectionPool& pool) {
+    auto conn = pool.acquire();
+    try {
+        const auto v = conn.fetch_scalar<std::int64_t>(
+            "SELECT COUNT(DISTINCT s.user_id) "
+            "FROM submissions s "
+            "JOIN problems p ON p.id = s.problem_id "
+            "WHERE s.status = 'ac' "
+            "  AND p.is_deleted = FALSE");
+        return v.has_value() ? static_cast<int>(*v) : 0;
+    } catch (const mysqlx::Error& e) {
+        throw std::runtime_error(
+            std::string("count_ranked_users: ") + e.what());
+    }
+}
+
+// list_leaderboard — returns one page of LeaderboardRow, ordered
+// solved_count DESC, submission_count ASC, user_id ASC.
+//
+// The query:
+//   SELECT u.id, u.username, u.role,
+//          agg.solved_count, agg.submission_count
+//   FROM (
+//     SELECT s.user_id,
+//            COUNT(DISTINCT CASE WHEN s.status='ac' THEN s.problem_id END)
+//              AS solved_count,
+//            COUNT(*) AS submission_count
+//     FROM submissions s
+//     JOIN problems p ON p.id = s.problem_id AND p.is_deleted = FALSE
+//     GROUP BY s.user_id
+//     HAVING solved_count > 0
+//   ) agg
+//   JOIN users u ON u.id = agg.user_id
+//   ORDER BY solved_count DESC, submission_count ASC, u.id ASC
+//   LIMIT ? OFFSET ?
+//
+// We use a derived table (a) so MySQL evaluates the GROUP BY once
+// and the outer SELECT can be small + deterministic, (b) so the
+// HAVING clause filters out zero-solve users in the same pass
+// (otherwise we'd see them at rank > total and the WHERE user_id
+// in (SELECT ...) approach would be slower).
+inline std::vector<LeaderboardRow> list_leaderboard(
+        ConnectionPool& pool, int limit, int offset) {
+    std::vector<LeaderboardRow> out;
+    auto conn = pool.acquire();
+    try {
+        mysqlx::SqlResult rs = conn.execute(
+            "SELECT u.id, u.username, u.role, "
+            "       agg.solved_count, agg.submission_count "
+            "FROM ( "
+            "  SELECT s.user_id, "
+            "         COUNT(DISTINCT CASE WHEN s.status = 'ac' "
+            "                              THEN s.problem_id END) "
+            "           AS solved_count, "
+            "         COUNT(*) AS submission_count "
+            "  FROM submissions s "
+            "  JOIN problems p ON p.id = s.problem_id "
+            "                    AND p.is_deleted = FALSE "
+            "  GROUP BY s.user_id "
+            "  HAVING solved_count > 0 "
+            ") agg "
+            "JOIN users u ON u.id = agg.user_id "
+            "ORDER BY agg.solved_count DESC, "
+            "         agg.submission_count ASC, "
+            "         u.id ASC "
+            "LIMIT ? OFFSET ?",
+            limit, offset);
+        for (auto row : rs) {
+            LeaderboardRow r;
+            try {
+                r.user_id          = static_cast<int>(row[0].get<std::int64_t>());
+                r.username         = row[1].get<std::string>();
+                r.role             = row[2].get<std::string>();
+                r.solved_count     = static_cast<int>(row[3].get<std::int64_t>());
+                r.submission_count = static_cast<int>(row[4].get<std::int64_t>());
+            } catch (const std::exception&) {
+                // Skip individual malformed rows so one bad row
+                // doesn't tank the whole page.
+                continue;
+            }
+            // acceptance_rate = submissions / solved (an "average
+            // attempts per AC" number, not a percentage). Capped
+            // to 100.0 for legibility: a user with 80 ACs / 80
+            // submissions is 100% (no retries); a user with 25
+            // ACs / 80 submissions is 31.25%.
+            r.acceptance_rate =
+                (r.solved_count > 0)
+                    ? (static_cast<double>(r.submission_count) * 100.0 /
+                       static_cast<double>(r.solved_count))
+                    : 0.0;
+            out.push_back(std::move(r));
+        }
+        return out;
+    } catch (const mysqlx::Error& e) {
+        throw std::runtime_error(
+            std::string("list_leaderboard: ") + e.what());
+    }
+}
+
+// rank_for_offset — given the offset of a row, return its
+// absolute rank (= offset + 1). Used by the handler when
+// assigning `rank` to each item. We compute it on the server side
+// because the client only sees one page at a time, so it can't
+// trivially rank itself; doing it here also means the rank
+// always reflects the actual ordering, not the page-local
+// order (which can have gaps if the caller is paginating).
+inline int rank_for_offset(int offset, int page_index) {
+    return offset + page_index + 1;
+}
+
 }  // namespace detail
 }  // namespace stats_routes
 
@@ -533,6 +740,258 @@ inline nlohmann::json serialize_user_meta(
         {"role",       u.role},
         {"created_at", u.created_at},
     };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  Leaderboard row serializer (Phase 6 ★ GET /api/v1/stats/ranking)
+//
+//  Mirrors the v1.2.31 front-end contract (`/ranking.html` already
+//  has a normalizeRankItem() helper that's tolerant to multiple
+//  field names — solved/solved_count, submissions/submission_count
+//  — but the canonical wire shape we own here is unambiguous):
+//
+//      {
+//        "rank":             1,
+//        "user":  { "id": 42, "username": "alice", "role": "user" },
+//        "solved_count":     25,
+//        "submission_count": 80,
+//        "acceptance_rate":  31.25
+//      }
+//
+//  We deliberately OMIT `email` / `avatar` / `created_at` /
+//  `last_login` / `last_login_ip` — none are needed for the
+//  leaderboard row, and surfacing them is a confidentiality
+//  regression (a /ranking scraper would otherwise get every
+//  user's email in plain text). The /profile/:username endpoint
+//  owns the "full user block" path.
+// ────────────────────────────────────────────────────────────────────────────
+
+inline nlohmann::json serialize_leaderboard_row(
+        const litecode::stats_routes::detail::LeaderboardRow& r) {
+    return nlohmann::json{
+        {"rank",             0 /* filled in by handler */},
+        {"user",             nlohmann::json{
+                                  {"id",       r.user_id},
+                                  {"username", r.username},
+                                  {"role",     r.role},
+                              }},
+        {"solved_count",     r.solved_count},
+        {"submission_count", r.submission_count},
+        {"acceptance_rate",  r.acceptance_rate},
+    };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  Query-string parser for GET /api/v1/stats/ranking
+//
+//  Recognized params:
+//    - limit  (optional, default 100, range [1, kLeaderboardMaxLimit])
+//    - offset (optional, default 0,  >= 0)
+//
+//  Anything else is ignored (future /ranking.html may add
+//  ?difficulty=easy to filter — we just don't yet). Bad shape
+//  returns false and writes a 400 envelope; success returns true
+//  and populates `out`.
+// ────────────────────────────────────────────────────────────────────────────
+
+inline bool parse_ranking_query(const httplib::Request& req,
+                                httplib::Response&     res,
+                                int& limit, int& offset) {
+    limit  = litecode::stats_routes::detail::kLeaderboardDefaultLimit;
+    offset = 0;
+
+    if (req.has_param("limit")) {
+        const std::string raw = req.get_param_value("limit");
+        // Mirror the parse_int_param() shape used in problem_routes.h
+        // so the error envelope looks identical across endpoints.
+        if (raw.empty()) {
+            send_error(res, 400, litecode::ErrorCode::INVALID_INPUT,
+                       "limit must be a positive integer",
+                       {{"field", "limit"},
+                        {"value", raw}});
+            return false;
+        }
+        try {
+            std::size_t consumed = 0;
+            const int v = std::stoi(raw, &consumed);
+            if (consumed != raw.size() || v < 1) {
+                send_error(res, 400, litecode::ErrorCode::INVALID_INPUT,
+                           "limit must be a positive integer",
+                           {{"field", "limit"},
+                            {"value", raw}});
+                return false;
+            }
+            if (v > litecode::stats_routes::detail::kLeaderboardMaxLimit) {
+                // Clamp, don't reject — same lenient policy as the
+                // public problem list (a future caller shouldn't
+                // have to know the cap; clamping is friendlier
+                // and the cap is a server-side safety, not a
+                // contract).
+                limit = litecode::stats_routes::detail::kLeaderboardMaxLimit;
+            } else {
+                limit = v;
+            }
+        } catch (const std::exception&) {
+            send_error(res, 400, litecode::ErrorCode::INVALID_INPUT,
+                       "limit must be a positive integer",
+                       {{"field", "limit"},
+                        {"value", raw}});
+            return false;
+        }
+    }
+    if (req.has_param("offset")) {
+        const std::string raw = req.get_param_value("offset");
+        if (raw.empty()) {
+            send_error(res, 400, litecode::ErrorCode::INVALID_INPUT,
+                       "offset must be a non-negative integer",
+                       {{"field", "offset"},
+                        {"value", raw}});
+            return false;
+        }
+        try {
+            std::size_t consumed = 0;
+            const int v = std::stoi(raw, &consumed);
+            if (consumed != raw.size() || v < 0) {
+                send_error(res, 400, litecode::ErrorCode::INVALID_INPUT,
+                           "offset must be a non-negative integer",
+                           {{"field", "offset"},
+                            {"value", raw}});
+                return false;
+            }
+            offset = v;
+        } catch (const std::exception&) {
+            send_error(res, 400, litecode::ErrorCode::INVALID_INPUT,
+                       "offset must be a non-negative integer",
+                       {{"field", "offset"},
+                        {"value", raw}});
+            return false;
+        }
+    }
+    return true;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  GET /api/v1/stats/ranking — Phase 6 ★
+//  (SPEC §5.4, §11 Phase 6, F11)
+//
+//  Wire flow:
+//    1) consume_rate_limit()             — 30/min/IP (stats.ranking bucket)
+//                                           429 + Retry-After on deny
+//    2) parse_ranking_query()            — limit + offset, 400 on bad shape
+//    3) count_ranked_users()             — single COUNT for the `total` field
+//    4) list_leaderboard(limit, offset)  — page of rows, throws → 500
+//    5) serialize + send_success()       — 200 + {items, total, limit, offset}
+//
+//  Authorization: NONE. SPEC §5.4 row 2 reads "公开" (public).
+//  No require_authentication() call. A bearer token (if present)
+//  is ignored — the response shape is identical whether the caller
+//  is logged in or not. The /ranking.html front-end uses
+//  `litecode.api.auth` solely to highlight the "current user" row
+//  with the `.lc-rank-row--me` class; the data itself never depends
+//  on who you are.
+//
+//  Rate limit: 30/min/IP via stats_ranking_quota(rate_cfg). The
+//  response carries X-RateLimit-* headers via consume_rate_limit().
+//
+//  Soft delete: ALWAYS applied to the problem JOIN. A user with
+//  only ACs against tombstones does not appear in the ranking
+//  (this mirrors the per-user stats semantics).
+//
+//  What we DON'T do here:
+//    - We don't write to audit_logs. Public reads are not
+//      auditable actions.
+//    - We don't surface email / last_login / last_login_ip /
+//      avatar. The /profile/:username endpoint owns that.
+//    - We don't apply a `role` filter. Admin users appear in the
+//      ranking if they have submissions — the front-end wants the
+//      full community view.
+// ────────────────────────────────────────────────────────────────────────────
+
+inline void get_ranking_handler(
+        httplib::Response&               res,
+        const httplib::Request&          req,
+        litecode::ConnectionPool&        pool,
+        litecode::RateLimiter&           limiter,
+        const litecode::RateLimitConfig& rate_cfg) {
+
+    // 1) Rate limit. consume_rate_limit() throws ApiException(429,
+    //    RATE_LIMITED) on deny (the wrap() in server.h catches it
+    //    and emits the unified envelope, with Retry-After +
+    //    X-RateLimit-* already stamped on res). On success it
+    //    stamps the X-RateLimit-* headers and we keep going.
+    consume_rate_limit(res, req, limiter,
+                       litecode::stats_ranking_quota(rate_cfg));
+
+    // 2) Parse query.
+    int limit  = 0;
+    int offset = 0;
+    if (!parse_ranking_query(req, res, limit, offset)) {
+        return;  // 400 already on the wire
+    }
+
+    // 3) Total — for the `total` field of the response. Done in a
+    //    separate query so a 0-row result still gives the client the
+    //    correct denominator. (We could fold this into the page
+    //    query with a `SQL_CALC_FOUND_ROWS`-style trick, but that
+    //    is deprecated in MySQL 8.x and adds a round-trip anyway.)
+    int total = 0;
+    try {
+        total = stats_routes::detail::count_ranked_users(pool);
+    } catch (const std::exception& e) {
+        LOG_ERROR("stats_ranking: count_ranked_users threw",
+                  {{"type",   typeid(e).name()},
+                   {"reason", e.what()}});
+        send_error(res, 500, litecode::ErrorCode::INTERNAL_ERROR,
+                   std::string("internal error: ") + e.what());
+        return;
+    }
+
+    // 4) Page. Skip the SQL when total==0 (avoids a meaningless
+    //    round-trip) and when offset >= total (out-of-range page
+    //    returns empty items, total still says the real total —
+    //    the front-end can detect "we walked off the end" and stop
+    //    paginating).
+    std::vector<stats_routes::detail::LeaderboardRow> rows;
+    if (total > 0 && offset < total) {
+        try {
+            rows = stats_routes::detail::list_leaderboard(
+                pool, limit, offset);
+        } catch (const std::exception& e) {
+            LOG_ERROR("stats_ranking: list_leaderboard threw",
+                      {{"type",   typeid(e).name()},
+                       {"reason", e.what()},
+                       {"limit",  std::to_string(limit)},
+                       {"offset", std::to_string(offset)}});
+            send_error(res, 500, litecode::ErrorCode::INTERNAL_ERROR,
+                       std::string("internal error: ") + e.what());
+            return;
+        }
+    }
+
+    // 5) Serialize. rank = offset + page_index + 1 so it
+    //    represents the absolute position (1-indexed) — the
+    //    front-end's medal table (🥇🥈🥉) keys off this.
+    nlohmann::json items = nlohmann::json::array();
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        nlohmann::json item = serialize_leaderboard_row(rows[i]);
+        item["rank"] =
+            stats_routes::detail::rank_for_offset(offset,
+                                                   static_cast<int>(i));
+        items.push_back(std::move(item));
+    }
+
+    LOG_INFO("stats_ranking: served",
+             {{"total",    std::to_string(total)},
+              {"returned", std::to_string(items.size())},
+              {"limit",    std::to_string(limit)},
+              {"offset",   std::to_string(offset)}});
+
+    send_success(res, nlohmann::json{
+        {"items",  std::move(items)},
+        {"total",  total},
+        {"limit",  limit},
+        {"offset", offset},
+    });
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -694,8 +1153,8 @@ inline void get_user_profile_stats_handler(
 
 inline HttpServer& register_stats_routes(HttpServer&              server,
                                         ConnectionPool&          pool,
-                                        RateLimiter&             /*limiter*/,
-                                        const RateLimitConfig&   /*rate_cfg*/,
+                                        RateLimiter&             limiter,
+                                        const RateLimitConfig&   rate_cfg,
                                         const JwtConfig&         jwt_cfg) {
 
     // GET /api/v1/stats/profile/:username — Phase 6 ★
@@ -713,6 +1172,39 @@ inline HttpServer& register_stats_routes(HttpServer&              server,
                 throw;
             } catch (const std::exception& e) {
                 LOG_ERROR("stats_profile: handler threw",
+                          {{"type",   typeid(e).name()},
+                           {"reason", e.what()}});
+                if (res.body.empty()) {
+                    send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                               std::string("internal error: ") + e.what());
+                } else {
+                    throw;
+                }
+            }
+        });
+
+    // GET /api/v1/stats/ranking — Phase 6 ★
+    // (SPEC §5.4, F11). Public, 30/min/IP. Query params: ?limit (default
+    // 100, max 200), ?offset (default 0). The leaderboard is
+    // hard-sorted by `solved_count DESC, submission_count ASC,
+    // user_id ASC`; the `rank` field on each item is computed from
+    // (offset + page_index + 1) so the front-end gets absolute
+    // positions without a separate "compute rank" round-trip.
+    //
+    // We register the limiter / rate_cfg capture BY REFERENCE so the
+    // server's lifetime extends over the test fixture's lifetime
+    // (and `rate_cfg` BY VALUE to defend against a temporary going
+    // out of scope — same defensive pattern as problem_routes.h).
+    server.get("/api/v1/stats/ranking",
+        [&pool, &limiter, rate_cfg]
+        (const httplib::Request& req, httplib::Response& res) {
+            try {
+                get_ranking_handler(res, req, pool, limiter, rate_cfg);
+            } catch (const ApiException&) {
+                // Already an envelope — let server.h wrap() emit it.
+                throw;
+            } catch (const std::exception& e) {
+                LOG_ERROR("stats_ranking: handler threw",
                           {{"type",   typeid(e).name()},
                            {"reason", e.what()}});
                 if (res.body.empty()) {

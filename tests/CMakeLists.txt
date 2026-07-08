@@ -45,6 +45,7 @@ add_executable(test_submission       unit/test_submission.cpp)
 add_executable(test_submission_sse   unit/test_submission_sse.cpp)
 add_executable(test_auth_cookie_storage unit/test_auth_cookie_storage.cpp)
 add_executable(test_stats_profile     unit/test_stats_profile.cpp)
+add_executable(test_stats_ranking     unit/test_stats_ranking.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -682,3 +683,31 @@ if(MSVC)
     target_compile_options(test_stats_profile PRIVATE /bigobj)
 endif()
 add_test(NAME stats_profile        COMMAND test_stats_profile)
+
+# stats_routes.h (Phase 6 ★) — GET /api/v1/stats/ranking
+# (SPEC §5.4, F11). Public endpoint with 30/min/IP rate limit.
+# End-to-end tests spin up the full HttpServer + ConnectionPool +
+# RateLimiter + JWT stack, seed users / problems / submissions via
+# raw SQL (same ODR workaround as test_stats_profile), and assert
+# the envelope shape end-to-end. The pure unit tests
+# (parse_ranking_query + serialize_leaderboard_row + rank_for_offset
+# + leaderboard constants) run without MySQL. Same link set as
+# test_stats_profile (the route handler uses consume_rate_limit
+# + reads via user_repo / submission_repo / problem_repo).
+target_link_libraries(test_stats_ranking PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    jwt-cpp::jwt-cpp
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp)
+target_include_directories(test_stats_ranking PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+# Same /bigobj workaround as test_stats_profile: stats_routes.h
+# pulls in user_repo.h + submission_repo.h + problem_repo.h.
+if(MSVC)
+    target_compile_options(test_stats_ranking PRIVATE /bigobj)
+endif()
+add_test(NAME stats_ranking        COMMAND test_stats_ranking)
