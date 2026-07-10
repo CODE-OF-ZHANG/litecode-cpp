@@ -47,6 +47,7 @@ add_executable(test_auth_cookie_storage unit/test_auth_cookie_storage.cpp)
 add_executable(test_stats_profile     unit/test_stats_profile.cpp)
 add_executable(test_stats_ranking     unit/test_stats_ranking.cpp)
 add_executable(test_admin_users       unit/test_admin_users.cpp)
+add_executable(test_admin_stats       unit/test_admin_stats.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -747,3 +748,38 @@ if(MSVC)
     target_compile_options(test_admin_users PRIVATE /bigobj)
 endif()
 add_test(NAME admin_users          COMMAND test_admin_users)
+
+# admin_stats_routes.h (Phase 6 ★ v1.2.42) — GET /api/v1/admin/stats
+# (SPEC §5.5). The pure unit tests cover the helper shape
+# (all_status_keys / all_difficulty_keys / zero_padded_* /
+# serialize_judge_subsystem / serialize_system_stats /
+# snapshot_judge_subsystem). The integration tests cover the full
+# HttpServer + ConnectionPool + JWT stack path with seeded data.
+# The (c) tests additionally wire a real JudgeScheduler +
+# WarmPool + docker_client (with ping-failing URL) to confirm the
+# subsystem accessors flow through without crashing. Same link set
+# as test_judge_scheduler (the live-subsystem test transitively
+# needs docker_client + warm_pool + judge_scheduler headers).
+target_link_libraries(test_admin_stats PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    jwt-cpp::jwt-cpp
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp
+    litecode_bcrypt)
+target_include_directories(test_admin_stats PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db
+    ${CMAKE_SOURCE_DIR}/src/judge)
+# admin_stats_routes.h transitively pulls in user_repo.h +
+# submission_repo.h + problem_repo.h + audit_log_repo.h + (in
+# the (c) tests) judge_scheduler.h + warm_pool.h. Together this
+# blows past MSVC's COFF section limit (C1128); /bigobj is the
+# documented workaround (same fix as test_admin_users /
+# test_admin_problem_crud / test_admin_bulk_import).
+if(MSVC)
+    target_compile_options(test_admin_stats PRIVATE /bigobj)
+endif()
+add_test(NAME admin_stats          COMMAND test_admin_stats)
