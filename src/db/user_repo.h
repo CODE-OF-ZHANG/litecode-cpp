@@ -464,5 +464,177 @@ inline bool update_role(ConnectionPool& pool, int id, std::string_view role) {
     return rs.getAffectedItemsCount() > 0;
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+//  Admin list / count (Phase 6 ★)
+//
+//  These back GET /api/v1/admin/users. We deliberately keep the search
+//  and role filters as a small struct (same shape as ProblemListFilter)
+//  so the route layer can translate a JSON query string into a filter
+//  without touching SQL.
+//
+//  Note: the route handler `admin_user_routes.h` joins `submissions`
+//  via a subquery to compute `submission_count` per row (one extra
+//  GROUP BY per page). The list itself stays on the `users` table so
+//  the simple cases (empty / few users) stay fast — we don't want
+//  the admin list to block on a full `users × submissions` join.
+//
+//  Pagination: limit defaults to kDefaultListLimit (20) and is
+//  clamped to kMaxListLimit (100) by clamp_list_filter() so a
+//  careless client can't ask for 10M rows in one shot.
+// ────────────────────────────────────────────────────────────────────────────
+
+struct UserListFilter {
+    std::optional<std::string>  role;       // exact match: "user" | "admin"
+    std::optional<std::string>  q;          // substring search on username
+    int                         limit       = 20;
+    int                         offset      = 0;
+};
+
+inline constexpr int kDefaultUserListLimit = 20;
+inline constexpr int kMaxUserListLimit     = 100;
+
+inline void clamp_user_list_filter(UserListFilter& f) {
+    if (f.limit  <= 0)            f.limit  = kDefaultUserListLimit;
+    if (f.limit  > kMaxUserListLimit) f.limit = kMaxUserListLimit;
+    if (f.offset < 0)             f.offset = 0;
+}
+
+// count — total number of users matching the filter (used as the
+// `total` field of the list response so the front-end can paginate
+// without a second round-trip).
+inline int count_users(ConnectionPool& pool, const UserListFilter& f_in) {
+    UserListFilter f = f_in;
+    // limit / offset don't affect COUNT but clamp anyway so a
+    // single filter struct can be shared.
+    clamp_user_list_filter(f);
+    auto conn = pool.acquire();
+    try {
+        // We build the WHERE clause + bind chain dynamically so a
+        // missing filter doesn't add a useless `AND role = ?`
+        // predicate. The pattern is the same as
+        // audit_log_repo::list() — one chain, no dispatch table.
+        // Build the FINAL sql string before constructing the
+        // SqlStatement; see comment in list_users() for why
+        // incremental .sql() + .append() silently produces
+        // "Too many arguments" at execute() time.
+        std::string sql = "SELECT COUNT(*) FROM users WHERE 1=1";
+        std::vector<std::string> str_binds;
+        if (f.role.has_value()) {
+            sql += " AND role = ?";
+            str_binds.push_back(*f.role);
+        }
+        if (f.q.has_value() && !f.q->empty()) {
+            // MySQL's LIKE is case-insensitive by default for
+            // utf8mb4_general_ci / utf8mb4_0900_ai_ci, so a
+            // substring search "alice" matches "Alice" too.
+            // We escape LIKE metacharacters (% and _) so a
+            // search for "100%" doesn't act as a wildcard.
+            std::string escaped = *f.q;
+            for (auto& c : escaped) {
+                if (c == '%' || c == '_') c = '\\';
+            }
+            sql += " AND username LIKE ?";
+            str_binds.push_back("%" + escaped + "%");
+        }
+        mysqlx::SqlStatement stmt = conn.session().sql(sql);
+        for (const auto& s : str_binds) stmt.bind(s);
+        auto rs = stmt.execute();
+        for (auto row : rs) {
+            return static_cast<int>(row[0].get<std::int64_t>());
+        }
+        return 0;
+    } catch (const mysqlx::Error& e) {
+        throw UserRepoError(std::string("user_repo::count_users: ") + e.what());
+    }
+}
+
+// list — one page of user rows matching the filter, ordered by
+// id ASC (oldest first; admin pages want stable ordering for
+// pagination). Each row carries a `submission_count` derived from
+// a correlated subquery so a single SELECT covers the whole page.
+//
+// The submission_count is intentionally a correlated subquery
+// rather than a JOIN + GROUP BY because:
+//   1. Most admin pages have small result sets (a few hundred
+//      users at most in MVP) — the subquery cost is bounded.
+//   2. A LEFT JOIN with GROUP BY would change the row shape
+//      and force us to coalesce NULLs for users with zero
+//      submissions; the subquery returns 0 naturally.
+//   3. MySQL's optimizer can often rewrite the subquery to a
+//      derived table once the user table is small.
+//
+// If the admin table grows past 10k users we'll revisit this
+// (denormalize submission_count into users via a trigger, or
+// accept the join cost).
+struct UserListRow {
+    UserRow         user;            // full user row (no password_hash in response)
+    int             submission_count = 0;
+};
+
+inline std::vector<UserListRow> list_users(ConnectionPool& pool,
+                                            const UserListFilter& f_in) {
+    UserListFilter f = f_in;
+    clamp_user_list_filter(f);
+    std::vector<UserListRow> out;
+    auto conn = pool.acquire();
+    try {
+        // Build the WHERE clause + bind values first; pass the
+        // FINAL sql string to conn.session().sql() so the
+        // SqlStatement sees every `?` placeholder it will later
+        // bind. Building sql + binds incrementally before
+        // constructing SqlStatement is the canonical pattern
+        // documented in audit_log_repo::list() — passing an
+        // early sql string to .sql() and then appending more
+        // placeholders silently produces "Too many arguments"
+        // at execute() time because the SqlStatement has the
+        // shorter sql cached.
+        std::string sql =
+            "SELECT u.id, u.username, u.password_hash, u.role, u.email, u.avatar, "
+            "       DATE_FORMAT(u.created_at, '%Y-%m-%d %H:%i:%s') AS created_at, "
+            "       DATE_FORMAT(u.last_login,  '%Y-%m-%d %H:%i:%s') AS last_login, "
+            "       u.last_login_ip, "
+            "       (SELECT COUNT(*) FROM submissions s WHERE s.user_id = u.id) "
+            "         AS submission_count "
+            "FROM users u WHERE 1=1";
+        std::vector<std::string> str_binds;
+        if (f.role.has_value()) {
+            sql += " AND u.role = ?";
+            str_binds.push_back(*f.role);
+        }
+        if (f.q.has_value() && !f.q->empty()) {
+            std::string escaped = *f.q;
+            for (auto& c : escaped) {
+                if (c == '%' || c == '_') c = '\\';
+            }
+            sql += " AND u.username LIKE ?";
+            str_binds.push_back("%" + escaped + "%");
+        }
+        sql += " ORDER BY u.id ASC LIMIT ? OFFSET ?";
+
+        mysqlx::SqlStatement stmt = conn.session().sql(sql);
+        for (const auto& s : str_binds) {
+            stmt.bind(s);
+        }
+        stmt.bind(static_cast<std::int64_t>(f.limit));
+        stmt.bind(static_cast<std::int64_t>(f.offset));
+        mysqlx::SqlResult rs = stmt.execute();
+        for (auto row : rs) {
+            try {
+                UserListRow r;
+                r.user            = detail::row_to_user(row);
+                r.submission_count = static_cast<int>(
+                    row[9].get<std::int64_t>());
+                out.push_back(std::move(r));
+            } catch (const std::exception&) {
+                // Skip malformed rows so one bad row doesn't
+                // tank the whole page.
+            }
+        }
+        return out;
+    } catch (const mysqlx::Error& e) {
+        throw UserRepoError(std::string("user_repo::list_users: ") + e.what());
+    }
+}
+
 } // namespace user_repo
 } // namespace litecode

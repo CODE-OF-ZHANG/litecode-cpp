@@ -138,6 +138,8 @@ struct RateLimitConfig {
     int admin_write_per_minute             = 30;
     int bulk_import_per_hour               = 5;
     int stats_ranking_per_minute_per_ip    = 30;   // GET /api/v1/stats/ranking (SPEC §5.4)
+    int admin_users_list_per_minute        = 60;   // GET /api/v1/admin/users (SPEC §5.5)
+    int admin_users_role_per_minute        = 10;   // PUT /api/v1/admin/users/:id/role (SPEC §5.5)
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -566,13 +568,21 @@ inline AppConfig load_config(const std::string& env_file_path = ".env",
     cfg.rate_limit.stats_ranking_per_minute_per_ip =
         detail::getenv_int_or<int>("RATE_LIMIT_RANKING_PER_MIN",
                                    cfg.rate_limit.stats_ranking_per_minute_per_ip);
+    cfg.rate_limit.admin_users_list_per_minute =
+        detail::getenv_int_or<int>("RATE_LIMIT_ADMIN_USERS_LIST_PER_MIN",
+                                   cfg.rate_limit.admin_users_list_per_minute);
+    cfg.rate_limit.admin_users_role_per_minute =
+        detail::getenv_int_or<int>("RATE_LIMIT_ADMIN_USERS_ROLE_PER_MIN",
+                                   cfg.rate_limit.admin_users_role_per_minute);
 
     for (int q : {cfg.rate_limit.auth_register_per_minute_per_ip,
                   cfg.rate_limit.auth_login_per_minute_per_ip,
                   cfg.rate_limit.submission_per_minute_per_user,
                   cfg.rate_limit.admin_write_per_minute,
                   cfg.rate_limit.bulk_import_per_hour,
-                  cfg.rate_limit.stats_ranking_per_minute_per_ip}) {
+                  cfg.rate_limit.stats_ranking_per_minute_per_ip,
+                  cfg.rate_limit.admin_users_list_per_minute,
+                  cfg.rate_limit.admin_users_role_per_minute}) {
         if (q < 1)
             throw ConfigError("rate-limit quotas must be >= 1");
     }
@@ -742,7 +752,9 @@ inline std::string redacted_dump(const AppConfig& cfg) {
        << " submit="                  << cfg.rate_limit.submission_per_minute_per_user << "/min"
        << " admin="                   << cfg.rate_limit.admin_write_per_minute << "/min"
        << " import="                  << cfg.rate_limit.bulk_import_per_hour << "/hour"
-       << " ranking="                 << cfg.rate_limit.stats_ranking_per_minute_per_ip << "/min\n"
+       << " ranking="                 << cfg.rate_limit.stats_ranking_per_minute_per_ip << "/min"
+       << " users_list="              << cfg.rate_limit.admin_users_list_per_minute << "/min"
+       << " users_role="              << cfg.rate_limit.admin_users_role_per_minute << "/min\n"
        << "  cookie.enabled="         << (cfg.cookie.enabled ? "true" : "false")
        << " cookie.name="             << cfg.cookie.name
        << " cookie.path="             << cfg.cookie.path

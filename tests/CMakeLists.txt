@@ -46,6 +46,7 @@ add_executable(test_submission_sse   unit/test_submission_sse.cpp)
 add_executable(test_auth_cookie_storage unit/test_auth_cookie_storage.cpp)
 add_executable(test_stats_profile     unit/test_stats_profile.cpp)
 add_executable(test_stats_ranking     unit/test_stats_ranking.cpp)
+add_executable(test_admin_users       unit/test_admin_users.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -711,3 +712,38 @@ if(MSVC)
     target_compile_options(test_stats_ranking PRIVATE /bigobj)
 endif()
 add_test(NAME stats_ranking        COMMAND test_stats_ranking)
+
+# admin_user_routes.h (Phase 6 ★) — GET /api/v1/admin/users +
+# PUT /api/v1/admin/users/:id/role (SPEC §5.5, A22, A24, A27).
+# End-to-end tests spin up the full HttpServer + ConnectionPool +
+# RateLimiter + JWT stack, seed users via raw SQL (same ODR
+# workaround as test_stats_profile), insert audit_logs directly
+# so the role-change audit-trail is exercised, and assert the
+# envelope shape end-to-end. The pure unit tests
+# (parse_role_param + parse_id_param + extract_id_from_path +
+# parse_list_query + serialize_user_admin_row + constants) run
+# without MySQL. Same link set as test_admin_problem_crud
+# (the role-change path uses require_admin + writes to
+# audit_logs + invokes user_repo + audit_log_repo).
+target_link_libraries(test_admin_users PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    jwt-cpp::jwt-cpp
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp
+    litecode_bcrypt)
+target_include_directories(test_admin_users PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+# admin_user_routes.h transitively pulls in user_repo.h +
+# audit_log_repo.h + problem_revisions_repo.h via the rate_limit
+# header (revisions_repo is included indirectly through the
+# admin namespace via submission_routes.h headers). MSVC /bigobj
+# keeps us under the COFF section limit (same fix as
+# test_admin_problem_crud / test_admin_bulk_import).
+if(MSVC)
+    target_compile_options(test_admin_users PRIVATE /bigobj)
+endif()
+add_test(NAME admin_users          COMMAND test_admin_users)

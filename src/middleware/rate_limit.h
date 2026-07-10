@@ -243,6 +243,38 @@ inline RateLimitQuota stats_ranking_quota(const RateLimitConfig& cfg) {
     };
 }
 
+// admin_users_list_quota — SPEC §5.5 "GET /api/v1/admin/users" admin
+// user list. Per-admin, 1-minute window. The list is a moderate-read
+// surface (the /admin/users page polls it, but the front-end is
+// expected to use URL state + manual refresh rather than 1Hz polling).
+// We give it a separate bucket name from `admin.write` so a busy
+// operator scripting bulk imports can't exhaust the user-list quota.
+inline RateLimitQuota admin_users_list_quota(const RateLimitConfig& cfg) {
+    return RateLimitQuota{
+        "admin.users.list",
+        cfg.admin_users_list_per_minute,
+        std::chrono::minutes(1),
+        RateLimitKeyType::ByUser,
+    };
+}
+
+// admin_users_role_quota — SPEC §5.5 "PUT /api/v1/admin/users/:id/role"
+// admin role change. Per-admin, 1-minute window. The quota is the
+// tightest of all admin write paths (10/min) because role changes
+// are destructive — once an admin demotes a user, the demoted
+// user's live access tokens still work for the rest of their
+// 2h TTL, so a flood of demote → restore → demote → restore
+// could create a confusing audit trail. Keeping the cap low
+// keeps the operator deliberate.
+inline RateLimitQuota admin_users_role_quota(const RateLimitConfig& cfg) {
+    return RateLimitQuota{
+        "admin.users.role",
+        cfg.admin_users_role_per_minute,
+        std::chrono::minutes(1),
+        RateLimitKeyType::ByUser,
+    };
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 //  Section: RateLimitDecision
 //
