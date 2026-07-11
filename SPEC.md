@@ -95,7 +95,7 @@
 ### Tier 1 — v1.2.43：Phase 6 收尾（5 项）
 
 - [x] ★ 审计日志 API（`GET /api/v1/admin/audit-logs`，§5.5/§15.6/A17-A18/A20/A27，v1.2.43）—— 已交付：22 纯单测 + 21 MySQL 集成测 (env-dependent)；新增 `src/routes/admin_audit_log_routes.h` + `tests/unit/test_admin_audit_logs.cpp`；前端 `web/admin/audit-logs.html` (v1.2.35) 已就绪仅需端点
-- [ ] ★ 判题队列状态 API（`GET /api/v1/admin/queue`，§5.5/§16.1）—— 新增 `src/routes/admin_queue_routes.h` + `tests/unit/test_admin_queue.cpp` 15+ 用例；复用 `JudgeScheduler` 公开访问器（v1.2.15）
+- [x] ★ 判题队列状态 API（`GET /api/v1/admin/queue`，§5.5/§16.1，v1.2.44）—— 已交付：17 纯单测 + 9 MySQL 集成测（env-dependent，含 live-scheduler/pool 访问器穿透）；新增 `src/routes/admin_queue_routes.h` + `tests/unit/test_admin_queue.cpp`；复用 `JudgeScheduler` 公开访问器（v1.2.15，`max_queue_size()` 本次新增）；wire shape: `queue.{size,running,max_concurrent,max_queue_size,scheduler_running,utilization}` + `warm_pool.{size,target,running}` + `docker.{ok,detail}` + `db.{ok,pending_submissions}` + `updated_at`
 - [ ] ☆ 失败登录锁定（连续 N 次失败 15 分钟内禁止该用户名登录，§15.1/Phase 6 ☆）—— `user_repo.h` 新增 `is_locked_out` / `record_failed_attempt` / `clear_failed_attempts`（in-process map + 时间窗清理，无 Redis 依赖）+ `login_handler` 第 6 次起返 423 LOCKED；6+ 集成用例
 - [ ] ★ 安全加固（输入校验 + SQL 参数化 + XSS 防护 + CSP + SRI，§15）—— 已分散落地，**仅勾选 + 留指针，不新增代码**
 - [ ] ★ 错误处理统一（§5.7 错误码 + 响应格式）—— `error_handler.h` 已实现 `make_error_envelope`，**仅勾选 + 留指针，不新增代码**
@@ -1097,8 +1097,8 @@ litecode-cpp/
 - [x] ★ 排行榜 API（GET /api/v1/stats/ranking）—— v1.2.40
 - [x] ★ 管理员用户管理 API（GET /api/v1/admin/users, PUT /api/v1/admin/users/:id/role，**写 audit_logs**）—— v1.2.41
 - [x] ★ 管理员系统统计 API（GET /api/v1/admin/stats，**含队列/预热池状态**）—— v1.2.42
-- [ ] ★ 审计日志 API（GET /api/v1/admin/audit-logs）—— v1.2.43
-- [ ] ★ 判题队列状态 API（GET /api/v1/admin/queue）
+- [x] ★ 审计日志 API（GET /api/v1/admin/audit-logs）—— v1.2.43
+- [x] ★ 判题队列状态 API（GET /api/v1/admin/queue）—— v1.2.44
 - [ ] ★ 安全加固（输入校验 + SQL 参数化 + XSS 防护 + CSP + SRI）
 - [ ] ★ 错误处理统一（§5.7 错误码 + 响应格式）
 - [ ] ☆ 失败登录锁定（连续 N 次失败 15 分钟内禁止该用户名登录）

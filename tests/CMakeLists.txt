@@ -49,6 +49,7 @@ add_executable(test_stats_ranking     unit/test_stats_ranking.cpp)
 add_executable(test_admin_users       unit/test_admin_users.cpp)
 add_executable(test_admin_stats       unit/test_admin_stats.cpp)
 add_executable(test_admin_audit_logs  unit/test_admin_audit_logs.cpp)
+add_executable(test_admin_queue       unit/test_admin_queue.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -818,3 +819,42 @@ if(MSVC)
     target_compile_options(test_admin_audit_logs PRIVATE /bigobj)
 endif()
 add_test(NAME admin_audit_logs     COMMAND test_admin_audit_logs)
+
+# admin_queue_routes.h (Phase 6 ★ v1.2.44) — GET /api/v1/admin/queue
+# (SPEC §5.5 row 4, §16.1). Pulls in admin_middleware + rate_limit +
+# error_handler + system_routes. The pure unit tests (serialize_*,
+# format_iso8601_utc, snapshot_queue_subsystem, kAdminQueueDefault)
+# run without MySQL; the integration tests use a raw SQL seed for
+# submissions + users (same ODR-safe workaround used by
+# test_admin_audit_logs / test_admin_stats / test_admin_users).
+# Same link set as test_admin_stats — the live-subsystem tests
+# transitively need docker_client + warm_pool + judge_scheduler
+# headers, and admin_queue_routes.h forward-declares them to avoid
+# dragging docker_client + std::thread + std::filesystem into every
+# TU. The (c) "subsystem" tests instantiate JudgeScheduler +
+# WarmPool + Client against an unreachable docker socket, so
+# gtest/gtest_main + httplib + nlohmann_json + jwt-cpp + mysql::concpp
+# + bcrypt are all on the link line.
+target_link_libraries(test_admin_queue PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    jwt-cpp::jwt-cpp
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp
+    litecode_bcrypt)
+target_include_directories(test_admin_queue PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db
+    ${CMAKE_SOURCE_DIR}/src/judge)
+# admin_queue_routes.h + judge_scheduler.h + warm_pool.h +
+# docker_client.h together blow past MSVC's COFF section limit
+# (C1128) on the (c) subsystem tests; /bigobj is the documented
+# workaround (same fix as test_admin_users / test_admin_stats /
+# test_admin_audit_logs / test_admin_problem_crud /
+# test_admin_bulk_import).
+if(MSVC)
+    target_compile_options(test_admin_queue PRIVATE /bigobj)
+endif()
+add_test(NAME admin_queue          COMMAND test_admin_queue)

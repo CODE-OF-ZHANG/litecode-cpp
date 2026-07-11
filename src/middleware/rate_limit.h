@@ -291,6 +291,25 @@ inline RateLimitQuota admin_audit_logs_quota(const RateLimitConfig& cfg) {
     };
 }
 
+// admin_queue_quota — SPEC §5.5 "GET /api/v1/admin/queue" judge
+// queue status snapshot (Phase 6 ★ v1.2.44). Per-admin, 1-minute
+// window. A read-only endpoint; the dashboard does not currently
+// poll it, but we apply the same 60/min cap as admin_audit_logs so
+// the bucket is uniform across the operator-facing read endpoints
+// (a future auto-refresh widget on /admin/dashboard.html that hits
+// /admin/queue every 10 s lands at 6/min — well under the cap).
+// The bucket name "admin.queue" is independent of every other
+// admin bucket so a busy operator hammering /admin/audit-logs
+// can't starve the queue-status view (and vice versa).
+inline RateLimitQuota admin_queue_quota(const RateLimitConfig& cfg) {
+    return RateLimitQuota{
+        "admin.queue",
+        cfg.admin_queue_per_minute,
+        std::chrono::minutes(1),
+        RateLimitKeyType::ByUser,
+    };
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 //  Section: RateLimitDecision
 //

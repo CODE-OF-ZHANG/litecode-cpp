@@ -504,6 +504,14 @@ public:
         return cfg_.max_concurrent;
     }
 
+    // Configured queue capacity (SPEC §15.5). 0 means "unbounded"
+    // (test-only; production always sets a finite limit so 503 surfaces
+    // on overflow — see enqueue()). Surfaced for the /api/v1/admin/queue
+    // route so the operator-facing gauge can show "size / max_queue_size".
+    int max_queue_size() const noexcept {
+        return cfg_.max_queue_size;
+    }
+
     // True iff start() succeeded AND shutdown() has not been called.
     bool running() const noexcept {
         return running_.load(std::memory_order_acquire);
@@ -529,6 +537,7 @@ public:
                 {"queue_size",     static_cast<std::int64_t>(s->queue_size())},
                 {"running",        static_cast<std::int64_t>(s->running_count())},
                 {"max_concurrent", static_cast<std::int64_t>(s->max_concurrent())},
+                {"max_queue_size", static_cast<std::int64_t>(s->max_queue_size())},
             };
             return r;
         };
