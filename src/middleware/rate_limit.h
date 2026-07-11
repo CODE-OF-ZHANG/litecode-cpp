@@ -275,6 +275,22 @@ inline RateLimitQuota admin_users_role_quota(const RateLimitConfig& cfg) {
     };
 }
 
+// admin_audit_logs_quota — SPEC §5.5 "GET /api/v1/admin/audit-logs"
+// audit-log list view. Per-admin, 1-minute window. Reads a
+// `audit_logs` page; a 60/min cap is comfortable for an operator
+// scrolling + filtering the page (each filter change is one round-
+// trip). The bucket name "admin.audit_logs" is independent of the
+// list/role buckets so busy operators scripting role changes
+// can't starve the audit view.
+inline RateLimitQuota admin_audit_logs_quota(const RateLimitConfig& cfg) {
+    return RateLimitQuota{
+        "admin.audit_logs",
+        cfg.admin_audit_logs_per_minute,
+        std::chrono::minutes(1),
+        RateLimitKeyType::ByUser,
+    };
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 //  Section: RateLimitDecision
 //

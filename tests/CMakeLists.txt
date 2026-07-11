@@ -48,6 +48,7 @@ add_executable(test_stats_profile     unit/test_stats_profile.cpp)
 add_executable(test_stats_ranking     unit/test_stats_ranking.cpp)
 add_executable(test_admin_users       unit/test_admin_users.cpp)
 add_executable(test_admin_stats       unit/test_admin_stats.cpp)
+add_executable(test_admin_audit_logs  unit/test_admin_audit_logs.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -783,3 +784,37 @@ if(MSVC)
     target_compile_options(test_admin_stats PRIVATE /bigobj)
 endif()
 add_test(NAME admin_stats          COMMAND test_admin_stats)
+
+# admin_audit_log_routes.h (Phase 6 ★ v1.2.43) — GET
+# /api/v1/admin/audit-logs (SPEC §5.5, §15.6). Pulls in
+# audit_log_repo.h + admin_middleware + rate_limit +
+# error_handler. The pure unit tests (parse_admin_id_param +
+# parse_list_query + serialize_audit_row + truncate_for_envelope)
+# run without MySQL; the integration tests seed audit_logs via
+# raw SQL (same ODR-safe workaround used by test_admin_users /
+# test_stats_profile) so audit_log_repo.h::detail::req_string
+# doesn't widen the ODR surface. Same link set as test_audit_log
+# (mysql::concpp + nlohmann_json + jwt-cpp + httplib + bcrypt
+# for the JWT signing test JWTs).
+target_link_libraries(test_admin_audit_logs PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    jwt-cpp::jwt-cpp
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp
+    litecode_bcrypt)
+target_include_directories(test_admin_audit_logs PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+# admin_audit_log_routes.h pulls in audit_log_repo.h +
+# rate_limit.h + error_handler.h. Combined with the in-process
+# HttpServer + sqlitex_concpp + nlohmann_json headers, MSVC's
+# COFF section limit (C1128) is hit; /bigobj is the documented
+# workaround (same fix as test_admin_users / test_admin_stats /
+# test_admin_problem_crud / test_admin_bulk_import).
+if(MSVC)
+    target_compile_options(test_admin_audit_logs PRIVATE /bigobj)
+endif()
+add_test(NAME admin_audit_logs     COMMAND test_admin_audit_logs)
