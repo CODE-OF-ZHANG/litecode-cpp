@@ -33,6 +33,14 @@
     --lc-color-bg:           #f6f7f9;
     --lc-color-surface:      #ffffff;
     --lc-color-surface-2:    #f0f2f5;
+    /* Bug-fix alias (v1.2.47-a): --lc-color-surface-1 was referenced
+       by 6 selectors (.lc-history-row, .lc-stat-card, .lc-profile-notice,
+       .lc-rank-row, .lc-rank-row--me, .lc-modal__panel) but never
+       declared. Mapping to surface keeps the original intent — a "third
+       tier" surface that visually sits between --lc-color-surface and
+       --lc-color-surface-2 — and resolves the unset fallback in dark
+       mode. */
+    --lc-color-surface-1:    #ffffff;
     --lc-color-border:       #e2e6eb;
     --lc-color-border-2:     #d0d5db;
     --lc-color-text:         #1f2329;
@@ -78,6 +86,9 @@ html.dark {
     --lc-color-bg:           #0e1116;
     --lc-color-surface:      #161a22;
     --lc-color-surface-2:    #1f2530;
+    /* Bug-fix alias (v1.2.47-a) — see :root comment. Dark surface-1
+       matches surface so dark-mode selectors resolve cleanly. */
+    --lc-color-surface-1:    #161a22;
     --lc-color-border:       #2a313d;
     --lc-color-border-2:     #3a4250;
     --lc-color-text:         #e6e9ee;
