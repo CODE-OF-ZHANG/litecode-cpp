@@ -17,6 +17,7 @@ add_executable(test_uuid             unit/test_uuid.cpp)
 add_executable(test_request_id       unit/test_request_id.cpp)
 add_executable(test_health           unit/test_health.cpp)
 add_executable(test_error_handler    unit/test_error_handler.cpp)
+add_executable(test_security         integration/test_security.cpp)
 add_executable(test_jwt_utils        unit/test_jwt_utils.cpp)
 add_executable(test_password_hash    unit/test_password_hash.cpp)
 add_executable(test_auth_middleware  unit/test_auth_middleware.cpp)
@@ -88,6 +89,29 @@ target_link_libraries(test_error_handler PRIVATE
     nlohmann_json::nlohmann_json
     OpenSSL::SSL
     OpenSSL::Crypto)
+
+# test_security.cpp (Phase 6 ★ v1.2.45) — SPEC §15 hardening tests.
+# Spins up an in-process HttpServer to assert the SPEC §15 baseline
+# response headers (X-Content-Type-Options / X-Frame-Options /
+# Referrer-Policy / Permissions-Policy / API-only CSP) ship on every
+# response (200/404/preflight). Pure unit tests cover utils/security.h's
+# validators (length caps, charset filters, escape helpers, slug /
+# username / role shape). Same link set as test_error_handler plus
+# a dependency on problem_routes.h (for parse_slug_param) — which
+# transitively pulls in the problem_repo header. The integration
+# tests don't bind to MySQL; parse_slug_param is exercised without a
+# database, mirroring test_problem_detail's pure-unit path.
+target_link_libraries(test_security PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp)
+target_include_directories(test_security PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+add_test(NAME security             COMMAND test_security)
 
 # jwt_utils.h (Phase 2 ★) uses jwt-cpp + OpenSSL HMAC + picojson.
 # No MySQL / httplib dependencies — it's a pure crypto helper.

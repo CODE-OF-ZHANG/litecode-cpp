@@ -99,6 +99,7 @@
 #include "../logger.h"                          // LOG_INFO / LOG_WARN
 #include "../middleware/rate_limit.h"           // consume_rate_limit / problems_public_quota
 #include "../server.h"                          // HttpServer / send_error / send_success / ErrorCode
+#include "../utils/security.h"                  // security::validate_path_component_len / has_* (Phase 6 ★ v1.2.45)
 
 namespace litecode {
 
@@ -350,8 +351,27 @@ inline bool parse_list_query(const httplib::Request&      req,
 // route layer strips the path prefix and calls this helper with
 // the remaining bytes; an out-of-shape value is a 400 INVALID_INPUT
 // envelope, never a 500.
+//
+// Phase 6 ★ v1.2.45 hardening (SPEC §15.2):
+//   - Reject the slug early when it contains path-traversal sequences
+//     ("..", "%2e%2e", "/"). The cpp-httplib route registration uses a
+//     regex pattern that should keep these out, but a defense-in-depth
+//     check here costs ~20 ns and stops a future regex regression from
+//     becoming a security hole.
+//   - Reject control chars + HTML special chars + U+2028/2029 before
+//     passing through. The slug surfaces in URLs and is rendered on
+//     profile pages; better to 400 up-front than let the front-end
+//     decide whether to render or escape.
 inline std::optional<std::string> parse_slug_param(std::string_view raw) {
     if (raw.empty()) return std::nullopt;
+    if (!litecode::security::validate_path_component_len(raw)) return std::nullopt;
+    // Path-traversal trip-wires. Even though the route pattern is
+    // "/api/v1/problems/([^/]+)" (no '/'), we still guard against a
+    // URL-decoded "%2F" slip (cpp-httplib decodes before matching).
+    if (raw.find("..") != std::string_view::npos) return std::nullopt;
+    if (litecode::security::has_control_chars(raw)) return std::nullopt;
+    if (litecode::security::has_html_special_chars(raw)) return std::nullopt;
+    if (litecode::security::has_json_special_chars(raw)) return std::nullopt;
     std::string err;
     const std::string s(raw);  // problem_repo::validate_slug takes string_view
     if (!litecode::validate_slug(s, &err)) {

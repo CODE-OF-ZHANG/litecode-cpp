@@ -105,6 +105,7 @@
 #include "../routes/error_handler.h"            // parse_json_body / ErrorCode / send_error
 #include "../routes/problem_routes.h"           // serialize_problem_detail (reused for response shape)
 #include "../server.h"                          // HttpServer / send_success / send_created / send_no_content
+#include "../utils/security.h"                  // security::validate_path_component_len / has_* (Phase 6 ★ v1.2.45)
 
 namespace litecode {
 
@@ -345,6 +346,17 @@ inline std::optional<std::vector<litecode::SampleCaseRow>> parse_samples_array(
 // (it's used by the public detail endpoint, where the path is
 // shorter). Sharing one helper across the two routes would force
 // the public detail path to grow a branch it doesn't need.
+//
+// Phase 6 ★ v1.2.45 hardening (SPEC §15.2):
+//   - Length cap (security::validate_path_component_len)
+//   - Path-traversal trip-wire ("..")
+//   - Control-char / HTML-special-char / U+2028-2029 rejection
+//
+//   These mirror the rules in problem_routes.h's
+//   detail::parse_slug_param so a "GET /api/v1/problems/<slug>" and
+//   a "PUT /api/v1/admin/problems/<slug>" can never disagree on what
+//   counts as a well-formed slug. The check is cheap (~20 ns) so
+//   doing it twice (route + repo) is acceptable.
 inline std::optional<std::string> extract_slug_from_admin_path(
         const httplib::Request& req) {
     static constexpr std::string_view kPrefix =
@@ -357,6 +369,11 @@ inline std::optional<std::string> extract_slug_from_admin_path(
     const std::string_view rest(path.data() + kPrefix.size(),
                                 path.size() - kPrefix.size());
     if (rest.empty()) return std::nullopt;
+    if (!litecode::security::validate_path_component_len(rest)) return std::nullopt;
+    if (rest.find("..") != std::string_view::npos) return std::nullopt;
+    if (litecode::security::has_control_chars(rest)) return std::nullopt;
+    if (litecode::security::has_html_special_chars(rest)) return std::nullopt;
+    if (litecode::security::has_json_special_chars(rest)) return std::nullopt;
     std::string err;
     const std::string s(rest);
     if (!validate_slug(s, &err)) return std::nullopt;

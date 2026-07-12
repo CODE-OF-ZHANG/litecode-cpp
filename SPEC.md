@@ -1099,7 +1099,7 @@ litecode-cpp/
 - [x] ★ 管理员系统统计 API（GET /api/v1/admin/stats，**含队列/预热池状态**）—— v1.2.42
 - [x] ★ 审计日志 API（GET /api/v1/admin/audit-logs）—— v1.2.43
 - [x] ★ 判题队列状态 API（GET /api/v1/admin/queue）—— v1.2.44
-- [ ] ★ 安全加固（输入校验 + SQL 参数化 + XSS 防护 + CSP + SRI）
+- [x] ★ 安全加固（输入校验 + SQL 参数化 + XSS 防护 + CSP + SRI）—— v1.2.45
 - [ ] ★ 错误处理统一（§5.7 错误码 + 响应格式）
 - [ ] ☆ 失败登录锁定（连续 N 次失败 15 分钟内禁止该用户名登录）
 

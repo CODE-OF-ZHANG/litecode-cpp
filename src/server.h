@@ -76,6 +76,7 @@
 #include "logger.h"                          // RequestIdScope / LOG_*
 #include "middleware/request_id.h"           // apply_request_id_header / request_id_header_name
 #include "routes/error_handler.h"            // ErrorCode / send_error / make_error_envelope / ApiException
+#include "utils/security.h"                  // apply_security_headers (SPEC §15 — Phase 6 ★ v1.2.45)
 #include "utils/uuid.h"                      // generate_uuid_v4 (via request_id.h)
 
 namespace litecode {
@@ -448,7 +449,9 @@ private:
         // 1. Pre-routing: stamp the per-thread request_id so every log
         //    line emitted while this request is being handled carries
         //    the same correlation token. Also attach CORS headers to
-        //    every response and answer OPTIONS preflight short-circuit.
+        //    every response, stamp the SPEC §15 security response
+        //    headers (defense in depth alongside the Caddyfile), and
+        //    answer OPTIONS preflight short-circuit.
         server_->set_pre_routing_handler(
             [this](const httplib::Request& req, httplib::Response& res)
                 -> httplib::Server::HandlerResponse {
@@ -460,6 +463,17 @@ private:
 
                 const std::string origin = req.get_header_value("Origin");
                 cors_.apply(res, origin);
+
+                // SPEC §15 / Phase 6 ★ v1.2.45: baseline security response
+                // headers. The Caddyfile sets the same set on the
+                // reverse-proxy path; this hook covers a developer
+                // running litecode-cpp without Caddy in front (e.g. the
+                // dev-box `python -m http.server` style fallback). Headers
+                // are idempotent: set_header overwrites a prior value, so
+                // a route handler that needs a custom value can call
+                // apply_security_headers(...) again or set_header(...)
+                // after this hook runs.
+                litecode::security::apply_security_headers(res);
 
                 // OPTIONS preflight short-circuit. Real route handlers
                 // never see OPTIONS.
