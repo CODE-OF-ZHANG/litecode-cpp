@@ -50,9 +50,13 @@
    ===================================================================== */
 
 :root {
-    --lc-color-bg:           #f6f7f9;
+    /* v1.2.47-d: palette push — warm paper, deep ink, ink-link (no SaaS
+       blue). bg goes from cool #f6f7f9 to warm #faf9f5; border picks up
+       a slight cream tint; text drops to true ink; link is the same ink
+       as body so a:hover underlines do the visual work. */
+    --lc-color-bg:           #faf9f5;
     --lc-color-surface:      #ffffff;
-    --lc-color-surface-2:    #f0f2f5;
+    --lc-color-surface-2:    #f4f1ea;
     /* Bug-fix alias (v1.2.47-a): --lc-color-surface-1 was referenced
        by 6 selectors (.lc-history-row, .lc-stat-card, .lc-profile-notice,
        .lc-rank-row, .lc-rank-row--me, .lc-modal__panel) but never
@@ -61,23 +65,25 @@
        --lc-color-surface-2 — and resolves the unset fallback in dark
        mode. */
     --lc-color-surface-1:    #ffffff;
-    --lc-color-border:       #e2e6eb;
-    --lc-color-border-2:     #d0d5db;
-    --lc-color-text:         #1f2329;
+    --lc-color-border:       #e6e1d7;
+    --lc-color-border-2:     #d8d2c4;
+    --lc-color-text:         #0e1116;
     --lc-color-text-2:       #4a525c;
     --lc-color-text-muted:   #6a7280;
-    --lc-color-link:         #2563eb;
-    --lc-color-link-hover:   #1d4ed8;
+    --lc-color-link:         #0e1116;
+    --lc-color-link-hover:   #000000;
     --lc-color-success:      #16a34a;
     --lc-color-warning:      #d97706;
     --lc-color-danger:       #dc2626;
     --lc-color-info:         #0284c7;
-    --lc-color-focus-ring:   rgba(37, 99, 235, 0.4);
+    --lc-color-focus-ring:   rgba(15, 23, 42, 0.20);
 
+    /* v1.2.47-d: tighten radii by 2px across the board — more precise,
+       less "card-y". */
     --lc-radius-sm:   4px;
-    --lc-radius-md:   6px;
-    --lc-radius-lg:  10px;
-    --lc-radius-xl:  14px;
+    --lc-radius-md:   4px;
+    --lc-radius-lg:   8px;
+    --lc-radius-xl:  12px;
 
     --lc-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
     --lc-shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
@@ -163,18 +169,20 @@ html.dark {
     /* Bug-fix alias (v1.2.47-a) — see :root comment. Dark surface-1
        matches surface so dark-mode selectors resolve cleanly. */
     --lc-color-surface-1:    #161a22;
-    --lc-color-border:       #2a313d;
-    --lc-color-border-2:     #3a4250;
+    /* v1.2.47-d: cooler hairline border (less olive, more "blue-black"). */
+    --lc-color-border:       #262c36;
+    --lc-color-border-2:     #353c47;
     --lc-color-text:         #e6e9ee;
     --lc-color-text-2:       #b6bcc6;
     --lc-color-text-muted:   #7d8590;
-    --lc-color-link:         #60a5fa;
-    --lc-color-link-hover:   #93c5fd;
+    /* v1.2.47-d: muted-bone link in dark — no SaaS blue. */
+    --lc-color-link:         #b6bcc6;
+    --lc-color-link-hover:   #ffffff;
     --lc-color-success:      #4ade80;
     --lc-color-warning:      #fbbf24;
     --lc-color-danger:       #f87171;
     --lc-color-info:         #38bdf8;
-    --lc-color-focus-ring:   rgba(96, 165, 250, 0.45);
+    --lc-color-focus-ring:   rgba(230, 233, 238, 0.30);
 
     --lc-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --lc-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
@@ -197,13 +205,14 @@ html.dark {
         --lc-color-bg:         #0e1116;
         --lc-color-surface:    #161a22;
         --lc-color-surface-2:  #1f2530;
-        --lc-color-border:     #2a313d;
-        --lc-color-border-2:   #3a4250;
+        /* v1.2.47-d: matches html.dark above (cooler hairline, no SaaS blue link) */
+        --lc-color-border:     #262c36;
+        --lc-color-border-2:   #353c47;
         --lc-color-text:       #e6e9ee;
         --lc-color-text-2:     #b6bcc6;
         --lc-color-text-muted: #7d8590;
-        --lc-color-link:       #60a5fa;
-        --lc-color-link-hover: #93c5fd;
+        --lc-color-link:       #b6bcc6;
+        --lc-color-link-hover: #ffffff;
     }
 }
 
@@ -319,7 +328,7 @@ img { max-width: 100%; height: auto; }
     border: 1px solid var(--lc-color-border);
     border-radius: var(--lc-radius-lg);
     padding: var(--lc-space-6);
-    box-shadow: var(--lc-shadow-sm);
+    box-shadow: var(--lc-shadow-rest);
 }
 
 /* =====================================================================
@@ -570,7 +579,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     background: var(--lc-color-surface);
     border: 1px solid var(--lc-color-border);
     border-radius: var(--lc-radius-md);
-    box-shadow: var(--lc-shadow-md);
+    box-shadow: var(--lc-shadow-overlay);
     min-width: 160px;
     padding: 4px;
     z-index: 100;
@@ -621,7 +630,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     color: var(--lc-color-text);
     border-radius: var(--lc-radius-md);
     border: 1px solid var(--lc-color-border);
-    box-shadow: var(--lc-shadow-md);
+    box-shadow: var(--lc-shadow-overlay);
     padding: 10px 14px;
     display: flex;
     align-items: flex-start;
@@ -674,7 +683,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     border: 1px solid var(--lc-color-border);
     border-radius: var(--lc-radius-xl);
     padding: var(--lc-space-8);
-    box-shadow: var(--lc-shadow-md);
+    box-shadow: var(--lc-shadow-rest);
     width: 100%;
     max-width: 420px;
 }
@@ -1025,7 +1034,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     border: 1px solid var(--lc-color-border);
     border-radius: var(--lc-radius-lg);
     overflow: hidden;
-    box-shadow: var(--lc-shadow-sm);
+    box-shadow: var(--lc-shadow-rest);
     display: flex;
     flex-direction: column;
 }
@@ -1261,7 +1270,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     border: 1px solid var(--lc-color-border);
     border-radius: var(--lc-radius-lg);
     padding: var(--lc-space-5);
-    box-shadow: var(--lc-shadow-sm);
+    box-shadow: var(--lc-shadow-rest);
     /* Cap the height so the description becomes scrollable on tall
        viewports, mirroring LeetCode's behaviour. The right column
        stays visible (sticky) so the user can keep editing. */
@@ -1480,7 +1489,7 @@ html.dark .lc-editor-shell .CodeMirror-activeline-background {
     border: 1px solid var(--lc-color-border);
     border-radius: var(--lc-radius-lg);
     padding: var(--lc-space-4);
-    box-shadow: var(--lc-shadow-sm);
+    box-shadow: var(--lc-shadow-rest);
     display: flex;
     flex-direction: column;
     gap: var(--lc-space-3);
@@ -2342,7 +2351,7 @@ html.dark .lc-gauge--danger {
     background: var(--lc-color-surface);
     border: 1px solid var(--lc-color-border);
     border-radius: var(--lc-radius-lg);
-    box-shadow: var(--lc-shadow-sm);
+    box-shadow: var(--lc-shadow-rest);
 }
 
 .lc-admin-table {
@@ -2682,7 +2691,7 @@ html.dark .lc-modal__backdrop {
     background: var(--lc-color-surface);
     border: 1px solid var(--lc-color-border);
     border-radius: var(--lc-radius-lg);
-    box-shadow: var(--lc-shadow-lg);
+    box-shadow: var(--lc-shadow-overlay);
     padding: var(--lc-space-5);
 }
 
