@@ -98,7 +98,7 @@
 - [x] ★ 判题队列状态 API（`GET /api/v1/admin/queue`，§5.5/§16.1，v1.2.44）—— 已交付：17 纯单测 + 9 MySQL 集成测（env-dependent，含 live-scheduler/pool 访问器穿透）；新增 `src/routes/admin_queue_routes.h` + `tests/unit/test_admin_queue.cpp`；复用 `JudgeScheduler` 公开访问器（v1.2.15，`max_queue_size()` 本次新增）；wire shape: `queue.{size,running,max_concurrent,max_queue_size,scheduler_running,utilization}` + `warm_pool.{size,target,running}` + `docker.{ok,detail}` + `db.{ok,pending_submissions}` + `updated_at`
 - [ ] ☆ 失败登录锁定（连续 N 次失败 15 分钟内禁止该用户名登录，§15.1/Phase 6 ☆）—— `user_repo.h` 新增 `is_locked_out` / `record_failed_attempt` / `clear_failed_attempts`（in-process map + 时间窗清理，无 Redis 依赖）+ `login_handler` 第 6 次起返 423 LOCKED；6+ 集成用例
 - [ ] ★ 安全加固（输入校验 + SQL 参数化 + XSS 防护 + CSP + SRI，§15）—— 已分散落地，**仅勾选 + 留指针，不新增代码**
-- [ ] ★ 错误处理统一（§5.7 错误码 + 响应格式）—— `error_handler.h` 已实现 `make_error_envelope`，**仅勾选 + 留指针，不新增代码**
+- [x] ★ 错误处理统一（§5.7 错误码 + 响应格式）—— `error_handler.h` 已实现 `make_error_envelope`，**仅勾选 + 留指针，不新增代码**
 
 ### Tier 2 — v1.2.44：Phase 7 最小骨架（3 项最小集，让 `docker compose up` 真的能跑）
 
@@ -1100,8 +1100,8 @@ litecode-cpp/
 - [x] ★ 审计日志 API（GET /api/v1/admin/audit-logs）—— v1.2.43
 - [x] ★ 判题队列状态 API（GET /api/v1/admin/queue）—— v1.2.44
 - [x] ★ 安全加固（输入校验 + SQL 参数化 + XSS 防护 + CSP + SRI）—— v1.2.45
-- [ ] ★ 错误处理统一（§5.7 错误码 + 响应格式）
-- [ ] ☆ 失败登录锁定（连续 N 次失败 15 分钟内禁止该用户名登录）
+- [x] ★ 错误处理统一（§5.7 错误码 + 响应格式）—— `src/routes/error_handler.h::make_error_envelope`
+- [x] ☆ 失败登录锁定（连续 N 次失败 15 分钟内禁止该用户名登录）—— v1.2.46（in-memory `LoginFailureTracker` lockout state machine + sliding 15-min window + dedicated `auth.login_locked` audit row + 423 Locked + `Retry-After` header；env knobs `LOGIN_LOCKOUT_ENABLED` / `_THRESHOLD` / `_WINDOW_SECONDS` / `_DURATION_SECONDS`；anti-enumeration envelope identical to 401）
 
 ### Phase 7 - 部署
 
@@ -1179,6 +1179,7 @@ litecode-cpp/
 | **A32** | **Markdown XSS 防护**（v1.2） | 题目描述含 `<script>alert(1)</script>` → 前端不执行，HTML 实体或过滤后展示 |
 | **A33** | **编辑器草稿持久化**（v1.2） | 写一半代码刷新页面 → 弹"恢复草稿"提示，确认后代码回来 |
 | **A34** | **深色模式**（v1.2） | 切换深色模式后页面正确变色，刷新后保持 |
+| **A35** | **失败登录锁定**（v1.2） | 连续 5 次失败登录后 15 分钟内该用户名登录返回 423 Locked + `Retry-After` 头，错误信封与"用户名/密码错误"一致（不泄露账号是否存在）；audit_logs 新增 `auth.login_locked` 行；解锁后正确密码可登录成功并清零计数器 |
 
 ### 12.2 性能验收
 

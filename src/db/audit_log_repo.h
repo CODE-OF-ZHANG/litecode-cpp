@@ -472,6 +472,7 @@ inline constexpr const char* kActionProblemBulkImport = "problem.bulk_import";
 inline constexpr const char* kActionUserRoleChange    = "user.role_change";
 inline constexpr const char* kActionUserPasswordChange= "user.password_change";
 inline constexpr const char* kActionLoginFailure      = "auth.login_failure";
+inline constexpr const char* kActionLoginLockout      = "auth.login_locked";
 
 namespace detail {
 
@@ -729,6 +730,57 @@ inline void record_login_failure(ConnectionPool&  pool,
     e.target_type = std::string("user");
     e.target_id   = std::string(username);
     e.payload     = { {"consecutive_failures", consecutive_failures} };
+    if (!ip.empty()) {
+        e.ip = std::string(ip);
+    }
+    (void)record_best_effort(pool, e);
+}
+
+// record_login_lockout — Phase 6 ☆ v1.2.46 companion to
+// record_login_failure. Fires when a username crosses the configured
+// lockout threshold (SPEC §15.1: "失败登录锁定 — 连续 N 次失败 15
+// 分钟内禁止该用户名登录"). Best-effort, never throws.
+//
+// Builds:
+//   action       = "auth.login_locked"
+//   target_type  = "user"
+//   target_id    = username
+//   admin_id     = NULL
+//   payload      = {
+//                    "consecutive_failures":   N,   // the count that
+//                                                   // triggered the lockout
+//                    "locked_for_seconds":     D,   // how long the lockout
+//                                                   // will last from the
+//                                                   // triggering attempt
+//                    "threshold":              T,   // the configured
+//                                                   // threshold (audit
+//                                                   // debug-aid so an
+//                                                   // operator looking at
+//                                                   // the row can see the
+//                                                   // policy at the time
+//                                                   // of the event)
+//                  }
+//   ip           = client IP (NULL if empty)
+//
+// Why a separate action and not "auth.login_failure with a flag"?
+//   The admin audit-logs UI (v1.2.35) filters by action string; a
+//   dedicated `auth.login_locked` action makes the brute-force signal
+//   trivially filterable without parsing the payload.
+inline void record_login_lockout(ConnectionPool&  pool,
+                                 std::string_view username,
+                                 std::string_view ip,
+                                 int              consecutive_failures,
+                                 int              locked_for_seconds,
+                                 int              threshold) {
+    AuditEntry e;
+    e.action      = kActionLoginLockout;
+    e.target_type = std::string("user");
+    e.target_id   = std::string(username);
+    e.payload     = {
+        {"consecutive_failures", consecutive_failures},
+        {"locked_for_seconds",   locked_for_seconds},
+        {"threshold",            threshold},
+    };
     if (!ip.empty()) {
         e.ip = std::string(ip);
     }

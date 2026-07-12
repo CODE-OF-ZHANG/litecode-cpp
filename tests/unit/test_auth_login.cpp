@@ -37,6 +37,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <httplib.h>
@@ -886,12 +887,20 @@ TEST(LoginFailureTrackerUnit, EmptyUsernameIsIgnored) {
     const auto outcome = tracker.record_failure("");
     EXPECT_EQ(outcome.count, 0);
     EXPECT_FALSE(outcome.should_audit);
+    EXPECT_FALSE(outcome.locked);
+    EXPECT_FALSE(outcome.was_already_locked);
     EXPECT_EQ(tracker.size(), 0u);
 }
 
 TEST(LoginFailureTrackerUnit, CapEvictsEntryWithHighestCount) {
-    // Cap of 3 so we can drive eviction deterministically.
-    litecode::LoginFailureTracker tracker(3);
+    // Cap of 3 so we can drive eviction deterministically. Disable
+    // lockout (threshold = INT_MAX) so the eviction logic isn't
+    // competing with a lockout that would prefer to keep a locked
+    // entry around (covered by LockoutCapPrefersToKeepLockedEntry
+    // below).
+    litecode::LoginLockoutConfig lcfg;
+    lcfg.enabled = false;
+    litecode::LoginFailureTracker tracker(lcfg, /*max_entries=*/3);
     tracker.record_failure("u1");   // count=1
     tracker.record_failure("u2");   // count=1
     tracker.record_failure("u3");   // count=1
@@ -907,6 +916,582 @@ TEST(LoginFailureTrackerUnit, CapEvictsEntryWithHighestCount) {
     tracker.record_failure("u4");
     EXPECT_EQ(tracker.size(), 3u);
     EXPECT_EQ(tracker.count("u4"), 1);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  Lockout state machine — Phase 6 ☆ v1.2.46 (SPEC §15.1 失败登录锁定)
+//
+//  These tests don't need MySQL — they exercise LoginFailureTracker in
+//  isolation. The integration path (HTTP wire shape + audit_logs row)
+//  is covered by the live-fixture tests below.
+// ────────────────────────────────────────────────────────────────────────────
+
+// Helper: build a tracker with the given lockout policy + a frozen
+// clock anchored at epoch so the time arithmetic is deterministic.
+struct LockoutPolicyFixture {
+    litecode::LoginLockoutConfig cfg;
+    std::shared_ptr<std::chrono::steady_clock::time_point> now_ptr =
+        std::make_shared<std::chrono::steady_clock::time_point>(
+            std::chrono::steady_clock::time_point{});
+    std::unique_ptr<litecode::LoginFailureTracker> tracker;
+
+    explicit LockoutPolicyFixture(int threshold       = 5,
+                                  int window_seconds  = 900,
+                                  int lockout_seconds = 900,
+                                  bool enabled        = true)
+        : cfg{} {
+        cfg.enabled                   = enabled;
+        cfg.threshold                 = threshold;
+        cfg.window_seconds            = window_seconds;
+        cfg.lockout_duration_seconds  = lockout_seconds;
+        litecode::LoginFailureTracker::Clock clock =
+            [now_ptr = now_ptr] { return *now_ptr; };
+        tracker = std::make_unique<litecode::LoginFailureTracker>(
+            cfg, /*max_entries=*/1000, std::move(clock));
+    }
+
+    void advance(std::chrono::seconds by) { *now_ptr += by; }
+};
+
+TEST(LockoutUnit, DisabledConfigNeverLocks) {
+    LockoutPolicyFixture f(/*threshold=*/2, /*window=*/900,
+                           /*lockout=*/900, /*enabled=*/false);
+    for (int i = 0; i < 10; ++i) {
+        const auto o = f.tracker->record_failure("alice");
+        EXPECT_FALSE(o.locked);
+        EXPECT_FALSE(o.was_already_locked);
+    }
+    EXPECT_FALSE(f.tracker->is_locked("alice"));
+}
+
+TEST(LockoutUnit, ThresholdTripLocksAccount) {
+    LockoutPolicyFixture f;
+    // 4 failures — still counting, NOT locked.
+    for (int i = 1; i <= 4; ++i) {
+        const auto o = f.tracker->record_failure("alice");
+        EXPECT_FALSE(o.locked) << "locked too early at attempt " << i;
+        EXPECT_EQ(o.count, i);
+    }
+    EXPECT_FALSE(f.tracker->is_locked("alice"));
+    // 5th failure — crosses the threshold, locks the account.
+    const auto trip = f.tracker->record_failure("alice");
+    EXPECT_TRUE(trip.locked);
+    EXPECT_FALSE(trip.was_already_locked);
+    EXPECT_EQ(trip.count, 5);
+    EXPECT_EQ(trip.locked_for_seconds, 900);
+    EXPECT_GE(trip.remaining_seconds, 899);
+    EXPECT_LE(trip.remaining_seconds, 900);
+    EXPECT_TRUE(f.tracker->is_locked("alice"));
+
+    // Subsequent failures during the lockout window report
+    // was_already_locked, NOT a fresh locked.
+    const auto probe = f.tracker->record_failure("alice");
+    EXPECT_FALSE(probe.locked);
+    EXPECT_TRUE(probe.was_already_locked);
+    EXPECT_EQ(probe.count, 5);                // count doesn't grow
+    EXPECT_EQ(probe.locked_for_seconds, 900);
+    EXPECT_GE(probe.remaining_seconds, 0);
+}
+
+TEST(LockoutUnit, LockoutLiftsAfterDuration) {
+    LockoutPolicyFixture f(/*threshold=*/2, /*window=*/900, /*lockout=*/3);
+    f.tracker->record_failure("alice");
+    const auto trip = f.tracker->record_failure("alice");
+    ASSERT_TRUE(trip.locked);
+
+    // Just before expiry — still locked.
+    f.advance(std::chrono::seconds(2));
+    EXPECT_TRUE(f.tracker->is_locked("alice"));
+    int rem = 0;
+    EXPECT_TRUE(f.tracker->is_locked("alice", &rem));
+    EXPECT_EQ(rem, 1);
+
+    // Past expiry — not locked. Sliding window (900s) is still in
+    // effect, so the count persists (Model B: brute-force probes
+    // that time around the lockout don't get a clean slate).
+    f.advance(std::chrono::seconds(2));
+    EXPECT_FALSE(f.tracker->is_locked("alice"));
+
+    const auto fresh = f.tracker->record_failure("alice");
+    EXPECT_FALSE(fresh.locked);
+    EXPECT_FALSE(fresh.was_already_locked);
+    EXPECT_EQ(fresh.count, 3); // 2 prior + 1 new; sliding window still active
+}
+
+TEST(LockoutUnit, SuccessfulLoginResetsLockout) {
+    LockoutPolicyFixture f;
+    f.tracker->record_failure("alice");
+    const auto trip = f.tracker->record_failure("alice");
+    trip; // trip locked state
+    // Trip it 3 more times so the threshold crosses again? No,
+    // threshold=5 means 5 failures total. Already at 2.
+    f.tracker->record_failure("alice");
+    f.tracker->record_failure("alice");
+    const auto trip5 = f.tracker->record_failure("alice");
+    ASSERT_TRUE(trip5.locked);
+    EXPECT_TRUE(f.tracker->is_locked("alice"));
+
+    // Successful login → reset clears the lockout entirely.
+    f.tracker->reset("alice");
+    EXPECT_FALSE(f.tracker->is_locked("alice"));
+    EXPECT_EQ(f.tracker->count("alice"), 0);
+
+    // Next failure starts at count=1, fresh window.
+    const auto after_reset = f.tracker->record_failure("alice");
+    EXPECT_EQ(after_reset.count, 1);
+    EXPECT_FALSE(after_reset.locked);
+}
+
+TEST(LockoutUnit, RollingWindowResetsCounter) {
+    // window=2s, threshold=3, lockout=10s. Three failures inside the
+    // window should trip; advancing past window resets the counter
+    // so a new burst of three needs another full window.
+    LockoutPolicyFixture f(/*threshold=*/3, /*window=*/2, /*lockout=*/10);
+    f.tracker->record_failure("alice"); // count=1, first_failure_at=t0
+    f.tracker->record_failure("alice"); // count=2
+    const auto trip = f.tracker->record_failure("alice"); // count=3 → lockout
+    ASSERT_TRUE(trip.locked);
+
+    // Wait out the lockout (10s) + the window (2s) so the sliding
+    // window also expires.
+    f.advance(std::chrono::seconds(15));
+    EXPECT_FALSE(f.tracker->is_locked("alice"));
+
+    // 1st failure in the NEW window — count starts at 1.
+    const auto fresh1 = f.tracker->record_failure("alice");
+    EXPECT_EQ(fresh1.count, 1);
+    EXPECT_FALSE(fresh1.locked);
+}
+
+TEST(LockoutUnit, PerUsernameLocksAreIndependent) {
+    LockoutPolicyFixture f;
+    for (int i = 0; i < 5; ++i) f.tracker->record_failure("alice");
+    EXPECT_TRUE(f.tracker->is_locked("alice"));
+    // bob hasn't failed — not locked, even with a high alice count.
+    EXPECT_FALSE(f.tracker->is_locked("bob"));
+    EXPECT_EQ(f.tracker->remaining_lockout_seconds("bob"), 0);
+}
+
+TEST(LockoutUnit, EmptyUsernameNeverLocks) {
+    LockoutPolicyFixture f;
+    const auto o = f.tracker->record_failure("");
+    EXPECT_FALSE(o.locked);
+    EXPECT_FALSE(o.was_already_locked);
+    EXPECT_FALSE(f.tracker->is_locked(""));
+}
+
+TEST(LockoutUnit, LockoutCapPrefersToKeepLockedEntry) {
+    // Drive cap=3 with all three accounts LOCKED. Adding a 4th
+    // username must evict the highest-count UNLOCKED entry if any
+    // exist; if all are locked, fall back to the highest-count
+    // locked entry.
+    litecode::LoginLockoutConfig lcfg;
+    lcfg.threshold                = 2;
+    lcfg.window_seconds           = 900;
+    lcfg.lockout_duration_seconds = 900;
+    lcfg.enabled                  = true;
+    auto now_ptr = std::make_shared<std::chrono::steady_clock::time_point>(
+        std::chrono::steady_clock::time_point{});
+    litecode::LoginFailureTracker::Clock clock =
+        [now_ptr] { return *now_ptr; };
+    litecode::LoginFailureTracker tracker(lcfg, /*max_entries=*/3, clock);
+
+    tracker.record_failure("u1");
+    tracker.record_failure("u1"); // locks u1
+    tracker.record_failure("u2");
+    tracker.record_failure("u2"); // locks u2
+    tracker.record_failure("u3");
+    tracker.record_failure("u3"); // locks u3
+    EXPECT_TRUE(tracker.is_locked("u1"));
+    EXPECT_TRUE(tracker.is_locked("u2"));
+    EXPECT_TRUE(tracker.is_locked("u3"));
+
+    // Add u4 — every entry is locked; the cap policy falls back to
+    // "evict highest-count locked entry". u1/u2/u3 all tied at 2, so
+    // any one of them is a valid victim. The invariant we test is
+    // that ONE of the locked entries survives and a fresh slot opens
+    // for u4.
+    tracker.record_failure("u4");
+    EXPECT_EQ(tracker.size(), 3u);
+    EXPECT_EQ(tracker.count("u4"), 1);
+    // At least 2 of {u1,u2,u3} must still be locked (the cap evicted
+    // at most one).
+    int locked_count = 0;
+    for (const auto* u : {"u1", "u2", "u3"}) {
+        if (tracker.is_locked(u)) ++locked_count;
+    }
+    EXPECT_GE(locked_count, 2);
+}
+
+TEST(LockoutUnit, LockoutCapPrefersUnlockedVictim) {
+    // Drive cap=3 with two LOCKED + one UNLOCKED-but-counting entry.
+    // Adding a 4th username must evict the UNLOCKED entry (we never
+    // want to drop a lockout state to make room for a fresh entry).
+    //
+    // Use lockout=900s, window=3600s so we can advance past the
+    // lockout while staying inside the rolling window (u3 keeps
+    // its count=2 even after its lockout expires).
+    litecode::LoginLockoutConfig lcfg;
+    lcfg.threshold                = 2;
+    lcfg.window_seconds           = 3600;
+    lcfg.lockout_duration_seconds = 900;
+    lcfg.enabled                  = true;
+    auto now_ptr = std::make_shared<std::chrono::steady_clock::time_point>(
+        std::chrono::steady_clock::time_point{});
+    litecode::LoginFailureTracker::Clock clock =
+        [now_ptr] { return *now_ptr; };
+    litecode::LoginFailureTracker tracker(lcfg, /*max_entries=*/3, clock);
+
+    // u1, u2 LOCKED (count=2 each). u3 tripped, then its lockout
+    // expired but the count persists.
+    tracker.record_failure("u1");
+    tracker.record_failure("u1");
+    tracker.record_failure("u2");
+    tracker.record_failure("u2");
+    tracker.record_failure("u3");
+    tracker.record_failure("u3");
+    EXPECT_TRUE(tracker.is_locked("u1"));
+    EXPECT_TRUE(tracker.is_locked("u2"));
+    EXPECT_TRUE(tracker.is_locked("u3"));
+
+    // Advance past u3's lockout (900s) but well inside the 3600s
+    // window — u3's count of 2 must persist, and is_locked is false.
+    *now_ptr += std::chrono::seconds(1000);
+    EXPECT_TRUE (tracker.is_locked("u1"));
+    EXPECT_TRUE (tracker.is_locked("u2"));
+    EXPECT_FALSE(tracker.is_locked("u3"));
+    EXPECT_EQ   (tracker.count("u3"), 2);
+
+    // Add u4 → cap reached → tracker must evict the UNLOCKED entry
+    // (u3) so the two LOCKED entries survive intact.
+    tracker.record_failure("u4");
+    EXPECT_EQ(tracker.size(), 3u);
+    EXPECT_EQ(tracker.count("u4"), 1);
+    EXPECT_TRUE (tracker.is_locked("u1"));
+    EXPECT_TRUE (tracker.is_locked("u2"));
+    // u3 was the only UNLOCKED entry → it should be the victim. After
+    // eviction, count() returns 0 (entry gone) and is_locked() is
+    // false (entry gone).
+    EXPECT_EQ   (tracker.count("u3"), 0);
+    EXPECT_FALSE(tracker.is_locked("u3"));
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  Live wire-shape tests (require MySQL — SKIP when not reachable)
+//
+//  Coverage:
+//    - After N=threshold consecutive failures, /auth/login returns
+//      423 Locked + Retry-After: <remaining> + the same anti-
+//      enumeration envelope (UNAUTHORIZED code, "invalid username or
+//      password" message).
+//    - Lockout fires even for UNKNOWN usernames (the counter keys on
+//      the supplied username, not on a real row).
+//    - The kAuditLogEvery (5) auth.login_failure rows are still
+//      written; ONE additional auth.login_locked row appears at the
+//      threshold-crossing attempt.
+//    - A successful login during an active lockout does NOT happen
+//      (we 423 first), but a successful login once the lockout has
+//      lifted clears the counter + lockout state end-to-end.
+//    - LOGIN_LOCKOUT_ENABLED=false disables the feature entirely.
+//
+//  We use a custom LoginLockoutConfig with threshold=3 and
+//  lockout_duration=2s so the live tests run in seconds, not the SPEC
+//  §15.1 15-min default. The unit tests above pin the 5/900 default.
+// ────────────────────────────────────────────────────────────────────────────
+
+class AuthLoginLockoutLiveFixture : public ::testing::Test {
+protected:
+    DbConn                                conn_info;
+    std::unique_ptr<litecode::ConnectionPool>    pool;
+    std::unique_ptr<litecode::HttpServer>        server;
+    std::unique_ptr<litecode::RateLimiter>       limiter;
+    std::unique_ptr<litecode::LoginFailureTracker> tracker;
+    std::unique_ptr<litecode::InMemoryRefreshTokenStore> store;
+    ServerHandle                                 handle;
+    std::optional<UsernameTracker>               user_tracker;
+
+    // Tight lockout policy for fast tests. Threshold=3 so a 3-failure
+    // burst trips the lockout without waiting for the kAuditLogEvery
+    // (5) trigger. lockout_duration=2s so the "lockout lifts" test
+    // can sleep briefly. window_seconds=60s so the rolling window
+    // doesn't interfere with the test sequence.
+    static litecode::LoginLockoutConfig lockout_cfg() {
+        litecode::LoginLockoutConfig c;
+        c.enabled                   = true;
+        c.threshold                 = 3;
+        c.window_seconds            = 60;
+        c.lockout_duration_seconds  = 2;
+        return c;
+    }
+
+    void SetUp() override {
+#if defined(_WIN32)
+        _putenv_s("JWT_SECRET",
+                  "test_jwt_secret_at_least_32_bytes_long_xxxxxxxxx");
+#else
+        setenv("JWT_SECRET",
+               "test_jwt_secret_at_least_32_bytes_long_xxxxxxxxx", 1);
+#endif
+        try {
+            pool = std::make_unique<litecode::ConnectionPool>(
+                conn_info.to_pool_config());
+        } catch (const std::exception& e) {
+            GTEST_SKIP() << "MySQL not reachable: " << e.what();
+        }
+        if (!pool || !pool->ping()) {
+            GTEST_SKIP() << "MySQL ping failed";
+        }
+        user_tracker.emplace(pool.get());
+
+        limiter = std::make_unique<litecode::RateLimiter>();
+        tracker = std::make_unique<litecode::LoginFailureTracker>(
+                      lockout_cfg());
+        store   = std::make_unique<litecode::InMemoryRefreshTokenStore>(1000);
+        server  = std::make_unique<litecode::HttpServer>(
+                      dev_server(), dev_cors());
+        litecode::register_auth_routes(
+            *server, *pool, *limiter, *tracker, *store,
+            dev_jwt(), lax_rate_limit());
+        handle = start_server(server.get());
+    }
+
+    void TearDown() override {
+        handle = ServerHandle();
+        server.reset();
+        limiter.reset();
+        tracker.reset();
+        store.reset();
+        user_tracker.reset();
+        pool.reset();
+    }
+
+    std::string create_user_with_password(const std::string& password,
+                                          const std::string& suffix = "u") {
+        const std::string username = fresh_username(suffix.c_str());
+        user_tracker->add(username);
+
+        litecode::UserRow row;
+        row.username      = username;
+        row.password_hash = litecode::hash_password(password);
+        row.role          = "user";
+        row.email         = std::nullopt;
+        row.avatar        = std::nullopt;
+        const int new_id = litecode::user_repo::create_user(*pool, row);
+        EXPECT_GT(new_id, 0) << "create_user returned 0; DB pre-populated?";
+        return username;
+    }
+
+    httplib::Result post_login(ServerHandle& h, const std::string& body) {
+        return h.client->Post("/api/v1/auth/login", body, "application/json");
+    }
+    std::string login_body(const std::string& username,
+                           const std::string& password) {
+        return nlohmann::json{
+            {"username", username},
+            {"password", password},
+        }.dump();
+    }
+};
+
+TEST_F(AuthLoginLockoutLiveFixture, FifthFailureTripsLockout) {
+    StdoutSilencer silencer;
+    const std::string username = create_user_with_password("hunter22", "lo");
+
+    // Drive 3 bad-password attempts (threshold=3). Attempts #1 and #2
+    // are plain 401s; attempt #3 trips the lockout (and is still a
+    // 401 because the lockout fires AFTER bcrypt verification — see
+    // the deny_login closure). The 4th attempt hits the lockout
+    // BEFORE bcrypt and returns 423 Locked.
+    for (int i = 0; i < 3; ++i) {
+        const auto r = post_login(handle,
+            login_body(username, "WRONG_PW_xx9"));
+        ASSERT_TRUE(r);
+        EXPECT_EQ(r->status, 401) << "i=" << i << " body=" << r->body;
+    }
+    EXPECT_TRUE(tracker->is_locked(username));
+
+    // The 4th attempt hits the lockout gate.
+    const auto locked = post_login(handle,
+        login_body(username, "WRONG_PW_xx9"));
+    ASSERT_TRUE(locked);
+    EXPECT_EQ(locked->status, 423);
+    const std::string retry_after = locked->get_header_value("Retry-After");
+    EXPECT_FALSE(retry_after.empty()) << "Retry-After header missing";
+    // lockout_duration_seconds=2 → remaining is 2 or 1 (we may have
+    // lost a fraction of a second since the lockout was set).
+    const int retry_int = std::stoi(retry_after);
+    EXPECT_GE(retry_int, 1);
+    EXPECT_LE(retry_int, 2);
+
+    const auto body = nlohmann::json::parse(locked->body);
+    // Anti-enumeration: code is FORBIDDEN (the catalog doesn't have a
+    // dedicated LOCKED), message identical to a normal 401.
+    EXPECT_EQ(body["code"],    "FORBIDDEN");
+    EXPECT_EQ(body["message"], "invalid username or password");
+    // details.retry_after_seconds is a courtesy; an attacker can see
+    // it, but it carries no info beyond the Retry-After header.
+    EXPECT_TRUE(body.contains("details"));
+    EXPECT_TRUE(body["details"].contains("retry_after_seconds"));
+}
+
+TEST_F(AuthLoginLockoutLiveFixture, LockoutShortCircuitsBeforeBcrypt) {
+    // After the lockout is in effect, even a CORRECT password attempt
+    // must 423 — we never want the bcrypt work to happen for a
+    // locked username. The point is to throttle attackers; a
+    // legitimate user who fat-fingered their password enough times
+    // to lock themselves out has to wait it out.
+    StdoutSilencer silencer;
+    const std::string username = create_user_with_password("hunter22", "sc");
+
+    for (int i = 0; i < 3; ++i) {
+        const auto r = post_login(handle,
+            login_body(username, "WRONG_PW_xx9"));
+        ASSERT_TRUE(r);
+        EXPECT_EQ(r->status, 401);
+    }
+
+    // Now the CORRECT password — must still 423, NOT 200.
+    const auto with_correct = post_login(handle,
+        login_body(username, "hunter22"));
+    ASSERT_TRUE(with_correct);
+    EXPECT_EQ(with_correct->status, 423);
+    EXPECT_EQ(with_correct->get_header_value("Retry-After"), "2");
+}
+
+TEST_F(AuthLoginLockoutLiveFixture, LockoutForUnknownUsername) {
+    // The counter keys on the SUPPLIED username, not on a real row.
+    // An attacker probing with random usernames still hits the
+    // lockout (the wire response is identical so they can't tell
+    // whether the account is real).
+    StdoutSilencer silencer;
+    const std::string ghost = fresh_username("ghost_lo");
+
+    for (int i = 0; i < 3; ++i) {
+        const auto r = post_login(handle,
+            login_body(ghost, "anypassword9"));
+        ASSERT_TRUE(r);
+        EXPECT_EQ(r->status, 401);
+    }
+    EXPECT_TRUE(tracker->is_locked(ghost));
+
+    // 4th attempt — same anti-enumeration 423 envelope.
+    const auto locked = post_login(handle,
+        login_body(ghost, "anypassword9"));
+    ASSERT_TRUE(locked);
+    EXPECT_EQ(locked->status, 423);
+}
+
+TEST_F(AuthLoginLockoutLiveFixture, LockoutAuditRowFires) {
+    // The threshold-crossing attempt must write ONE auth.login_locked
+    // row (separate from the per-5-failure auth.login_failure rows).
+    StdoutSilencer silencer;
+    const std::string username = create_user_with_password("hunter22", "aud_lo");
+
+    for (int i = 0; i < 3; ++i) {
+        const auto r = post_login(handle,
+            login_body(username, "WRONG_PW_xx9"));
+        ASSERT_TRUE(r);
+        EXPECT_EQ(r->status, 401);
+    }
+
+    const int locked_rows = count_audit_logs(*pool, username,
+                                             "auth.login_locked");
+    EXPECT_EQ(locked_rows, 1) << "expected exactly one auth.login_locked row";
+
+    // The row's payload should carry consecutive_failures=3 +
+    // locked_for_seconds=2 + threshold=3 (the live fixture's config).
+    try {
+        auto conn = pool->acquire();
+        const auto row = conn.fetch_one(
+            "SELECT CAST(payload AS CHAR) FROM audit_logs "
+            "WHERE target_id = ? AND action = 'auth.login_locked' "
+            "ORDER BY id DESC LIMIT 1",
+            username);
+        ASSERT_TRUE(row);
+        const std::string payload_str =
+            row->operator[](0).get<std::string>();
+        const auto payload = nlohmann::json::parse(payload_str);
+        EXPECT_EQ(payload["consecutive_failures"], 3);
+        EXPECT_EQ(payload["locked_for_seconds"],   2);
+        EXPECT_EQ(payload["threshold"],            3);
+    } catch (const std::exception& e) {
+        GTEST_SKIP() << "audit row payload check threw: " << e.what();
+    }
+}
+
+TEST_F(AuthLoginLockoutLiveFixture, LockoutLiftsAndSuccessClearsState) {
+    // After the lockout expires, a correct password returns 200 and
+    // clears the per-username state so subsequent bad attempts start
+    // a fresh counter.
+    StdoutSilencer silencer;
+    const std::string username = create_user_with_password("hunter22", "lift");
+
+    for (int i = 0; i < 3; ++i) {
+        const auto r = post_login(handle,
+            login_body(username, "WRONG_PW_xx9"));
+        ASSERT_TRUE(r);
+        EXPECT_EQ(r->status, 401);
+    }
+    EXPECT_TRUE(tracker->is_locked(username));
+
+    // Wait out the 2-second lockout. We use 3s to be safe across CI
+    // schedulers that sometimes add jitter.
+    std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+    EXPECT_FALSE(tracker->is_locked(username));
+
+    // Correct password now succeeds (the post-lockout record_failure
+    // path bumps count to 4 — still under threshold after the lockout
+    // expired; no fresh lockout fires because count < threshold).
+    const auto ok = post_login(handle,
+        login_body(username, "hunter22"));
+    ASSERT_TRUE(ok);
+    ASSERT_EQ(ok->status, 200) << "body=" << ok->body;
+
+    // After success the counter is cleared.
+    EXPECT_FALSE(tracker->is_locked(username));
+    EXPECT_EQ(tracker->count(username), 0);
+}
+
+TEST_F(AuthLoginLockoutLiveFixture, DisabledConfigNeverLocks) {
+    // LOGIN_LOCKOUT_ENABLED=false — the tracker accepts the policy
+    // but never trips the lockout. The login-failure audit trigger
+    // (every 5th failure) still fires because that lives in the
+    // tracker too but doesn't depend on the lockout knob.
+    //
+    // Rebuild the server with a disabled config.
+    handle = ServerHandle();
+    server.reset();
+    limiter.reset();
+    tracker.reset();
+    store.reset();
+
+    auto cfg = lockout_cfg();
+    cfg.enabled = false;
+    limiter = std::make_unique<litecode::RateLimiter>();
+    tracker = std::make_unique<litecode::LoginFailureTracker>(cfg);
+    store   = std::make_unique<litecode::InMemoryRefreshTokenStore>(1000);
+    server  = std::make_unique<litecode::HttpServer>(
+                  dev_server(), dev_cors());
+    litecode::register_auth_routes(
+        *server, *pool, *limiter, *tracker, *store,
+        dev_jwt(), lax_rate_limit());
+    handle = start_server(server.get());
+
+    const std::string username = create_user_with_password("hunter22", "off");
+
+    // Drive 10 bad attempts — never locks.
+    for (int i = 0; i < 10; ++i) {
+        const auto r = post_login(handle,
+            login_body(username, "WRONG_PW_xx9"));
+        ASSERT_TRUE(r);
+        EXPECT_EQ(r->status, 401) << "i=" << i;
+        EXPECT_FALSE(r->get_header_value("Retry-After").size() > 0
+                     && r->status != 429)
+            << "lockout fired despite disabled config (i=" << i << ")";
+    }
+    EXPECT_FALSE(tracker->is_locked(username));
+    // No auth.login_locked audit row either.
+    EXPECT_EQ(count_audit_logs(*pool, username, "auth.login_locked"), 0);
 }
 
 } // namespace

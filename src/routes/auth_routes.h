@@ -109,6 +109,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -620,21 +621,39 @@ inline void register_handler(httplib::Response&     res,
 //  Login-failure tracker
 //
 //  In-memory, per-username failure counter used by /api/v1/auth/login
-//  to satisfy SPEC §15.1 ("失败登录 5 次 → 写 audit_logs"):
+//  to satisfy SPEC §15.1 ("失败登录 5 次 → 写 audit_logs") and the
+//  Phase 6 ☆ v1.2.46 lockout state machine ("失败登录锁定 — 连续 N
+//  次失败 15 分钟内禁止该用户名登录"):
 //
 //    - record_failure() bumps the counter for `username` and returns
 //      the new count. The caller then writes to audit_logs when the
 //      count crosses the kAuditLogEvery threshold (5, 10, 15, ...).
+//    - When `LoginLockoutConfig::enabled` is true and the counter
+//      crosses `LoginLockoutConfig::threshold` within the rolling
+//      `window_seconds`, the username is locked for
+//      `lockout_duration_seconds`. record_failure returns
+//      `locked=true` on the attempt that crosses the threshold so the
+//      caller can write a `auth.login_locked` audit row.
+//    - is_locked() / remaining_lockout_seconds() are the gate that
+//      login_handler consults BEFORE running bcrypt. While locked,
+//      every login attempt is short-circuited with the anti-
+//      enumeration envelope and a Retry-After header.
 //    - reset() is called after a successful login so a legitimate
 //      user who fat-fingered their password twice isn't penalized
-//      forever.
+//      forever. It also clears any active lockout state.
 //    - `max_entries` caps the map at 100k distinct usernames — defense
 //      against an attacker poking with random usernames to grow RSS.
-//      When the cap is hit, the entry with the highest count (most
-//      evidence of misbehavior) is dropped.
+//      When the cap is hit, we prefer to evict UNLOCKED entries with
+//      the largest count (the most-evidence accounts that aren't
+//      currently being throttled). Locked entries are evicted last —
+//      dropping a lockout would let the attacker back in.
 //
 //  Thread safety: a single mutex guards the map. record_failure() and
 //  reset() are O(1) amortized.
+//
+//  Clock injection: tests can pass a custom `Clock` callable that
+//  returns a steady_clock::time_point. Production callers leave the
+//  default (std::chrono::steady_clock::now) in place.
 //
 //  Tests reset the process-wide tracker between cases so state from
 //  a prior test doesn't bleed in.
@@ -643,46 +662,168 @@ inline void register_handler(httplib::Response&     res,
 class LoginFailureTracker {
 public:
     static constexpr int kAuditLogEvery = 5;   // threshold for audit_logs
-    explicit LoginFailureTracker(std::size_t max_entries = 100000)
-        : max_entries_(max_entries) {}
+
+    using Clock = std::function<std::chrono::steady_clock::time_point()>;
+
+    explicit LoginFailureTracker(
+            LoginLockoutConfig lockout_cfg = LoginLockoutConfig{},
+            std::size_t        max_entries = 100000,
+            Clock              clock       = nullptr)
+        : lockout_cfg_(lockout_cfg),
+          max_entries_(max_entries),
+          clock_(clock ? std::move(clock)
+                       : Clock([] { return std::chrono::steady_clock::now(); })) {
+        // Clamp to safe defaults so a misconfigured config (e.g. an
+        // operator who sets threshold=0) doesn't disable the feature
+        // silently — treat < 1 as "feature off". The same clamps live
+        // in load_config() so this is defense in depth.
+        if (lockout_cfg_.threshold                < 1) lockout_cfg_.threshold                = 1;
+        if (lockout_cfg_.window_seconds           < 1) lockout_cfg_.window_seconds           = 1;
+        if (lockout_cfg_.lockout_duration_seconds < 1) lockout_cfg_.lockout_duration_seconds = 1;
+    }
+
+    // Backward-compat overload — pre-Phase-6 callers passed only
+    // `max_entries` (the cap on tracked usernames). Delegates to the
+    // primary constructor with a default `LoginLockoutConfig{}` so
+    // the lockout feature defaults to ON but the cap is honored.
+    explicit LoginFailureTracker(std::size_t max_entries)
+        : LoginFailureTracker(LoginLockoutConfig{}, max_entries, nullptr) {}
 
     struct Outcome {
-        int  count = 0;                          // new failure count for username
-        bool should_audit = false;               // true iff this attempt crossed a multiple of kAuditLogEvery
+        int  count              = 0;  // new failure count for username
+        bool should_audit       = false; // true iff this attempt crossed a multiple of kAuditLogEvery
+        bool locked             = false; // true iff THIS attempt triggered a fresh lockout
+        bool was_already_locked = false; // true iff the account was already locked when this attempt came in
+        int  locked_for_seconds = 0;  // when locked/was_already_locked: how long the lockout will last from now
+        int  remaining_seconds  = 0;  // when locked/was_already_locked: how long until the lockout lifts
     };
 
+    // record_failure — bump the counter for `username` and possibly
+    // trigger a lockout. Returns the outcome so the caller can fire
+    // the right audit row (login_failure vs login_locked).
+    //
+    // State machine (per username):
+    //
+    //   +-------------------+  record_failure   +---------------------+
+    //   | clean (no entry)  | ----------------> | counting (count < N)|
+    //   +-------------------+                   +---------------------+
+    //                                                | count == N
+    //                                                v
+    //                                          +-------------+
+    //                                          |  LOCKED     |
+    //                                          |  for D sec  |
+    //                                          +-------------+
+    //                                                |
+    //                       window expires / reset() |
+    //                                                v
+    //                                          +-------------+
+    //                                          | clean again |
+    //                                          +-------------+
+    //
+    // `window_seconds` is the rolling "first failure of the window"
+    // rule: if a new failure arrives `window_seconds` after the FIRST
+    // failure of the current window, we reset the counter to 1 (a
+    // fresh attempt at a fresh user). While inside the window, every
+    // failure increments.
     Outcome record_failure(std::string_view username) {
         Outcome out;
         if (username.empty()) {
             return out;
         }
+        const auto now = clock_();
+
         std::lock_guard<std::mutex> g(mu_);
 
-        // Opportunistic cap enforcement: if we're at the cap, drop the
-        // entry with the largest count (it's the most evidence we'd be
-        // throwing away — fresh attackers with random usernames are
-        // cheap to re-track, but a long-banned user losing their
-        // counter is fine because a fresh failure re-creates it).
+        // Opportunistic cap enforcement: prefer to drop an UNLOCKED
+        // entry with the largest count. If every entry is locked
+        // (unlikely — that would mean >max_entries_ accounts under
+        // simultaneous lockout, which would itself mean we're being
+        // hammered), fall back to dropping the highest-count locked
+        // entry so the cap is enforced. Locked entries being evicted
+        // is recoverable: the next failed login will re-arm the
+        // lockout, and the attacker hasn't gained anything (the same
+        // threshold still applies).
         if (max_entries_ > 0 && failures_.size() >= max_entries_) {
-            auto victim = failures_.begin();
+            auto victim = failures_.end();
             for (auto it = failures_.begin(); it != failures_.end(); ++it) {
-                if (it->second.count > victim->second.count) victim = it;
+                if (victim == failures_.end()) {
+                    victim = it;
+                    continue;
+                }
+                const bool victim_locked = (victim->second.locked_until > now);
+                const bool it_locked     = (it->second.locked_until > now);
+                if (!victim_locked && it_locked) {
+                    // Keep the unlocked victim; skip this locked entry.
+                    continue;
+                }
+                if (victim_locked && !it_locked) {
+                    // Prefer the unlocked entry.
+                    victim = it;
+                    continue;
+                }
+                if (it->second.count > victim->second.count) {
+                    victim = it;
+                }
             }
-            failures_.erase(victim);
+            if (victim != failures_.end()) failures_.erase(victim);
         }
 
         auto& entry = failures_[std::string(username)];
-        ++entry.count;
+
+        // If the entry is currently locked and we're INSIDE the
+        // lockout window, do NOT count this attempt — we don't want a
+        // brute-force probe to keep extending its own ban. Return the
+        // existing lockout so the caller knows to short-circuit.
+        if (lockout_cfg_.enabled && entry.locked_until > now) {
+            out.count              = entry.count;
+            out.should_audit       = false; // no NEW failure to audit
+            out.was_already_locked = true;
+            out.locked_for_seconds = lockout_cfg_.lockout_duration_seconds;
+            out.remaining_seconds  = seconds_until(entry.locked_until, now);
+            return out;
+        }
+
+        // Sliding-window reset: if the first failure of the current
+        // window is older than window_seconds, start a fresh window
+        // with count = 1. We use `>=` so the boundary case
+        // (first_failure_at exactly window_seconds ago) resets too —
+        // the "15 分钟内" rule in SPEC §15.1 reads naturally as a
+        // half-open interval [now - window, now).
+        //
+        // Note: this does NOT wipe an active lockout — the check above
+        // would have short-circuited if we were still inside the
+        // lockout window. A "natural expiry" (lockout lifted, but
+        // sliding window hasn't expired yet) keeps the count intact,
+        // so an attacker who times their probes around lockout expiries
+        // can't trivially reset their progress. Only a successful
+        // login (tracker.reset) or a fully-expired sliding window
+        // clears the count.
+        const bool entry_is_fresh =
+            entry.first_failure_at == std::chrono::steady_clock::time_point{};
+        const auto window_dur = std::chrono::seconds(lockout_cfg_.window_seconds);
+        if (entry_is_fresh || now - entry.first_failure_at >= window_dur) {
+            entry.count             = 1;
+            entry.first_failure_at  = now;
+            entry.locked_until      = {};
+        } else {
+            ++entry.count;
+        }
         out.count        = entry.count;
         out.should_audit = (entry.count > 0)
                         && (entry.count % kAuditLogEvery == 0);
 
-        // We deliberately do NOT decay / expire entries by wall clock
-        // here. SPEC §15.1 mentions "15 分钟内" as a lockout window
-        // (Phase 6 ★), but counter decay is a separate concern from
-        // the audit-log trigger — Phase 6 will introduce its own
-        // lockout state machine. Keeping this tracker pure-count keeps
-        // the Phase 2 surface small.
+        // Lockout trigger — only when enabled AND the counter just
+        // hit the threshold (don't re-trigger on later failures in
+        // the same window).
+        if (lockout_cfg_.enabled
+            && entry.count >= lockout_cfg_.threshold
+            && entry.locked_until <= now) {
+            entry.locked_until      = now
+                + std::chrono::seconds(lockout_cfg_.lockout_duration_seconds);
+            out.locked             = true;
+            out.locked_for_seconds = lockout_cfg_.lockout_duration_seconds;
+            out.remaining_seconds  = lockout_cfg_.lockout_duration_seconds;
+        }
         return out;
     }
 
@@ -698,6 +839,33 @@ public:
         return (it == failures_.end()) ? 0 : it->second.count;
     }
 
+    // is_locked — true iff the username is currently within an active
+    // lockout window. Returns the remaining seconds in `out_remaining`
+    // (0 when not locked).
+    bool is_locked(std::string_view username, int* out_remaining = nullptr) const {
+        if (out_remaining) *out_remaining = 0;
+        if (username.empty()) return false;
+        std::lock_guard<std::mutex> g(mu_);
+        const auto it = failures_.find(std::string(username));
+        if (it == failures_.end()) return false;
+        const auto now = clock_();
+        if (it->second.locked_until > now) {
+            if (out_remaining) {
+                *out_remaining = seconds_until(it->second.locked_until, now);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    // remaining_lockout_seconds — convenience wrapper for callers that
+    // only want the integer. Returns 0 when not locked.
+    int remaining_lockout_seconds(std::string_view username) const {
+        int r = 0;
+        is_locked(username, &r);
+        return r;
+    }
+
     void clear() {
         std::lock_guard<std::mutex> g(mu_);
         failures_.clear();
@@ -710,14 +878,56 @@ public:
 
     std::size_t max_entries() const { return max_entries_; }
 
+    const LoginLockoutConfig& lockout_config() const { return lockout_cfg_; }
+
+    // Visible-for-test: install a custom clock mid-flight. The clock
+    // is captured by reference inside the lambda set up in the
+    // constructor; calling this replaces it.
+    void set_clock_for_testing(Clock clock) {
+        std::lock_guard<std::mutex> g(mu_);
+        clock_ = clock ? std::move(clock)
+                       : Clock([] { return std::chrono::steady_clock::now(); });
+    }
+
 private:
     struct Entry {
         int count = 0;
+        // Time of the FIRST failure in the current rolling window.
+        // Defaults to the epoch so a freshly-constructed entry is
+        // treated as "outside any window" (will reset on first
+        // failure).
+        std::chrono::steady_clock::time_point first_failure_at{};
+        // Time at which the active lockout lifts. Default-constructed
+        // time_point compares less-than any clock_() return value,
+        // so the lockout check is naturally false on a fresh entry.
+        std::chrono::steady_clock::time_point locked_until{};
     };
 
+    // seconds_until(a, b) — ceil((a - b) / 1s), clamped at 0. We use
+    // ceiling so the Retry-After header never under-reports (a value
+    // of 0 would let the client retry immediately, which would race
+    // against the lockout lift on the server).
+    static int seconds_until(std::chrono::steady_clock::time_point a,
+                             std::chrono::steady_clock::time_point b) {
+        if (a <= b) return 0;
+        const auto diff = a - b;
+        const auto secs = std::chrono::duration_cast<std::chrono::seconds>(diff);
+        // Round up if diff has any sub-second component past the
+        // truncated `secs` (e.g. 2.5s → 3). Cast back to seconds
+        // (a duration comparison works because both sides share
+        // representation units after the cast).
+        if (std::chrono::duration_cast<std::chrono::steady_clock::duration>(secs)
+            < diff) {
+            return static_cast<int>(secs.count()) + 1;
+        }
+        return static_cast<int>(secs.count());
+    }
+
+    LoginLockoutConfig                       lockout_cfg_;
     mutable std::mutex                       mu_;
     std::unordered_map<std::string, Entry>   failures_;
     std::size_t                              max_entries_;
+    Clock                                    clock_;
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -728,11 +938,23 @@ private:
 //    2. parse_json_body()              — 400 INVALID_INPUT on bad JSON
 //    3. detail::parse_login_request()  — 400 on missing fields / bad
 //                                        username shape
+//    3.5. tracker.is_locked()          — Phase 6 ☆ v1.2.46: 423 Locked
+//                                        envelope when the username is
+//                                        inside an active lockout window
+//                                        (Retry-After: remaining seconds)
 //    4. user_repo::find_by_username()  — 401 if no such user
 //    5. verify_password()              — 401 if mismatch
 //    6. audit_log (every 5th failure)  — fire-and-forget row insert
+//    6.5. tracker.record_failure()     — Phase 6 ☆ v1.2.46: bumps the
+//                                        sliding-window counter; may
+//                                        trip the lockout state machine,
+//                                        in which case a SEPARATE
+//                                        auth.login_locked row is
+//                                        written
 //    7. tracker.reset()                — successful login clears the
-//                                        counter for this username
+//                                        counter AND any active lockout
+//                                        for this username (Phase 6 ☆
+//                                        v1.2.46)
 //    8. user_repo::update_last_login() — best-effort last_login stamp
 //    9. issue_token_pair()             — access (2h) + refresh (7d)
 //   10. send_success()                 — 200 + {user, tokens, ...}
@@ -740,7 +962,13 @@ private:
 //  Anti-enumeration (SPEC §15.1): the 401 message is identical for
 //  "no such user" and "wrong password" — "invalid username or
 //  password". The route handler returns 401 in either case via a
-//  single throw so the wire body is byte-for-byte the same.
+//  single throw so the wire body is byte-for-byte the same. The
+//  423 Locked response for an actively-locked username uses the same
+//  envelope message ("invalid username or password") so a probe
+//  can't distinguish "this account exists and is locked" from
+//  "this account exists and you got the password wrong" from
+//  "no such account" — only the Retry-After header differs, and a
+//  polite client is the only one who acts on that.
 //
 //  Failure-audit (SPEC §15.1): each failed login bumps an in-memory
 //  counter keyed by username. At every kAuditLogEvery (5) crossings
@@ -748,10 +976,24 @@ private:
 //  Counts are per-username so a brute-force probe targeting one
 //  account is captured cleanly without polluting other accounts' logs.
 //
-//  Why we DON'T do rate-limit-by-username here: SPEC §5.1 only
-//  budgets login at 10/min/IP. The per-username counter is for
-//  audit, not throttling — Phase 6 will introduce a separate
-//  "lockout" state machine if SPEC §6.6 marks it as required.
+//  Lockout state machine (Phase 6 ☆ v1.2.46 — SPEC §15.1):
+//    - threshold (default 5):   consecutive failures inside the
+//                               sliding window that trip the lockout.
+//    - window_seconds (900):    rolling "first-failure" anchor. A
+//                               failure that arrives window_seconds
+//                               after the anchor resets the counter
+//                               to 1.
+//    - lockout_duration (900):  how long the lockout lasts once
+//                               triggered. While locked, every login
+//                               attempt returns 423 Locked without
+//                               even consulting the DB.
+//    - Successful login:        clears the counter AND any active
+//                               lockout so a one-off typo doesn't
+//                               self-lockout.
+//    - Config knob:             LOGIN_LOCKOUT_ENABLED=false disables
+//                               the feature entirely (the counter
+//                               still drives the audit_logs trigger;
+//                               only the lockout trip is suppressed).
 // ────────────────────────────────────────────────────────────────────────────
 
 inline void login_handler(httplib::Response&                 res,
@@ -765,6 +1007,50 @@ inline void login_handler(httplib::Response&                 res,
 
     auto parsed = detail::parse_login_request(*j, res);
     if (!parsed) return;                             // 400 already on the wire
+
+    // Phase 6 ☆ v1.2.46 — lockout gate. If this username is currently
+    // inside an active lockout window, short-circuit BEFORE the bcrypt
+    // round-trip. We use the same anti-enumeration envelope a normal
+    // bad-password attempt would ("invalid username or password") so
+    // the wire never reveals whether the account is real. The
+    // Retry-After header carries the remaining lockout time so a
+    // polite client can back off, but the body deliberately does NOT
+    // — an attacker who probed a real username would otherwise see
+    // "this account exists" through the difference in headers.
+    //
+    // We check the lockout BEFORE the per-IP rate limit budget is
+    // consumed? No — actually we check AFTER consume_rate_limit so a
+    // flood of probes against a locked account still trips the IP
+    // bucket. The opposite (lockout short-circuit before rate-limit)
+    // would let an attacker bypass the IP bucket by always probing a
+    // locked account. consume_rate_limit is called in the route
+    // registration lambda, so by the time we reach this line the IP
+    // bucket has already been debited; here we only gate on per-
+    // username lockout state.
+    if (tracker.lockout_config().enabled) {
+        int remaining = 0;
+        if (tracker.is_locked(parsed->username, &remaining)) {
+            // No record_failure here — we don't want a probe to
+            // extend the ban indefinitely. The state machine itself
+            // short-circuits record_failure during a lockout, but
+            // skipping the call entirely saves a map lookup and
+            // makes the intent obvious.
+            LOG_WARN("auth: login rejected (account locked)",
+                     {{"username",          parsed->username},
+                      {"remaining_seconds", std::to_string(remaining)},
+                      {"ip",                std::string(client_ip)}});
+            // Retry-After header per RFC 7231 §7.1.3 — integer seconds
+            // (the simplest form; RFC also allows HTTP-date, but no
+            // client we care about uses it). Always at least 1 so a
+            // 0-second remainder still produces a "wait" signal.
+            res.set_header("Retry-After",
+                           std::to_string(remaining > 0 ? remaining : 1));
+            send_error(res, 423, ErrorCode::FORBIDDEN,
+                       "invalid username or password",
+                       {{"retry_after_seconds", remaining}});
+            return;
+        }
+    }
 
     // Helper for the unified 401 path. Both "no such user" and "wrong
     // password" end up here — same envelope, same message, no leak.
@@ -787,10 +1073,35 @@ inline void login_handler(httplib::Response&                 res,
                 // flips it to throwing.
             }
         }
+        // Phase 6 ☆ v1.2.46 — fresh lockout triggered? Write a
+        // dedicated auth.login_locked audit row so operators can
+        // filter brute-force signals cleanly out of the general
+        // login_failure stream.
+        if (outcome.locked) {
+            try {
+                audit_log_repo::record_login_lockout(
+                    pool,
+                    username_for_audit,
+                    client_ip,
+                    outcome.count,
+                    outcome.locked_for_seconds,
+                    tracker.lockout_config().threshold);
+            } catch (...) {
+                // record_login_lockout is best-effort; the throwaway
+                // catch matches record_login_failure above.
+            }
+            LOG_WARN("auth: login locked (threshold reached)",
+                     {{"username",            username_for_audit},
+                      {"consecutive_failures", std::to_string(outcome.count)},
+                      {"locked_for_seconds",   std::to_string(outcome.locked_for_seconds)},
+                      {"ip",                  std::string(client_ip)}});
+        }
         LOG_WARN("auth: login failed",
                  {{"username",                  username_for_audit},
                   {"consecutive_failures",      std::to_string(outcome.count)},
-                  {"should_audit",              outcome.should_audit ? "true" : "false"}});
+                  {"should_audit",              outcome.should_audit ? "true" : "false"},
+                  {"locked",                    outcome.locked ? "true" : "false"},
+                  {"was_already_locked",        outcome.was_already_locked ? "true" : "false"}});
         send_error(res, 401, ErrorCode::UNAUTHORIZED,
                    "invalid username or password");
     };

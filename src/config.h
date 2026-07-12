@@ -145,6 +145,63 @@ struct RateLimitConfig {
 };
 
 // ────────────────────────────────────────────────────────────────────────────
+//  LoginLockoutConfig (Phase 6 ☆ v1.2.46 — SPEC §15.1 失败登录锁定)
+//
+//  Throttles credential-stuffing / brute-force probes at the per-USERNAME
+//  layer (the per-IP rate-limit on /api/v1/auth/login covers a single
+//  attacker IP, but a botnet of N IPs can together hammer one account
+//  and slip under the per-IP bucket). The state machine:
+//
+//      1) Every failed login (bad password OR unknown username) bumps
+//         a per-username counter.
+//      2) When the counter crosses `threshold` within
+//         `window_seconds` of the FIRST failure in the current window,
+//         the username is locked for `lockout_duration_seconds`.
+//      3) During the lockout, /api/v1/auth/login returns 423 Locked +
+//         the same "invalid username or password" envelope a normal
+//         bad-password attempt would (anti-enumeration: the wire never
+//         reveals whether the account is real). The Retry-After
+//         header carries the remaining lockout time.
+//      4) A successful login clears the counter AND any active lockout
+//         so a one-off typo doesn't chain into a self-lockout.
+//      5) On natural expiry the counter and lockout state reset
+//         implicitly (entries older than `window_seconds` count as
+//         fresh attempts).
+//
+//  Tuning rationale (defaults match SPEC §15.1):
+//    threshold = 5           — every 5th failure already writes an
+//                               audit row, so a lockout threshold of 5
+//                               aligns the operator-visible event with
+//                               the user-visible block.
+//    window_seconds = 900    — 15 min (SPEC §15.1 explicit).
+//    lockout_duration_seconds = 900 — 15 min (SPEC §15.1 explicit).
+//    enabled = true          — flip to false in tests / a paranoid
+//                               dev box that wants to disable the
+//                               feature without code edits.
+//
+//  Storage is in-memory inside LoginFailureTracker (Phase 2 ★). The
+//  state is intentionally process-local; a server restart wipes the
+//  tracker, which is a documented trade-off (the alternative —
+//  persisting lockout state to the DB — makes a coordinated multi-IP
+//  attack slightly harder but adds a hot-path write to every failed
+//  login). SPEC §9 calls for a Redis-backed tracker on multi-instance
+//  deploys; v1.2.46 keeps the MVP single-process semantics.
+//
+//  Env knobs:
+//      LOGIN_LOCKOUT_ENABLED                   (1/0/true/false)
+//      LOGIN_LOCKOUT_THRESHOLD                 (int >= 1)
+//      LOGIN_LOCKOUT_WINDOW_SECONDS            (int >= 1)
+//      LOGIN_LOCKOUT_DURATION_SECONDS          (int >= 1)
+// ────────────────────────────────────────────────────────────────────────────
+
+struct LoginLockoutConfig {
+    bool enabled                   = true;
+    int  threshold                 = 5;       // 5 failed attempts → lockout
+    int  window_seconds            = 900;     // 15 min sliding window
+    int  lockout_duration_seconds  = 900;     // 15 min lockout
+};
+
+// ────────────────────────────────────────────────────────────────────────────
 //  CookieConfig (Phase 5 ★ — SPEC §6.3, §15.1, §15.3 token storage)
 //
 //  The refresh token is delivered to the browser as an HttpOnly cookie
@@ -220,6 +277,7 @@ struct AppConfig {
     LoggingConfig          logging;
     CorsConfig             cors;
     RateLimitConfig        rate_limit;
+    LoginLockoutConfig     login_lockout;          // Phase 6 ☆ v1.2.46
     CookieConfig           cookie;
     AdminBootstrapConfig   admin_bootstrap;
 
@@ -583,6 +641,26 @@ inline AppConfig load_config(const std::string& env_file_path = ".env",
         detail::getenv_int_or<int>("RATE_LIMIT_ADMIN_QUEUE_PER_MIN",
                                    cfg.rate_limit.admin_queue_per_minute);
 
+    // ── Login lockout (Phase 6 ☆ v1.2.46 — SPEC §15.1) ──────────────────
+    cfg.login_lockout.enabled =
+        detail::getenv_bool_or("LOGIN_LOCKOUT_ENABLED",
+                               cfg.login_lockout.enabled);
+    cfg.login_lockout.threshold =
+        detail::getenv_int_or<int>("LOGIN_LOCKOUT_THRESHOLD",
+                                   cfg.login_lockout.threshold);
+    cfg.login_lockout.window_seconds =
+        detail::getenv_int_or<int>("LOGIN_LOCKOUT_WINDOW_SECONDS",
+                                   cfg.login_lockout.window_seconds);
+    cfg.login_lockout.lockout_duration_seconds =
+        detail::getenv_int_or<int>("LOGIN_LOCKOUT_DURATION_SECONDS",
+                                   cfg.login_lockout.lockout_duration_seconds);
+    if (cfg.login_lockout.threshold < 1)
+        throw ConfigError("LOGIN_LOCKOUT_THRESHOLD must be >= 1");
+    if (cfg.login_lockout.window_seconds < 1)
+        throw ConfigError("LOGIN_LOCKOUT_WINDOW_SECONDS must be >= 1");
+    if (cfg.login_lockout.lockout_duration_seconds < 1)
+        throw ConfigError("LOGIN_LOCKOUT_DURATION_SECONDS must be >= 1");
+
     for (int q : {cfg.rate_limit.auth_register_per_minute_per_ip,
                   cfg.rate_limit.auth_login_per_minute_per_ip,
                   cfg.rate_limit.submission_per_minute_per_user,
@@ -767,6 +845,10 @@ inline std::string redacted_dump(const AppConfig& cfg) {
        << " users_role="              << cfg.rate_limit.admin_users_role_per_minute << "/min"
        << " audit_logs="              << cfg.rate_limit.admin_audit_logs_per_minute << "/min"
        << " queue="                   << cfg.rate_limit.admin_queue_per_minute << "/min\n"
+       << "  login_lockout="          << (cfg.login_lockout.enabled ? "on" : "off")
+       << " threshold="               << cfg.login_lockout.threshold
+       << " window="                  << cfg.login_lockout.window_seconds << "s"
+       << " duration="                << cfg.login_lockout.lockout_duration_seconds << "s\n"
        << "  cookie.enabled="         << (cfg.cookie.enabled ? "true" : "false")
        << " cookie.name="             << cfg.cookie.name
        << " cookie.path="             << cfg.cookie.path
