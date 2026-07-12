@@ -229,7 +229,7 @@ html, body {
     background: var(--lc-color-bg);
     color: var(--lc-color-text);
     font-family: var(--lc-font-sans);
-    font-size: 15px;
+    font-size: var(--lc-font-size-md);
     line-height: 1.55;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -259,9 +259,9 @@ h1, h2, h3, h4 {
     color: var(--lc-color-text);
     line-height: 1.25;
 }
-h1 { font-size: 28px; font-weight: 700; }
-h2 { font-size: 22px; font-weight: 600; }
-h3 { font-size: 18px; font-weight: 600; }
+h1 { font-size: var(--lc-font-size-3xl); font-weight: 700; }
+h2 { font-size: var(--lc-font-size-2xl); font-weight: 600; }
+h3 { font-size: var(--lc-font-size-xl); font-weight: 600; }
 
 p { margin: 0 0 var(--lc-space-3) 0; }
 
@@ -345,7 +345,7 @@ img { max-width: 100%; height: auto; }
     border: 1px solid transparent;
     background: var(--lc-color-surface-2);
     color: var(--lc-color-text);
-    font-size: 14px;
+    font-size: var(--lc-font-size-base);
     font-weight: 500;
     cursor: pointer;
     transition: background var(--lc-transition-fast),
@@ -386,8 +386,8 @@ img { max-width: 100%; height: auto; }
     filter: brightness(1.05);
     color: #ffffff;
 }
-.lc-btn--sm { padding: 4px 10px; font-size: 13px; }
-.lc-btn--lg { padding: 12px 20px; font-size: 16px; }
+.lc-btn--sm { padding: 4px 10px; font-size: var(--lc-font-size-sm); }
+.lc-btn--lg { padding: 12px 20px; font-size: var(--lc-font-size-lg); }
 .lc-btn--block { display: flex; width: 100%; }
 
 .lc-icon-btn {
@@ -416,16 +416,16 @@ img { max-width: 100%; height: auto; }
 .lc-form { display: flex; flex-direction: column; gap: var(--lc-space-4); }
 .lc-form-row { display: flex; flex-direction: column; gap: var(--lc-space-1); }
 .lc-form-label {
-    font-size: 13px;
+    font-size: var(--lc-font-size-sm);
     font-weight: 600;
     color: var(--lc-color-text-2);
 }
 .lc-form-help {
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     color: var(--lc-color-text-muted);
 }
 .lc-form-error {
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     color: var(--lc-color-danger);
 }
 .lc-form-section {
@@ -445,7 +445,7 @@ img { max-width: 100%; height: auto; }
     border-radius: var(--lc-radius-md);
     background: var(--lc-color-surface);
     color: var(--lc-color-text);
-    font-size: 14px;
+    font-size: var(--lc-font-size-base);
     font-family: inherit;
     transition: border-color var(--lc-transition-fast),
                 box-shadow var(--lc-transition-fast);
@@ -471,7 +471,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     align-items: center;
     gap: var(--lc-space-2);
     cursor: pointer;
-    font-size: 14px;
+    font-size: var(--lc-font-size-base);
 }
 .lc-checkbox input { margin: 0; }
 
@@ -499,7 +499,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
 
 .lc-nav-brand {
     font-weight: 700;
-    font-size: 18px;
+    font-size: var(--lc-font-size-xl);
     color: var(--lc-color-text);
     letter-spacing: 0.4px;
 }
@@ -516,7 +516,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     padding: 6px 12px;
     border-radius: var(--lc-radius-md);
     color: var(--lc-color-text-2);
-    font-size: 14px;
+    font-size: var(--lc-font-size-base);
     font-weight: 500;
     transition: background var(--lc-transition-fast),
                 color var(--lc-transition-fast);
@@ -556,12 +556,12 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     border-radius: 50%;
     background: var(--lc-color-link);
     color: #ffffff;
-    font-size: 13px;
+    font-size: var(--lc-font-size-sm);
     font-weight: 700;
     text-transform: uppercase;
 }
 .lc-nav-username {
-    font-size: 14px;
+    font-size: var(--lc-font-size-base);
     font-weight: 500;
     color: var(--lc-color-text);
     max-width: 120px;
@@ -595,7 +595,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     border: 0;
     text-align: left;
     cursor: pointer;
-    font-size: 14px;
+    font-size: var(--lc-font-size-base);
     text-decoration: none;
     display: block;
     width: 100%;
@@ -636,7 +636,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     align-items: flex-start;
     justify-content: space-between;
     gap: var(--lc-space-3);
-    font-size: 14px;
+    font-size: var(--lc-font-size-base);
     animation: lc-toast-in 0.16s ease-out;
 }
 .lc-toast--leaving {
@@ -656,7 +656,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     border: 0;
     cursor: pointer;
     color: var(--lc-color-text-muted);
-    font-size: 18px;
+    font-size: var(--lc-font-size-xl);
     line-height: 1;
     padding: 0;
 }
@@ -697,12 +697,12 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     text-align: center;
     color: var(--lc-color-text-muted);
     margin-bottom: var(--lc-space-6);
-    font-size: 14px;
+    font-size: var(--lc-font-size-base);
 }
 .lc-auth-footer {
     text-align: center;
     margin-top: var(--lc-space-5);
-    font-size: 14px;
+    font-size: var(--lc-font-size-base);
     color: var(--lc-color-text-2);
 }
 .lc-auth-footer-sep {
@@ -769,7 +769,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
 .lc-pw-strength--strong { --lc-pw-color: var(--lc-color-success); }
 
 .lc-pw-strength-label {
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     color: var(--lc-color-text-muted);
     transition: color var(--lc-transition-fast);
 }
@@ -792,7 +792,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     display: inline-flex;
     align-items: center;
     gap: var(--lc-space-2);
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     color: var(--lc-color-text-muted);
     transition: color var(--lc-transition-fast);
 }
@@ -825,7 +825,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
    States: empty (neutral), ok (green ✓), bad (red ✗). */
 .lc-pw-confirm-hint {
     display: inline-block;
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     color: var(--lc-color-text-muted);
     transition: color var(--lc-transition-fast);
 }
@@ -844,7 +844,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     border-radius: 999px;
     background: var(--lc-color-surface-2);
     color: var(--lc-color-text-2);
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     font-weight: 500;
 }
 .lc-pill--easy   { color: var(--lc-color-success); }
@@ -858,7 +858,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     align-items: center;
     padding: 3px 10px;
     border-radius: var(--lc-radius-md);
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -963,7 +963,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     border-right: 1px solid var(--lc-color-border);
     padding: 6px 16px;
     font: inherit;
-    font-size: 13px;
+    font-size: var(--lc-font-size-sm);
     color: var(--lc-color-text-2);
     cursor: pointer;
     transition: background var(--lc-transition-fast),
@@ -1000,7 +1000,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     border-radius: 999px;
     padding: 4px 12px;
     font: inherit;
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     cursor: pointer;
     transition: background var(--lc-transition-fast),
                 color var(--lc-transition-fast),
@@ -1075,7 +1075,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     flex-wrap: wrap;
 }
 .lc-problem-row__title {
-    font-size: 15px;
+    font-size: var(--lc-font-size-md);
     font-weight: 600;
     color: var(--lc-color-text);
     overflow: hidden;
@@ -1090,7 +1090,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     display: flex;
     align-items: center;
     gap: var(--lc-space-3);
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     color: var(--lc-color-text-muted);
     flex-shrink: 0;
 }
@@ -1116,7 +1116,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
 }
 .lc-empty__title,
 .lc-error__title {
-    font-size: 16px;
+    font-size: var(--lc-font-size-lg);
     font-weight: 600;
     margin: 0 0 var(--lc-space-2) 0;
     color: var(--lc-color-text);
@@ -1131,7 +1131,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     gap: var(--lc-space-3);
     padding: var(--lc-space-6);
     color: var(--lc-color-text-muted);
-    font-size: 14px;
+    font-size: var(--lc-font-size-base);
 }
 
 .lc-spinner {
@@ -1164,7 +1164,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     border-radius: var(--lc-radius-md);
     padding: 5px 12px;
     font: inherit;
-    font-size: 13px;
+    font-size: var(--lc-font-size-sm);
     cursor: pointer;
     min-width: 36px;
     text-align: center;
@@ -1203,7 +1203,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     .lc-container { padding: var(--lc-space-5) var(--lc-space-4); }
     .lc-nav { padding: 0 var(--lc-space-4); gap: var(--lc-space-2); height: 52px; }
     .lc-nav-links { margin-left: var(--lc-space-2); flex-wrap: wrap; overflow-x: auto; }
-    .lc-nav-link { padding: 4px 10px; font-size: 13px; }
+    .lc-nav-link { padding: 4px 10px; font-size: var(--lc-font-size-sm); }
     .lc-nav-username { display: none; }
 
     .lc-auth-card { padding: var(--lc-space-6); }
@@ -1292,7 +1292,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
 }
 .lc-problem-pane__title {
     margin: 0;
-    font-size: 22px;
+    font-size: var(--lc-font-size-2xl);
     font-weight: 700;
     color: var(--lc-color-text);
 }
@@ -1323,7 +1323,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     border-top: 1px solid var(--lc-color-border);
 }
 .lc-problem-pane__samples h2 {
-    font-size: 18px;
+    font-size: var(--lc-font-size-xl);
     margin: 0 0 var(--lc-space-3) 0;
 }
 .lc-samples {
@@ -1341,7 +1341,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     padding: var(--lc-space-3);
 }
 .lc-sample__caption {
-    font-size: 13px;
+    font-size: var(--lc-font-size-sm);
     font-weight: 600;
     color: var(--lc-color-text-2);
     margin-bottom: var(--lc-space-2);
@@ -1351,7 +1351,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
 }
 .lc-sample__io:first-of-type { margin-top: 0; }
 .lc-sample__label {
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     color: var(--lc-color-text-muted);
     margin-bottom: 2px;
 }
@@ -1362,7 +1362,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     border-radius: var(--lc-radius-sm);
     padding: 8px 10px;
     font-family: var(--lc-font-mono);
-    font-size: 13px;
+    font-size: var(--lc-font-size-sm);
     line-height: 1.5;
     overflow-x: auto;
     white-space: pre;
@@ -1392,14 +1392,14 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     gap: var(--lc-space-2);
 }
 .lc-editor-pane__lang .lc-form-label {
-    font-size: 13px;
+    font-size: var(--lc-font-size-sm);
     white-space: nowrap;
 }
 .lc-editor-pane__select {
     width: auto;
     min-width: 140px;
     padding: 4px 8px;
-    font-size: 13px;
+    font-size: var(--lc-font-size-sm);
 }
 .lc-editor-pane__toolbar-actions {
     display: inline-flex;
@@ -1425,7 +1425,7 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     height: 100% !important;
     flex: 1 1 auto;
     font-family: var(--lc-font-mono);
-    font-size: 14px;
+    font-size: var(--lc-font-size-base);
     line-height: 1.55;
     background: var(--lc-color-surface);
     color: var(--lc-color-text);
@@ -1465,7 +1465,7 @@ html.dark .lc-editor-shell .CodeMirror-activeline-background {
     resize: none;
     padding: var(--lc-space-3);
     font-family: var(--lc-font-mono);
-    font-size: 14px;
+    font-size: var(--lc-font-size-base);
     line-height: 1.55;
     background: var(--lc-color-surface);
     color: var(--lc-color-text);
@@ -1506,7 +1506,7 @@ html.dark .lc-editor-shell .CodeMirror-activeline-background {
     column-gap: var(--lc-space-4);
     row-gap: 4px;
     margin: 0;
-    font-size: 13px;
+    font-size: var(--lc-font-size-sm);
 }
 .lc-result-panel__metric-label {
     color: var(--lc-color-text-muted);
@@ -1522,7 +1522,7 @@ html.dark .lc-editor-shell .CodeMirror-activeline-background {
 }
 .lc-result-panel__details summary {
     cursor: pointer;
-    font-size: 13px;
+    font-size: var(--lc-font-size-sm);
     color: var(--lc-color-text-2);
     user-select: none;
 }
@@ -1533,7 +1533,7 @@ html.dark .lc-editor-shell .CodeMirror-activeline-background {
     border-radius: var(--lc-radius-sm);
     padding: var(--lc-space-3);
     font-family: var(--lc-font-mono);
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     line-height: 1.5;
     max-height: 200px;
     overflow: auto;
@@ -1596,7 +1596,7 @@ html.dark .lc-draft-banner {
 }
 
 .lc-draft-banner__icon {
-    font-size: 22px;
+    font-size: var(--lc-font-size-2xl);
     line-height: 1;
     flex-shrink: 0;
 }
@@ -1609,7 +1609,7 @@ html.dark .lc-draft-banner {
 }
 .lc-draft-banner__title {
     margin: 0;
-    font-size: 14px;
+    font-size: var(--lc-font-size-base);
     font-weight: 600;
     color: var(--lc-color-text);
 }
@@ -1632,7 +1632,7 @@ html.dark .lc-draft-banner {
     background: var(--lc-color-surface-2);
     border: 1px solid var(--lc-color-border);
     border-radius: 999px;
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     color: var(--lc-color-text-2);
     align-self: flex-start;
     /* Sit just above the submit row; small enough not to push the
@@ -1743,7 +1743,7 @@ html.dark .lc-draft-banner {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 22px;
+    font-size: var(--lc-font-size-2xl);
     line-height: 1;
     flex-shrink: 0;
     /* Fallback: when the glyph can't render (very rare), keep the
@@ -1753,7 +1753,7 @@ html.dark .lc-draft-banner {
 }
 
 .lc-result-panel__message {
-    font-size: 14px;
+    font-size: var(--lc-font-size-base);
     color: var(--lc-color-text-2);
     font-weight: 500;
 }
@@ -1812,7 +1812,7 @@ html.dark .lc-gauge--danger {
     align-items: baseline;
     justify-content: space-between;
     gap: var(--lc-space-2);
-    font-size: 13px;
+    font-size: var(--lc-font-size-sm);
 }
 .lc-gauge__label {
     color: var(--lc-color-text-2);
@@ -1821,7 +1821,7 @@ html.dark .lc-gauge--danger {
 .lc-gauge__value {
     color: var(--lc-color-text);
     font-family: var(--lc-font-mono);
-    font-size: 13px;
+    font-size: var(--lc-font-size-sm);
 }
 .lc-gauge__value strong {
     font-weight: 600;
@@ -1866,7 +1866,7 @@ html.dark .lc-gauge--danger {
 .lc-result-panel__help p {
     margin: 0;
     color: var(--lc-color-text-2);
-    font-size: 13px;
+    font-size: var(--lc-font-size-sm);
     line-height: 1.6;
 }
 
@@ -1898,7 +1898,7 @@ html.dark .lc-gauge--danger {
     color: var(--lc-color-text-2);
     cursor: pointer;
     font: inherit;
-    font-size: 14px;
+    font-size: var(--lc-font-size-base);
     font-weight: 500;
     padding: 10px 16px;
     margin-bottom: -1px;     /* overlap the strip's border */
@@ -1921,7 +1921,7 @@ html.dark .lc-gauge--danger {
 .lc-tab__count {
     /* Tab badge — "提交历史 12" shows the row total when known. */
     color: var(--lc-color-text-2);
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     font-weight: 400;
     margin-left: 4px;
 }
@@ -1945,7 +1945,7 @@ html.dark .lc-gauge--danger {
 }
 .lc-history-pane__title {
     margin: 0;
-    font-size: 18px;
+    font-size: var(--lc-font-size-xl);
     font-weight: 600;
     color: var(--lc-color-text-1);
 }
@@ -1991,7 +1991,7 @@ html.dark .lc-gauge--danger {
     flex-wrap: wrap;
 }
 .lc-history-row__eyebrow {
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     font-weight: 500;
     color: var(--lc-color-text-2);
 }
@@ -2000,18 +2000,18 @@ html.dark .lc-gauge--danger {
 }
 .lc-history-row__id {
     font-family: var(--lc-font-mono, ui-monospace, SFMono-Regular, monospace);
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     color: var(--lc-color-text-2);
 }
 .lc-history-row__lang {
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     color: var(--lc-color-text-2);
     padding: 1px 6px;
     border: 1px solid var(--lc-color-border);
     border-radius: 4px;
 }
 .lc-history-row__time {
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     color: var(--lc-color-text-2);
     margin-left: auto;
 }
@@ -2019,7 +2019,7 @@ html.dark .lc-gauge--danger {
     display: flex;
     gap: var(--lc-space-3);
     flex-wrap: wrap;
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     color: var(--lc-color-text-1);
 }
 .lc-history-row__metric--muted {
@@ -2030,7 +2030,7 @@ html.dark .lc-gauge--danger {
 }
 .lc-history-row__details > summary {
     cursor: pointer;
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     color: var(--lc-color-text-2);
     list-style: none;
     user-select: none;
@@ -2052,7 +2052,7 @@ html.dark .lc-gauge--danger {
     padding: var(--lc-space-2) var(--lc-space-3);
     margin: 6px 0 0;
     font-family: var(--lc-font-mono, ui-monospace, SFMono-Regular, monospace);
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     line-height: 1.5;
     max-height: 200px;
     overflow: auto;
@@ -2109,7 +2109,7 @@ html.dark .lc-gauge--danger {
 .lc-profile-head__body { min-width: 0; }
 .lc-profile-head__name {
     margin: 0 0 var(--lc-space-1) 0;
-    font-size: 22px;
+    font-size: var(--lc-font-size-2xl);
     font-weight: 700;
     color: var(--lc-color-text);
 }
@@ -2118,7 +2118,7 @@ html.dark .lc-gauge--danger {
     align-items: center;
     gap: var(--lc-space-2);
     flex-wrap: wrap;
-    font-size: 13px;
+    font-size: var(--lc-font-size-sm);
     color: var(--lc-color-text-muted);
 }
 
@@ -2139,7 +2139,7 @@ html.dark .lc-gauge--danger {
     background: var(--lc-color-surface-1);
 }
 .lc-stat-card__value {
-    font-size: 28px;
+    font-size: var(--lc-font-size-3xl);
     font-weight: 700;
     line-height: 1.1;
     color: var(--lc-color-text);
@@ -2147,18 +2147,18 @@ html.dark .lc-gauge--danger {
 }
 .lc-stat-card__value--accent { color: var(--lc-color-link); }
 .lc-stat-card__label {
-    font-size: 13px;
+    font-size: var(--lc-font-size-sm);
     color: var(--lc-color-text-muted);
 }
 .lc-stat-card__sub {
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     color: var(--lc-color-text-2);
 }
 
 /* ── Breakdown bars (difficulty / status distribution) ──────── */
 .lc-section-title {
     margin: var(--lc-space-6) 0 var(--lc-space-3) 0;
-    font-size: 16px;
+    font-size: var(--lc-font-size-lg);
     font-weight: 600;
     color: var(--lc-color-text);
 }
@@ -2174,7 +2174,7 @@ html.dark .lc-gauge--danger {
     gap: var(--lc-space-3);
 }
 .lc-bar-row__label {
-    font-size: 13px;
+    font-size: var(--lc-font-size-sm);
     font-weight: 500;
     color: var(--lc-color-text-1);
 }
@@ -2197,7 +2197,7 @@ html.dark .lc-gauge--danger {
 .lc-bar-fill--ac     { background: var(--lc-color-judge-pass); }
 .lc-bar-fill--muted  { background: var(--lc-color-text-2); }
 .lc-bar-row__count {
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     color: var(--lc-color-text-muted);
     text-align: right;
     font-variant-numeric: tabular-nums;
@@ -2211,7 +2211,7 @@ html.dark .lc-gauge--danger {
     border-radius: var(--lc-radius-md);
     background: var(--lc-color-surface-1);
     color: var(--lc-color-text-2);
-    font-size: 14px;
+    font-size: var(--lc-font-size-base);
     line-height: 1.6;
 }
 
@@ -2245,7 +2245,7 @@ html.dark .lc-gauge--danger {
     padding: var(--lc-space-3) var(--lc-space-4);
 }
 .lc-rank-head {
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     font-weight: 600;
     color: var(--lc-color-text-muted);
     text-transform: uppercase;
@@ -2263,7 +2263,7 @@ html.dark .lc-gauge--danger {
     background: color-mix(in srgb, var(--lc-color-link) 8%, var(--lc-color-surface-1));
 }
 .lc-rank-cell--rank {
-    font-size: 16px;
+    font-size: var(--lc-font-size-lg);
     font-weight: 700;
     color: var(--lc-color-text-1);
     font-variant-numeric: tabular-nums;
@@ -2271,7 +2271,7 @@ html.dark .lc-gauge--danger {
     align-items: center;
     gap: 6px;
 }
-.lc-rank-cell--rank .lc-rank-medal { font-size: 18px; }
+.lc-rank-cell--rank .lc-rank-medal { font-size: var(--lc-font-size-xl); }
 .lc-rank-cell--user {
     display: flex;
     align-items: center;
@@ -2357,7 +2357,7 @@ html.dark .lc-gauge--danger {
 .lc-admin-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 14px;
+    font-size: var(--lc-font-size-base);
     min-width: 720px;
 }
 
@@ -2406,7 +2406,7 @@ html.dark .lc-gauge--danger {
 }
 
 .lc-form-section__title {
-    font-size: 14px;
+    font-size: var(--lc-font-size-base);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -2450,7 +2450,7 @@ html.dark .lc-gauge--danger {
     outline: none;
     padding: 2px 4px;
     background: transparent;
-    font-size: 14px;
+    font-size: var(--lc-font-size-base);
 }
 
 .lc-tag-input__input:focus {
@@ -2464,7 +2464,7 @@ html.dark .lc-gauge--danger {
     color: inherit;
     cursor: pointer;
     padding: 0 2px;
-    font-size: 14px;
+    font-size: var(--lc-font-size-base);
     line-height: 1;
 }
 
@@ -2493,7 +2493,7 @@ html.dark .lc-gauge--danger {
 .lc-md-editor__textarea {
     font-family: var(--lc-font-mono, ui-monospace, "SFMono-Regular",
                       Consolas, "Liberation Mono", Menlo, monospace);
-    font-size: 13px;
+    font-size: var(--lc-font-size-sm);
     line-height: 1.5;
     resize: vertical;
     min-height: 280px;
@@ -2532,7 +2532,7 @@ html.dark .lc-gauge--danger {
 .lc-sample-row__textarea {
     font-family: var(--lc-font-mono, ui-monospace, "SFMono-Regular",
                       Consolas, "Liberation Mono", Menlo, monospace);
-    font-size: 13px;
+    font-size: var(--lc-font-size-sm);
     line-height: 1.5;
     resize: vertical;
     min-height: 80px;
@@ -2542,7 +2542,7 @@ html.dark .lc-gauge--danger {
     .lc-admin-table thead th,
     .lc-admin-table tbody td {
         padding: 8px 10px;
-        font-size: 13px;
+        font-size: var(--lc-font-size-sm);
     }
 }
 
@@ -2598,7 +2598,7 @@ html.dark .lc-gauge--danger {
 }
 
 .lc-health-cell__label {
-    font-size: 12px;
+    font-size: var(--lc-font-size-xs);
     color: var(--lc-color-text-muted);
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -2835,9 +2835,9 @@ html.lc-route-pending body {
         height: 52px;
     }
     .lc-nav-links { margin-left: var(--lc-space-2); gap: 0; flex-wrap: nowrap; }
-    .lc-nav-link { padding: 4px 10px; font-size: 13px; white-space: nowrap; }
+    .lc-nav-link { padding: 4px 10px; font-size: var(--lc-font-size-sm); white-space: nowrap; }
     .lc-nav-username { display: none; }
-    .lc-nav-brand { font-size: 16px; }
+    .lc-nav-brand { font-size: var(--lc-font-size-lg); }
 
     /* Hide the brand subtitle text on the smallest widths — the
        brand mark itself stays so the user keeps a home link. */
@@ -2910,14 +2910,14 @@ html.lc-route-pending body {
     .lc-admin-table thead th,
     .lc-admin-table tbody td {
         padding: 8px 10px;
-        font-size: 13px;
+        font-size: var(--lc-font-size-sm);
     }
 
     /* Pagination — wrap and shrink so a 360px viewport shows at
        least the active page + neighbours without horizontal scroll. */
     .lc-page-btn {
         padding: 4px 9px;
-        font-size: 12px;
+        font-size: var(--lc-font-size-xs);
         min-width: 30px;
     }
 
@@ -2931,7 +2931,7 @@ html.lc-route-pending body {
        one line in a 360px container. */
     h1 { font-size: 24px; }
     h2 { font-size: 19px; }
-    h3 { font-size: 16px; }
+    h3 { font-size: var(--lc-font-size-lg); }
 }
 
 /* ≤ 640px — admin tables collapse to stacked card lists.
@@ -2993,7 +2993,7 @@ html.lc-route-pending body {
     .lc-admin-table tbody td::before {
         content: attr(data-label);
         flex: 0 0 80px;
-        font-size: 12px;
+        font-size: var(--lc-font-size-xs);
         color: var(--lc-color-text-muted);
         font-weight: 500;
         /* Truncate overflow rather than wrap the label — keeps each
@@ -3059,12 +3059,12 @@ html.lc-route-pending body {
     /* Hide the "登录 / 注册" buttons' default spacing on a 360px
        screen — the auth buttons sit on the right with the theme
        toggle, and a wrapped 登录→注册 pair is hard to read. */
-    .lc-nav-right .lc-btn { padding: 4px 10px; font-size: 13px; }
+    .lc-nav-right .lc-btn { padding: 4px 10px; font-size: var(--lc-font-size-sm); }
 
     /* Stat grid — already 1-col on phones via auto-fit, but tighten
        card padding so 4 stats still fit comfortably. */
     .lc-stat-card { padding: var(--lc-space-3); }
-    .lc-stat-card__value { font-size: 22px; }
+    .lc-stat-card__value { font-size: var(--lc-font-size-2xl); }
 
     /* Profile header — avatar + name stack vertically instead of
        sitting side-by-side when the username is long (Chinese
