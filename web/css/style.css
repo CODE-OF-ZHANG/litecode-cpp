@@ -23,6 +23,26 @@
    - SPEC §13         Mobile responsive < 768px
    - A11y            Keyboard focus rings preserved, aria-labels on
                      icon buttons honored
+
+   ============================================================================
+   Verdict → role token map (v1.2.47-b):
+     AC       → --lc-color-judge-pass    (forest green)
+     WA       → --lc-color-judge-fail    (crimson)
+     RE       → --lc-color-judge-fail    (shares WA — failure)
+     SE       → --lc-color-judge-fail    (shares WA — system error)
+     TLE      → --lc-color-judge-warn    (amber)
+     OLE      → --lc-color-judge-warn
+     PE       → --lc-color-judge-warn
+     MLE      → --lc-color-judge-violet  (the only violet — memory)
+     CE       → --lc-color-judge-neutral (slate)
+     pending  → --lc-color-judge-info    (in-flight, deep blue)
+     running  → --lc-color-judge-info
+
+   Foreground (text/border) uses the role token directly.
+   Background (pill / badge / gauge) uses the role's -bg companion token.
+   Dark-mode counterparts use -bg-dark. Do not redefine per-status —
+   change the role token instead.
+   ============================================================================
 */
 
 /* =====================================================================
@@ -78,6 +98,60 @@
 
     --lc-transition-fast:  120ms ease;
     --lc-transition-base:  180ms ease;
+
+    /* v1.2.47-b: 6 semantic judge role tokens. See verdict → role
+       mapping comment at the top of this file. Consumers: .lc-status--*,
+       .lc-history-row--*, .lc-pill--{ok,warning,down,muted},
+       .lc-gauge--{warning,danger}, .lc-bar-fill--{easy,medium,hard,ac,muted},
+       .lc-sse-status__dot--*, .lc-saved-indicator__dot. */
+    --lc-color-judge-pass:    #15803d;  /* forest (AC)                  */
+    --lc-color-judge-fail:    #b42318;  /* crimson (WA / RE / SE)       */
+    --lc-color-judge-warn:    #b54708;  /* amber (TLE / OLE / PE)       */
+    --lc-color-judge-info:    #1e40af;  /* deep blue (pending / run)    */
+    --lc-color-judge-violet:  #6e2ebe;  /* violet (MLE only)            */
+    --lc-color-judge-neutral: #475467;  /* slate (CE / SE neutral)      */
+
+    /* -bg companions: translucent tint for pill / badge backgrounds. */
+    --lc-color-judge-pass-bg:    rgba(21, 128, 61, 0.10);
+    --lc-color-judge-fail-bg:    rgba(180, 35, 24, 0.10);
+    --lc-color-judge-warn-bg:    rgba(181, 71, 8, 0.10);
+    --lc-color-judge-info-bg:    rgba(30, 64, 175, 0.10);
+    --lc-color-judge-violet-bg:  rgba(110, 46, 190, 0.10);
+    --lc-color-judge-neutral-bg: rgba(71, 84, 103, 0.12);
+
+    /* v1.2.47-b: 9-step type scale. Replaces hard-coded font-size values
+       scattered through this file. Mono / icon geometry stays inline. */
+    --lc-font-size-xs:   12px;  /* caption, mono labels             */
+    --lc-font-size-sm:   13px;  /* form help, small UI              */
+    --lc-font-size-base: 14px;  /* body, dense tables               */
+    --lc-font-size-md:   15px;  /* default body                     */
+    --lc-font-size-lg:   16px;  /* tab labels, list titles          */
+    --lc-font-size-xl:   18px;  /* section headings                 */
+    --lc-font-size-2xl:  22px;  /* h2 + problem titles              */
+    --lc-font-size-3xl:  28px;  /* h1, brand mark                   */
+    --lc-font-size-4xl:  36px;  /* stat-card big numbers            */
+
+    /* v1.2.47-b: paired line heights. */
+    --lc-line-height-tight: 1.25;
+    --lc-line-height-base:  1.55;
+    --lc-line-height-prose: 1.7;
+
+    /* v1.2.47-b: spacing scale fill (was missing 7/9/11/12). */
+    --lc-space-7:  28px;
+    --lc-space-9:  36px;
+    --lc-space-11: 48px;
+    --lc-space-12: 64px;
+
+    /* v1.2.47-b: 2-step shadow scale. Replaces 3-step cascade with
+       one hairline-rest + one overlay. Existing --lc-shadow-{sm,md,lg}
+       stay declared for backward compat; new code should prefer these. */
+    --lc-shadow-rest:    0 1px 0 rgba(15, 23, 42, 0.04);
+    --lc-shadow-overlay: 0 12px 32px rgba(15, 23, 42, 0.12);
+
+    /* v1.2.47-b: reorder mono fallback chain to prefer monospace
+       families a likely-installed machine has, before OS generic. */
+    --lc-font-mono: 'JetBrains Mono', 'IBM Plex Mono', 'Fira Code',
+                    ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
 }
 
 /* Dark theme — toggle by adding `.dark` on <html>.
@@ -105,6 +179,14 @@ html.dark {
     --lc-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --lc-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
     --lc-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+
+    /* v1.2.47-b: dark counterparts for judge role -bg tokens. */
+    --lc-color-judge-pass-bg-dark:    rgba(34, 197, 94, 0.14);
+    --lc-color-judge-fail-bg-dark:    rgba(248, 113, 113, 0.14);
+    --lc-color-judge-warn-bg-dark:    rgba(251, 191, 36, 0.14);
+    --lc-color-judge-info-bg-dark:    rgba(96, 165, 250, 0.14);
+    --lc-color-judge-violet-bg-dark:  rgba(167, 139, 250, 0.14);
+    --lc-color-judge-neutral-bg-dark: rgba(148, 163, 184, 0.14);
 }
 
 /* System preference kicks in only when the user has NOT made an explicit
