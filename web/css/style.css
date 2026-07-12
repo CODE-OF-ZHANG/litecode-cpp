@@ -875,6 +875,149 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
 .lc-status--pending { background: var(--lc-color-judge-info-bg);    color: var(--lc-color-judge-info); }
 .lc-status--running { background: var(--lc-color-judge-info-bg);    color: var(--lc-color-judge-info); }
 
+/* v1.2.47-f: Verdict strip — signature element of the redesign.
+   Used inside the result panel header, the submission history row
+   top, and the dashboard recent-submissions cell. A 1px hairline
+   border on four sides + a 3px top edge in the verdict colour, with
+   the status code drawn in mono small-caps and the meta line in
+   mono tabular-nums. Mono throughout — no serif fallback, because
+   (a) CSP forbids web fonts, (b) three OSes give three serifs, and
+   (c) the instrument voice comes from mono + tabular + small-caps,
+   not from a font-family change. */
+.lc-verdict-strip {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lc-space-2);
+    padding: var(--lc-space-4);
+    border: 1px solid var(--lc-color-border);
+    border-top-width: 3px;
+    background: var(--lc-color-surface);
+    border-top-color: var(--lc-color-judge-pass);
+}
+.lc-verdict-strip__code {
+    font-family: var(--lc-font-mono);
+    font-size: var(--lc-font-size-lg);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--lc-color-judge-pass);
+}
+.lc-verdict-strip__meta {
+    font-family: var(--lc-font-mono);
+    font-size: var(--lc-font-size-base);
+    color: var(--lc-color-text-2);
+    font-variant-numeric: tabular-nums;
+}
+/* Per-role border + code colour via a single --lc-verdict-role variable
+   set on the modifier class — keeps the visual rhythm uniform and
+   makes a new role a one-line addition. */
+.lc-verdict-strip--pass    { --lc-verdict-role: var(--lc-color-judge-pass); }
+.lc-verdict-strip--fail    { --lc-verdict-role: var(--lc-color-judge-fail); }
+.lc-verdict-strip--warn    { --lc-verdict-role: var(--lc-color-judge-warn); }
+.lc-verdict-strip--info    { --lc-verdict-role: var(--lc-color-judge-info); }
+.lc-verdict-strip--violet  { --lc-verdict-role: var(--lc-color-judge-violet); }
+.lc-verdict-strip--neutral { --lc-verdict-role: var(--lc-color-judge-neutral); }
+.lc-verdict-strip--pass,
+.lc-verdict-strip--fail,
+.lc-verdict-strip--warn,
+.lc-verdict-strip--info,
+.lc-verdict-strip--violet,
+.lc-verdict-strip--neutral {
+    border-top-color: var(--lc-verdict-role);
+}
+.lc-verdict-strip--pass    .lc-verdict-strip__code,
+.lc-verdict-strip--fail    .lc-verdict-strip__code,
+.lc-verdict-strip--warn    .lc-verdict-strip__code,
+.lc-verdict-strip--info    .lc-verdict-strip__code,
+.lc-verdict-strip--violet  .lc-verdict-strip__code,
+.lc-verdict-strip--neutral .lc-verdict-strip__code {
+    color: var(--lc-verdict-role);
+}
+
+/* Compact variant: used inside history rows and dashboard cells where
+   vertical space is at a premium. Inline-flex layout, single line,
+   keeps the 3px top edge as the visual anchor. */
+.lc-verdict-strip--compact {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--lc-space-3);
+    padding: var(--lc-space-2) var(--lc-space-3);
+    border-top-width: 2px;
+}
+.lc-verdict-strip--compact .lc-verdict-strip__code {
+    font-size: var(--lc-font-size-sm);
+}
+.lc-verdict-strip--compact .lc-verdict-strip__meta {
+    font-size: var(--lc-font-size-xs);
+}
+
+/* v1.2.47-f: opt-in verdict-strip activation via :has(). The three
+   surfaces that already render a status badge (.lc-result-panel,
+   .lc-history-row, .lc-admin-table tbody tr for the dashboard recent
+   table) automatically pick up a 3px top edge in the matching judge
+   role colour whenever the badge inside carries the verdict class.
+   Zero HTML or JS changes required — the legacy .lc-status--<v>
+   classes (which the JS contract depends on) stay untouched, and the
+   :has() selector carries the visual identity. Requires Chrome 105+ /
+   Safari 15.4+ / Firefox 121+ — all 2023. */
+.lc-result-panel:has(.lc-status--ac) {
+    border-top: 3px solid var(--lc-color-judge-pass);
+}
+.lc-result-panel:has(.lc-status--wa),
+.lc-result-panel:has(.lc-status--re),
+.lc-result-panel:has(.lc-status--se) {
+    border-top: 3px solid var(--lc-color-judge-fail);
+}
+.lc-result-panel:has(.lc-status--tle),
+.lc-result-panel:has(.lc-status--ole),
+.lc-result-panel:has(.lc-status--pe) {
+    border-top: 3px solid var(--lc-color-judge-warn);
+}
+.lc-result-panel:has(.lc-status--mle) {
+    border-top: 3px solid var(--lc-color-judge-violet);
+}
+.lc-result-panel:has(.lc-status--ce) {
+    border-top: 3px solid var(--lc-color-judge-neutral);
+}
+.lc-result-panel:has(.lc-status--pending),
+.lc-result-panel:has(.lc-status--running) {
+    border-top: 3px solid var(--lc-color-judge-info);
+}
+
+/* History rows — keep the existing 4px left stripe (per role, set in
+   v1.2.47-c) and add a 2px top edge for the verdict-strip rhythm on
+   the compact timeline surface. The top edge only renders when the
+   row has a verdict badge (i.e. a completed submission), not for
+   the placeholder loading/error rows. */
+.lc-history-row:has(.lc-status--ac)      { border-top: 2px solid var(--lc-color-judge-pass); }
+.lc-history-row:has(.lc-status--wa),
+.lc-history-row:has(.lc-status--re),
+.lc-history-row:has(.lc-status--se)      { border-top: 2px solid var(--lc-color-judge-fail); }
+.lc-history-row:has(.lc-status--tle),
+.lc-history-row:has(.lc-status--ole),
+.lc-history-row:has(.lc-status--pe)      { border-top: 2px solid var(--lc-color-judge-warn); }
+.lc-history-row:has(.lc-status--mle)     { border-top: 2px solid var(--lc-color-judge-violet); }
+.lc-history-row:has(.lc-status--ce)      { border-top: 2px solid var(--lc-color-judge-neutral); }
+.lc-history-row:has(.lc-status--pending),
+.lc-history-row:has(.lc-status--running){ border-top: 2px solid var(--lc-color-judge-info); }
+
+/* Dashboard recent-submissions table rows — paint the first cell
+   (which holds the .lc-status badge) with a left-edge accent. We
+   target the cell, not the row, so the row hover / stripe behaviour
+   in the admin table stays untouched. */
+.lc-admin-table tbody td:has(> .lc-status--ac)      { border-left: 3px solid var(--lc-color-judge-pass); padding-left: var(--lc-space-3); }
+.lc-admin-table tbody td:has(> .lc-status--wa),
+.lc-admin-table tbody td:has(> .lc-status--re),
+.lc-admin-table tbody td:has(> .lc-status--se)      { border-left: 3px solid var(--lc-color-judge-fail); padding-left: var(--lc-space-3); }
+.lc-admin-table tbody td:has(> .lc-status--tle),
+.lc-admin-table tbody td:has(> .lc-status--ole),
+.lc-admin-table tbody td:has(> .lc-status--pe)      { border-left: 3px solid var(--lc-color-judge-warn); padding-left: var(--lc-space-3); }
+.lc-admin-table tbody td:has(> .lc-status--mle)     { border-left: 3px solid var(--lc-color-judge-violet); padding-left: var(--lc-space-3); }
+.lc-admin-table tbody td:has(> .lc-status--ce)      { border-left: 3px solid var(--lc-color-judge-neutral); padding-left: var(--lc-space-3); }
+.lc-admin-table tbody td:has(> .lc-status--pending),
+.lc-admin-table tbody td:has(> .lc-status--running){ border-left: 3px solid var(--lc-color-judge-info); padding-left: var(--lc-space-3); }
+
 /* Markdown rendered surface */
 .lc-markdown {
     line-height: 1.7;
@@ -1429,6 +1572,32 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     line-height: 1.55;
     background: var(--lc-color-surface);
     color: var(--lc-color-text);
+}
+
+/* v1.2.47-f: CodeMirror light theme — paper-toned overrides so the
+   editor stops reading as monokai when the page is in light mode.
+   The base .lc-editor-shell .CodeMirror above handles bg + text via
+   tokens; this block layers the gutter / cursor / selection / line
+   details onto the warm paper palette. */
+.lc-editor-shell .CodeMirror-gutters {
+    background: var(--lc-color-bg);
+    border-right: 1px solid var(--lc-color-border);
+}
+.lc-editor-shell .CodeMirror-linenumber {
+    color: var(--lc-color-text-muted);
+    padding: 0 var(--lc-space-2);
+}
+.lc-editor-shell .CodeMirror-cursor {
+    border-left: 1px solid var(--lc-color-text);
+}
+.lc-editor-shell .CodeMirror-selected {
+    background: rgba(15, 23, 42, 0.10) !important;
+}
+.lc-editor-shell .CodeMirror-activeline-background {
+    background: rgba(15, 23, 42, 0.03);
+}
+.lc-editor-shell .CodeMirror-focused .CodeMirror-selected {
+    background: rgba(15, 23, 42, 0.14) !important;
 }
 
 /* Override CodeMirror monokai's hard-coded colors to use our tokens
