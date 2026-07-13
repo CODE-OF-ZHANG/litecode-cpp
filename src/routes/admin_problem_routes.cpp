@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MIT
 // LiteCode-CPP — admin_problem_routes.cpp (v1.2.48)
+//
+// register_admin_problem_routes is in `namespace litecode`
+// directly (the inner `detail` block closes before the function).
 
 #include "config.h"
 #include "middleware/rate_limit.h"
@@ -9,7 +12,6 @@
 #include <new>
 
 namespace litecode {
-namespace detail {
 
 static int _force_emit_ap = []() -> int {
     ServerConfig sc{};  sc.host = "127.0.0.1"; sc.port = 0;
@@ -30,5 +32,4 @@ static int _force_emit_ap = []() -> int {
     return 0;
 }();
 
-} // namespace detail
 } // namespace litecode

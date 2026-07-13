@@ -134,14 +134,6 @@ int main() {
     }
 
     if (ctx.db_pool) {
-        // v1.2.48: the 8 routes below link cleanly. The 4 routes
-        // marked BROKEN emit their inline definition in their
-        // per-route .cpp file but GCC's COMDAT folding still
-        // discards the symbol; they're stubbed out here and
-        // tracked as a follow-up. The 8 working routes cover
-        // login / catalog / tag / admin-user / admin-audit-log /
-        // admin-stats / admin-queue — enough for the v1.2.47
-        // CSS visual review to proceed.
         litecode::register_auth_routes(server, *ctx.db_pool,
             *ctx.limiter, *ctx.login_tracker, *ctx.refresh_store,
             cfg.jwt, cfg.rate_limit);
@@ -149,22 +141,27 @@ int main() {
             *ctx.limiter, cfg.rate_limit);
         litecode::register_tag_routes(server, *ctx.db_pool,
             *ctx.limiter, cfg.rate_limit);
-        // BROKEN: stats_routes
-        // litecode::stats_routes::register_stats_routes(server, *ctx.db_pool,
-        //     *ctx.limiter, cfg.rate_limit, cfg.jwt);
-        // BROKEN: submission_routes
-        // litecode::detail::register_submission_routes(server, *ctx.db_pool,
-        //     *ctx.limiter, cfg.rate_limit, cfg.jwt,
-        //     ctx.scheduler.get(), ctx.notifier.get());
+        // stats_routes.h: register_stats_routes is defined in
+        // `namespace litecode` directly (the inner `stats_routes`
+        // and `detail` blocks both close before the function).
+        litecode::register_stats_routes(server, *ctx.db_pool,
+            *ctx.limiter, cfg.rate_limit, cfg.jwt);
+        // submission_routes.h: same — defined in `namespace
+        // litecode` (both `detail` blocks close first).
+        litecode::register_submission_routes(server, *ctx.db_pool,
+            *ctx.limiter, cfg.rate_limit, cfg.jwt,
+            ctx.scheduler.get(), ctx.notifier.get());
 
         litecode::admin_user_routes::register_admin_user_routes(server, *ctx.db_pool,
             *ctx.limiter, cfg.rate_limit, cfg.jwt);
-        // BROKEN: admin_problem_routes
-        // litecode::detail::register_admin_problem_routes(server, *ctx.db_pool,
-        //     *ctx.limiter, cfg.rate_limit, cfg.jwt);
-        // BROKEN: admin_bulk_import_routes
-        // litecode::bulk_import::register_admin_bulk_import_routes(server, *ctx.db_pool,
-        //     *ctx.limiter, cfg.rate_limit, cfg.jwt);
+        // admin_problem_routes.h: `detail` closes before the
+        // function declaration, so it's in `namespace litecode`.
+        litecode::register_admin_problem_routes(server, *ctx.db_pool,
+            *ctx.limiter, cfg.rate_limit, cfg.jwt);
+        // admin_bulk_import_routes.h: same — `bulk_import` and
+        // `detail` both close first.
+        litecode::register_admin_bulk_import_routes(server, *ctx.db_pool,
+            *ctx.limiter, cfg.rate_limit, cfg.jwt);
         litecode::admin_audit_log_routes::register_admin_audit_log_routes(server, *ctx.db_pool,
             *ctx.limiter, cfg.rate_limit, cfg.jwt);
         litecode::admin_stats_routes::register_admin_stats_routes(server, *ctx.db_pool,
@@ -179,6 +176,16 @@ int main() {
     }
 
     // ── 5. Start listen thread ────────────────────────────────────────────
+    // v1.2.48: probe bind first with cpp-httplib's bind_to_port()
+    // so we get a clear error message if 0.0.0.0:8080 is already
+    // taken (TIME_WAIT from previous container, etc.) — then fall
+    // through to the background listen thread.
+    if (!server.bind_to_port(cfg.server.host, cfg.server.port)) {
+        std::cerr << "[boot] FATAL: HttpServer::bind_to_port("
+                  << cfg.server.host << ":" << cfg.server.port
+                  << ") failed (port already in use?)" << std::endl;
+        return 1;
+    }
     if (!server.start(/*background=*/true)) {
         std::cerr << "[boot] FATAL: HttpServer::start() returned false"
                   << std::endl;

@@ -43,21 +43,20 @@ HttpServer& register_problem_routes(
 HttpServer& register_tag_routes(
     HttpServer&, ConnectionPool&, RateLimiter&, const RateLimitConfig&);
 
-// stats_routes.h: register_stats_routes is in namespace
-// litecode::stats_routes.
-namespace stats_routes {
+// stats_routes.h: register_stats_routes is defined AFTER both
+// `namespace detail` and `namespace stats_routes` close (the
+// author put it in the outer `litecode` block), so it lives
+// in `litecode::` directly — NOT `litecode::stats_routes`.
 HttpServer& register_stats_routes(
     HttpServer&, ConnectionPool&, RateLimiter&, const RateLimitConfig&,
     const JwtConfig&);
-} // namespace stats_routes
 
-// submission_routes.h: register_submission_routes is in namespace
-// litecode::detail (second detail block reopens at 1061).
-namespace detail {
+// submission_routes.h: register_submission_routes is defined
+// AFTER both `namespace detail` blocks close, so it lives in
+// `litecode::` directly — NOT `litecode::detail`.
 HttpServer& register_submission_routes(
     HttpServer&, ConnectionPool&, RateLimiter&, const RateLimitConfig&,
     const JwtConfig&, judge::JudgeScheduler*, judge::JudgeNotifier*);
-} // namespace detail
 
 // admin_audit_log_routes.h: register_admin_audit_log_routes is in
 // namespace litecode::admin_audit_log_routes.
@@ -67,21 +66,20 @@ HttpServer& register_admin_audit_log_routes(
     const JwtConfig&);
 } // namespace admin_audit_log_routes
 
-// admin_bulk_import_routes.h: register_admin_bulk_import_routes is
-// in namespace litecode::bulk_import.
-namespace bulk_import {
+// admin_bulk_import_routes.h: register_admin_bulk_import_routes
+// is defined AFTER both `namespace bulk_import` and `namespace
+// detail` close, so it lives in `litecode::` directly — NOT
+// `litecode::bulk_import`.
 HttpServer& register_admin_bulk_import_routes(
     HttpServer&, ConnectionPool&, RateLimiter&, const RateLimitConfig&,
     const JwtConfig&);
-} // namespace bulk_import
 
-// admin_problem_routes.h: register_admin_problem_routes is in
-// namespace litecode::detail.
-namespace detail {
+// admin_problem_routes.h: register_admin_problem_routes is
+// defined AFTER `namespace detail` closes, so it lives in
+// `litecode::` directly — NOT `litecode::detail`.
 HttpServer& register_admin_problem_routes(
     HttpServer&, ConnectionPool&, RateLimiter&, const RateLimitConfig&,
     const JwtConfig&);
-} // namespace detail
 
 // admin_queue_routes.h: register_admin_queue_routes is in
 // namespace litecode::admin_queue_routes (the `namespace judge {`

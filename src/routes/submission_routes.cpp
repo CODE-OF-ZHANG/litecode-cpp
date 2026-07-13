@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: MIT
 // LiteCode-CPP — submission_routes.cpp (v1.2.48)
+//
+// register_submission_routes is defined in `namespace litecode`
+// directly (both inner `detail` blocks close before the function
+// declaration). Force-emit by calling through a volatile function
+// pointer.
 
 #include "config.h"
 #include "judge/judge_notifier.h"
@@ -11,7 +16,6 @@
 #include <new>
 
 namespace litecode {
-namespace detail {
 
 static int _force_emit_submission = []() -> int {
     ServerConfig sc{};  sc.host = "127.0.0.1"; sc.port = 0;
@@ -34,5 +38,4 @@ static int _force_emit_submission = []() -> int {
     return 0;
 }();
 
-} // namespace detail
 } // namespace litecode

@@ -355,9 +355,12 @@ public:
             listen_thread_ = std::thread([this]{
                 server_->listen_after_bind();
             });
-            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            // v1.2.48: was 2s — too tight for docker-internal
+            // networks where bind/listen can take 5-15s on cold
+            // start (esp. when warm_pool precreates in parallel).
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
             while (!server_->is_running() && std::chrono::steady_clock::now() < deadline) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
             }
             return server_->is_running();
         }

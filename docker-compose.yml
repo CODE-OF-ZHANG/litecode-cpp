@@ -156,7 +156,7 @@ services:
     environment:
       # 覆盖 .env 中的 DB_HOST（容器内用网络别名而非 127.0.0.1）
       DB_HOST: mysql
-      DB_PORT: 3306                       # 直连 MySQL 协议（非 X Protocol）
+      DB_PORT: 33060                      # mysql-connector-c++ X Protocol port (default 33060)
       DB_USER: ${DB_USER:-litecode}
       DB_PASSWORD: ${DB_PASSWORD:-changeme}
       DB_NAME: ${DB_NAME:-litecode}

@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: MIT
 // LiteCode-CPP — admin_bulk_import_routes.cpp (v1.2.48)
+//
+// register_admin_bulk_import_routes is in `namespace litecode`
+// directly (the inner `bulk_import` and `detail` blocks both close
+// before the function).
 
 #include "config.h"
 #include "middleware/rate_limit.h"
@@ -9,7 +13,6 @@
 #include <new>
 
 namespace litecode {
-namespace bulk_import {
 
 static int _force_emit_abi = []() -> int {
     ServerConfig sc{};  sc.host = "127.0.0.1"; sc.port = 0;
@@ -30,5 +33,4 @@ static int _force_emit_abi = []() -> int {
     return 0;
 }();
 
-} // namespace bulk_import
 } // namespace litecode
