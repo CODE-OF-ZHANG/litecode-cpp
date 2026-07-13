@@ -33,6 +33,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -782,6 +783,31 @@ inline const AppConfig& config() {
         slot = std::make_unique<AppConfig>(load_config());
     }
     return *slot;
+}
+
+// Boot-time smoke check: load + validate the config and print a
+// short summary. Returns 0 on success, non-zero on failure. Both
+// litecode_server (main.cpp) and lit_smoke_check (smoke_check.cpp)
+// call this at startup so a misconfigured container fails loudly
+// rather than getting a 503 from every API.
+//
+// The dump line intentionally avoids `std::cout << config()` —
+// AppConfig doesn't have a streaming operator (only a custom
+// formatter used inside the AppConfig struct itself).
+inline int run_config_smoke(const std::string& env_file_path = ".env",
+                            bool override_env = false) {
+    try {
+        (void)init_config(env_file_path, override_env);
+    } catch (const std::exception& e) {
+        std::cerr << "[config] FAIL: " << e.what() << std::endl;
+        return 1;
+    }
+    const auto& c = config();
+    std::cout << "[config] PASS host=" << c.server.host
+              << " port=" << c.server.port
+              << " db=" << c.database.host << ":" << c.database.port
+              << " log_level=" << c.logging.level << std::endl;
+    return 0;
 }
 
 // Resets the singleton — only intended for tests. After this call the

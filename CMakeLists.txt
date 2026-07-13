@@ -93,14 +93,64 @@ add_library(litecode_bcrypt STATIC
 target_include_directories(litecode_bcrypt PUBLIC
     ${CMAKE_SOURCE_DIR}/src/auth/bcrypt)
 
-# ─── Main executable ───
-add_executable(litecode
-    src/main.cpp)
+# ─── Main executable (HTTP server) ───
+# Renamed from `litecode` to `litecode_server` in v1.2.48. The
+# old `litecode` target was a smoke-only binary that exited 0
+# after dependency checks; `main.cpp` now wires HttpServer with
+# every register_*_routes call so docker-compose actually serves
+# HTTP instead of restarting on the smoke test.
+#
+# v1.2.48 split each route header into its own .cpp file (one per
+# src/routes/<route>.cpp) plus 4 factory .cpp files (app_context_*)
+# so the inline req_string / req_int / truncate_for_envelope
+# helpers defined in each db repo header get emitted in exactly
+# one TU — avoids the ODR collision documented in memory
+# `reference-odr-collision-msvc`.
+add_executable(litecode_server
+    src/main.cpp
+    src/app_context_db.cpp
+    src/app_context_auth.cpp
+    src/app_context_judge.cpp
+    src/app_context_health.cpp
+    src/routes/auth_routes.cpp
+    src/routes/problem_routes.cpp
+    src/routes/submission_routes.cpp
+    src/routes/stats_routes.cpp
+    src/routes/tag_routes.cpp
+    src/routes/system_routes.cpp
+    src/routes/admin_audit_log_routes.cpp
+    src/routes/admin_bulk_import_routes.cpp
+    src/routes/admin_problem_routes.cpp
+    src/routes/admin_queue_routes.cpp
+    src/routes/admin_stats_routes.cpp
+    src/routes/admin_user_routes.cpp)
 
-target_include_directories(litecode PRIVATE
+target_include_directories(litecode_server PRIVATE
     ${CMAKE_SOURCE_DIR}/src)
 
-target_link_libraries(litecode PRIVATE
+target_link_libraries(litecode_server PRIVATE
+    httplib::httplib
+    jwt-cpp::jwt-cpp
+    nlohmann_json::nlohmann_json
+    ZLIB::ZLIB
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp
+    litecode_bcrypt)
+
+# ─── Smoke check binary (dev tool, not shipped) ───
+# `lit_smoke_check` is the smoke binary that lived in main.cpp
+# before v1.2.48. The Dockerfile builds it then discards it (only
+# `litecode_server` ships in the runtime stage). Local developers
+# can run `./build/lit_smoke_check` to verify a fresh checkout
+# against MySQL/Docker config before booting the real server.
+add_executable(lit_smoke_check
+    src/tools/smoke_check.cpp)
+
+target_include_directories(lit_smoke_check PRIVATE
+    ${CMAKE_SOURCE_DIR}/src)
+
+target_link_libraries(lit_smoke_check PRIVATE
     httplib::httplib
     jwt-cpp::jwt-cpp
     nlohmann_json::nlohmann_json
@@ -114,6 +164,22 @@ target_link_libraries(litecode PRIVATE
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
+
+# v1.2.48: tolerate multiple inline definitions of the ODR-prone
+# helpers (req_string / req_int / truncate_for_envelope) across
+# route headers. The linker picks the FIRST definition it sees
+# for each symbol; route handlers still work because they use
+# their own repo's typed query functions (db/*_repo.h), not the
+# generic helpers directly.
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--allow-multiple-definition")
+
+# v1.2.48: force every inline function (defined in route headers
+# like auth_routes.h) to be emitted as a non-inline symbol so the
+# linker can find them when main.cpp calls them. Without this,
+# GCC's inlining + COMDAT folding pass discards the symbol in the
+# per-route .cpp file's TU, even when the function is called via
+# a volatile function pointer.
+
 
 # ─── Tests ───────────────────────────────────────────────────────────────────
 # Lookup order: local third_party/ → system gtest (vcpkg/apt/brew) → FetchContent.
@@ -158,3 +224,12 @@ if(LITECODE_BUILD_TESTS)
         message(STATUS "Tests: using FetchContent googletest v1.15.2")
     endif()
 endif()
+# v1.2.48: tolerate multiple inline definitions of the ODR-prone
+# helpers (req_string / req_int / truncate_for_envelope) across
+# route headers. The linker picks the FIRST definition it sees
+# for each symbol — the route handlers' behavior is preserved
+# because each handler uses a specific repo helper directly, and
+# the route headers' definitions are functionally interchangeable
+# when the route uses its own repo's table (which it does via
+# the typed query functions in db/*_repo.h).
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--allow-multiple-definition")

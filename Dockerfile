@@ -64,7 +64,7 @@ COPY src/ ./src/
 RUN cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -DUSE_LOCAL_DEPS=ON \
-    && cmake --build build -j"$(nproc)"
+    && cmake --build build -j2
 
 # ───── Stage 2: runtime ──────────────────────────────────────
 FROM ubuntu:22.04 AS runtime
@@ -105,7 +105,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # 拷贝编译产物
-COPY --from=builder /src/build/bin/litecode /usr/local/bin/litecode
+COPY --from=builder /src/build/bin/litecode_server /usr/local/bin/litecode_server
 
 # 拷贝 Web 静态资源 + 题库
 COPY web/ /app/web/
@@ -126,7 +126,7 @@ EXPOSE 8080
 
 # tini 负责信号转发，litecode 接收 SIGTERM 优雅退出
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["/usr/local/bin/litecode"]
+CMD ["/usr/local/bin/litecode_server"]
 
 # 健康检查（SPEC §16.1）
 HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=3 \
