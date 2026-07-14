@@ -9,88 +9,161 @@
     <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. -->
     <script src="/js/theme-boot.js"></script>
     <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* Sync the .lc-auth-2026--light class with the global theme
+           immediately on first paint, so a user with light-mode
+           preference never sees a dark flash. theme-boot.js toggles
+           html.dark; we mirror that as .lc-auth-2026--light. */
+        html:not(.dark) .lc-auth-2026 { /* this selector intentionally empty
+            to keep specificity low; the actual light tokens live in
+            style.css section 10 (lc-auth-2026--light). */ }
+        html:not(.dark) .lc-auth-2026 { }
+    </style>
+    <script>
+        // Apply the --light modifier before first paint based on the
+        // theme-boot.js decision (which sets html.dark). The body
+        // class lc-auth-2026 then inherits the right tokens.
+        (function () {
+            try {
+                var t = localStorage.getItem('litecode:theme');
+                if (t !== 'dark') {
+                    document.documentElement.classList.add('lc-auth-2026--light-host');
+                }
+            } catch (_) { /* localStorage may be unavailable */ }
+        })();
+    </script>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%230B0E14'/%3E%3Ctext x='14' y='42' font-family='JetBrains Mono, monospace' font-size='28' font-weight='700' fill='%235DC9E2'%3E%26lt%3B/%3E%3C/svg%3E">
 </head>
-<body>
+<body class="lc-auth-2026">
     <!--
-      Login page — Phase 5 ★ 登录页面（/login.html）.
-
-      Guest-only: any authed user is bounced to /index.html before the
-      form renders (see `litecode.boot.shell({ guestOnly: true })`).
-      The page deliberately does NOT mount the shared nav because a
-      navigation bar with "登录 / 注册" buttons is misleading on a page
-      that's about to set the auth state; theme is still applied via
-      `boot.shell`, so dark-mode users see the right colors immediately.
-
-      Failure handling mirrors SPEC §5.7 — the backend returns a uniform
-      envelope, litecode.api surfaces it as a LitecodeApiError, and this
-      page branches on `err.code` to map:
-          RATE_LIMITED     → "尝试过于频繁"   (HTTP 429)
-          INVALID_INPUT    → err.message       (HTTP 400, with details.field)
-          UNAUTHORIZED     → "用户名或密码错误" (HTTP 401, anti-enumeration)
-          INTERNAL_ERROR   → generic message   (HTTP 5xx)
-      Anti-enumeration: "no such user" and "wrong password" share the
-      same UNAUTHORIZED envelope + same user-facing message — no oracle
-      for username enumeration.
-
-      After successful login, the page navigates to `?next=` (with a
-      safety check against open-redirects — only same-origin paths are
-      honored) or `/index.html` by default. `window.location.replace`
-      is used so the form post isn't replayed by the back button.
+      v1.2.49-a: redesigned /login.html under the "code is identity"
+      theme. Same backend endpoints, same anti-enumeration guarantees
+      (see auth_routes.h), same open-redirect guard on ?next=. Only
+      the visual layer changed.
     -->
-    <main class="lc-auth-page">
-        <div class="lc-auth-card">
-            <h1>登录 LiteCode</h1>
-            <p class="lc-auth-subtitle">使用账号密码登录。</p>
-
-            <form class="lc-form" id="login-form" novalidate>
-                <div class="lc-form-row">
-                    <label for="username" class="lc-form-label">用户名</label>
-                    <input
-                        type="text"
-                        id="username"
-                        name="username"
-                        class="lc-input"
-                        autocomplete="username"
-                        autocapitalize="off"
-                        autocorrect="off"
-                        spellcheck="false"
-                        required
-                        minlength="3"
-                        maxlength="50"
-                        pattern="[A-Za-z0-9_.-]+"
-                        aria-describedby="username-help">
-                    <span id="username-help" class="lc-form-help">
-                        注册时使用的用户名（3-50 字符）。
-                    </span>
-                </div>
-                <div class="lc-form-row">
-                    <label for="password" class="lc-form-label">密码</label>
-                    <input
-                        type="password"
-                        id="password"
-                        name="password"
-                        class="lc-input"
-                        autocomplete="current-password"
-                        required
-                        minlength="8"
-                        maxlength="72"
-                        aria-describedby="password-help">
-                    <span id="password-help" class="lc-form-help">
-                        8-72 字符；区分大小写。
-                    </span>
-                </div>
-                <div id="form-error" class="lc-form-error" role="alert" aria-live="polite"></div>
-                <button type="submit" class="lc-btn lc-btn--primary lc-btn--block" id="submit-btn">
-                    登录
-                </button>
-            </form>
-
-            <div class="lc-auth-footer">
-                还没有账号？<a href="/register.html">立即注册</a>
-                <span class="lc-auth-footer-sep">·</span>
-                <a href="/index.html">返回首页</a>
+    <main class="lc-auth-split">
+        <!-- ───── Left: KMP code hero ─────────────────────────────── -->
+        <section class="lc-auth-side lc-auth-side--code" aria-hidden="true">
+            <div class="lc-auth-logo" aria-label="LiteCode OJ">
+                <span class="lc-auth-logo__bracket">&gt;</span>
+                <span class="lc-auth-logo__name">LiteCode</span>
+                <span class="lc-auth-logo__sub">OJ · C++ Judge</span>
             </div>
-        </div>
+
+            <div class="lc-code-hero">
+                <div class="lc-code-hero__file"></div>
+                <div class="lc-code-hero__pane">
+<pre><span class="lc-syn-com">// KMP string matching — O(n + m)</span>
+<span class="lc-syn-com">// Never backtracks the pattern pointer.</span>
+<span class="lc-syn-kw">void</span> <span class="lc-syn-fn">kmp_search</span>(
+    <span class="lc-syn-kw">const char</span>* text, <span class="lc-syn-type">int</span> n,
+    <span class="lc-syn-kw">const char</span>* pat,  <span class="lc-syn-type">int</span> m) {
+
+    <span class="lc-syn-type">int</span> next[PAT_MAX] = {<span class="lc-syn-num">0</span>};
+    <span class="lc-syn-call">build_next</span>(pat, m, next);
+
+    <span class="lc-syn-type">int</span> j = <span class="lc-syn-num">0</span>;
+    <span class="lc-syn-kw">for</span> (<span class="lc-syn-type">int</span> i = <span class="lc-syn-num">0</span>; i &lt; n; i++) {
+        <span class="lc-syn-kw">while</span> (j &gt; <span class="lc-syn-num">0</span> &amp;&amp; text[i] != pat[j])
+            j = next[j - <span class="lc-syn-num">1</span>];
+        <span class="lc-syn-kw">if</span> (text[i] == pat[j]) j++;
+        <span class="lc-syn-kw">if</span> (j == m) {</pre>
+                </div>
+
+                <div class="lc-code-hero__status">
+                    <span><span class="lc-dot"></span>judge queue · <span class="lc-status-kw">idle</span></span>
+                    <span>warm pool · <span class="lc-status-kw">2 / 2</span></span>
+                    <span>build · <span class="lc-status-kw">ready</span></span>
+                    <span>session · <span class="lc-status-kw">guest</span></span>
+                </div>
+            </div>
+        </section>
+
+        <!-- ───── Right: form ──────────────────────────────────────── -->
+        <section class="lc-auth-side lc-auth-side--form">
+            <div class="lc-auth-form-wrap">
+                <div class="lc-auth-logo lc-auth-logo--center" aria-label="LiteCode OJ">
+                    <span class="lc-auth-logo__bracket">&gt;</span>
+                    <span class="lc-auth-logo__name">LiteCode</span>
+                    <span class="lc-auth-logo__sub">OJ</span>
+                </div>
+
+                <p class="lc-auth-heading">
+                    <span class="lc-prompt">$</span> <span class="lc-bin">./litecode</span> --login
+                </p>
+
+                <p class="lc-auth-subtitle">// sign in to start judging</p>
+
+                <form class="lc-form" id="login-form" novalidate>
+                    <div class="lc-form-row">
+                        <label for="username" class="lc-cmd-label">username <span class="lc-required">*</span></label>
+                        <div class="lc-input-shell">
+                            <span class="lc-input-shell__prompt" aria-hidden="true">&gt;</span>
+                            <input
+                                type="text"
+                                id="username"
+                                name="username"
+                                class="lc-input"
+                                autocomplete="username"
+                                autocapitalize="off"
+                                autocorrect="off"
+                                spellcheck="false"
+                                placeholder="alice"
+                                required
+                                minlength="3"
+                                maxlength="50"
+                                pattern="[A-Za-z0-9_.\-]+"
+                                aria-describedby="username-help">
+                        </div>
+                        <span id="username-help" class="lc-form-help">
+                            // 3-50 chars · [A-Za-z0-9_.-]
+                        </span>
+                    </div>
+
+                    <div class="lc-form-row">
+                        <label for="password" class="lc-cmd-label">password <span class="lc-required">*</span></label>
+                        <div class="lc-input-shell" id="password-shell">
+                            <span class="lc-input-shell__prompt" aria-hidden="true">&gt;</span>
+                            <input
+                                type="password"
+                                id="password"
+                                name="password"
+                                class="lc-input"
+                                autocomplete="current-password"
+                                placeholder="••••••••"
+                                required
+                                minlength="8"
+                                maxlength="72"
+                                aria-describedby="password-help">
+                            <button type="button"
+                                    id="password-toggle"
+                                    class="lc-input-shell__prompt"
+                                    aria-label="显示密码"
+                                    title="显示密码"
+                                    style="border-right:0;border-left:1px solid var(--a26-border-soft);min-width:38px;cursor:pointer;">·</button>
+                        </div>
+                        <span id="password-help" class="lc-form-help">
+                            // 8-72 chars · case sensitive
+                        </span>
+                    </div>
+
+                    <div id="form-error" class="lc-form-error" role="alert" aria-live="polite"></div>
+
+                    <div class="lc-form-actions">
+                        <button type="submit" class="lc-cmd-submit" id="submit-btn">
+                            <span class="lc-prompt">&gt;</span> run ./login
+                        </button>
+                    </div>
+                </form>
+
+                <div class="lc-auth-footer">
+                    <span>// no account?</span>
+                    <a href="/register.html">register</a>
+                    <span class="lc-sep">·</span>
+                    <a href="/index.html">return home</a>
+                </div>
+            </div>
+        </section>
     </main>
 
     <script src="/js/csp.js" defer></script>
@@ -98,179 +171,154 @@
     <script src="/js/app.js" defer></script>
 
     <script>
-        // ────────────────────────────────────────────────────────────────
-        //  Page-local script — kept inline because it is single-purpose
-        //  and tightly coupled to this page's DOM. The login handler is
-        //  intentionally short: validate → POST → branch on err.code.
-        //
-        //  Concerns handled:
-        //   1. guestOnly bounce (authed users → /index.html)
-        //   2. open-redirect protection on `?next=` (same-origin only)
-        //   3. front-end shape validation matching backend regexes
-        //   4. loading state (disabled button + "登录中…") during the
-        //      network round-trip
-        //   5. anti-enumeration: same 401 message for missing user vs
-        //      wrong password (matches SPEC §15.1 + backend auth_routes.h)
-        //   6. auto-focus first empty field — keyboard users land on
-        //      the form without needing to mouse-then-tab
-        // ────────────────────────────────────────────────────────────────
+    (function () {
+        'use strict';
 
-        (function () {
-            'use strict';
+        // v1.2.49-a: same client-side validation as the legacy
+        // login.html (USERNAME_RE / open-redirect guard / message
+        // mapping). The visual layer is new; the contract is
+        // identical.
+        var USERNAME_RE = /^[A-Za-z0-9_.\-]{3,50}$/;
 
-            // Mirror register.html's regexes so users get consistent
-            // feedback between the two pages. The backend re-validates
-            // (SPEC §6.3 "前端校验，后端二次校验") so this is purely
-            // for UX, not security.
-            var USERNAME_RE = /^[A-Za-z0-9_.-]{3,50}$/;
+        function resolveNext(rawNext) {
+            var fallback = '/index.html';
+            if (!rawNext) return fallback;
+            if (rawNext.charAt(0) !== '/') return fallback;
+            if (rawNext.charAt(1) === '/') return fallback;
+            if (/[\x00-\x1f]/.test(rawNext)) return fallback;
+            return rawNext;
+        }
 
-            // Resolve the post-login redirect target. We only accept
-            // SAME-ORIGIN paths starting with "/" (and not "//" — that's
-            // a protocol-relative URL that an attacker could exploit to
-            // bounce the user to their own origin). Anything else falls
-            // back to /index.html. This is the open-redirect guard
-            // referenced in the page header comment.
-            function resolveNext(rawNext) {
-                var fallback = '/index.html';
-                if (!rawNext) return fallback;
-                // Must start with single "/" — reject protocol-relative
-                // ("//evil.com") and absolute ("http://...").
-                if (rawNext.charAt(0) !== '/') return fallback;
-                if (rawNext.charAt(1) === '/') return fallback;
-                // Reject newlines / control chars (defense in depth —
-                // URLSearchParams already strips these, but if a future
-                // refactor switches to a different parser we keep the
-                // guarantee).
-                if (/[\x00-\x1f]/.test(rawNext)) return fallback;
-                return rawNext;
+        window.addEventListener('DOMContentLoaded', function () {
+            // v1.2.49-a: the v2 design doesn't use the shared nav, so
+            // guestOnly: true still bounces authed users to /, but
+            // skip the title override (the new heading shows the
+            // command line instead of "登录").
+            litecode.boot.shell({ guestOnly: true });
+
+            // Sync .lc-auth-2026--light with html.dark.
+            if (!document.documentElement.classList.contains('dark')) {
+                document.body.classList.add('lc-auth-2026--light');
             }
 
-            window.addEventListener('DOMContentLoaded', function () {
-                litecode.boot.shell({ guestOnly: true, title: 'LiteCode · 登录' });
+            var form       = document.getElementById('login-form');
+            var submit     = document.getElementById('submit-btn');
+            var errorBox   = document.getElementById('form-error');
+            var usernameEl = document.getElementById('username');
+            var passwordEl = document.getElementById('password');
+            var passwordShell = document.getElementById('password-shell');
+            var passwordToggle = document.getElementById('password-toggle');
 
-                var form       = document.getElementById('login-form');
-                var submit     = document.getElementById('submit-btn');
-                var errorBox   = document.getElementById('form-error');
-                var usernameEl = document.getElementById('username');
-                var passwordEl = document.getElementById('password');
+            var next = resolveNext(
+                new URLSearchParams(window.location.search).get('next')
+            );
 
-                // Resolve `?next=` ONCE so a slow submit can't observe
-                // a changing window.location.search.
-                var next = resolveNext(
-                    new URLSearchParams(window.location.search).get('next')
-                );
+            // Auto-focus first empty required field.
+            if (usernameEl && !usernameEl.value) {
+                usernameEl.focus();
+            } else if (passwordEl && !passwordEl.value) {
+                passwordEl.focus();
+            } else if (usernameEl) {
+                usernameEl.focus();
+            }
 
-                // Auto-focus the first empty field — username if empty,
-                // password if username is filled. Skip if either is
-                // already pre-filled (autofill from browser / password
-                // manager) — focus on a populated field is annoying.
-                if (usernameEl && !usernameEl.value) {
-                    usernameEl.focus();
-                } else if (passwordEl && !passwordEl.value) {
-                    passwordEl.focus();
-                } else if (usernameEl) {
-                    usernameEl.focus();
-                }
-
-                function setError(msg, field) {
-                    errorBox.textContent = msg || '';
-                    errorBox.style.display = msg ? 'block' : 'none';
-                    if (field) {
-                        var el = document.getElementById(field);
-                        if (el) {
-                            try { el.focus(); } catch (_) { /* element may be detached */ }
-                        }
+            // v1.2.49-a: show / hide password toggle (decorative — the
+            // char is just "·" so the visual is consistent with the
+            // surrounding code-aesthetic, not a security-critical
+            // affordance).
+            if (passwordToggle && passwordEl) {
+                passwordToggle.addEventListener('click', function () {
+                    if (passwordEl.type === 'password') {
+                        passwordEl.type = 'text';
+                        passwordToggle.textContent = '·';
+                        passwordToggle.setAttribute('aria-label', '隐藏密码');
+                    } else {
+                        passwordEl.type = 'password';
+                        passwordToggle.textContent = '·';
+                        passwordToggle.setAttribute('aria-label', '显示密码');
                     }
-                }
-
-                form.addEventListener('submit', function (e) {
-                    e.preventDefault();
-                    setError('');
-
-                    var username = (usernameEl.value || '').trim();
-                    var password = passwordEl.value || '';
-
-                    if (!username || !password) {
-                        setError('用户名和密码不能为空', username ? 'password' : 'username');
-                        return;
-                    }
-                    if (!USERNAME_RE.test(username)) {
-                        setError('用户名格式不正确（3-50 字符，字母/数字/下划线/点/中划线）', 'username');
-                        return;
-                    }
-                    if (password.length < 8 || password.length > 72) {
-                        setError('密码长度需为 8-72 字符', 'password');
-                        return;
-                    }
-
-                    submit.disabled = true;
-                    submit.textContent = '登录中…';
-
-                    litecode.api.auth.login(username, password)
-                        .then(function (data) {
-                            var uname = (data && data.user && data.user.username) || username;
-                            litecode.toast.success('登录成功，欢迎回来 ' + uname + '！');
-                            // Use `replace` so the back button doesn't
-                            // replay the POST (which would 401 because
-                            // sessionStorage is empty after navigation).
-                            window.location.replace(next);
-                        })
-                        .catch(function (err) {
-                            // The `code` is the SPEC §5.7 envelope field,
-                            // NOT the HTTP status. Both go through
-                            // LitecodeApiError; `code` is the machine-
-                            // readable taxonomy, `status` is the HTTP
-                            // number — branch on the former for message
-                            // mapping.
-                            var msg;
-                            switch (err.code) {
-                                case 'RATE_LIMITED':
-                                    msg = '登录尝试过于频繁，请稍后再试';
-                                    break;
-                                case 'INVALID_INPUT':
-                                    // err.details.field (when present)
-                                    // tells us which input failed server-
-                                    // side validation. We don't branch
-                                    // the message here — we just focus
-                                    // the offending field.
-                                    msg = err.message || '输入有误';
-                                    if (err.details && err.details.field) {
-                                        setError(msg, err.details.field);
-                                        return;
-                                    }
-                                    break;
-                                case 'UNAUTHORIZED':
-                                    // Anti-enumeration: same envelope for
-                                    // "no such user" and "wrong password"
-                                    // (see auth_routes.h::login_handler).
-                                    // Don't reveal which one failed.
-                                    msg = '用户名或密码错误';
-                                    break;
-                                case 'INTERNAL_ERROR':
-                                    msg = '服务暂时不可用：' + (err.message || '');
-                                    break;
-                                default:
-                                    msg = err.message || ('登录失败（HTTP ' + (err.status || 0) + '）');
-                            }
-                            setError(msg);
-                            // Also surface a toast so users who didn't
-                            // notice the inline error (e.g. screen-reader
-                            // users jumping past the alert region) still
-                            // get the feedback. Skip on 401 — the toast
-                            // layer dedupes via the litecode:api-error
-                            // event but a single 401 + inline error is
-                            // redundant.
-                            if (err.status !== 401) {
-                                litecode.toast.error(msg);
-                            }
-                        })
-                        .finally(function () {
-                            submit.disabled = false;
-                            submit.textContent = '登录';
-                        });
                 });
+            }
+
+            function setError(msg, field) {
+                errorBox.textContent = msg || '';
+                errorBox.style.display = msg ? 'block' : 'none';
+                // Wrap each input in an error state (red border).
+                var shells = document.querySelectorAll('.lc-input-shell');
+                shells.forEach(function (s) { s.classList.remove('lc-input-shell--error'); });
+                if (field) {
+                    var target = document.getElementById(field);
+                    if (target) {
+                        var shell = target.closest('.lc-input-shell');
+                        if (shell) shell.classList.add('lc-input-shell--error');
+                        try { target.focus(); } catch (_) {}
+                    }
+                }
+            }
+
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+                setError('');
+
+                var username = (usernameEl.value || '').trim();
+                var password = passwordEl.value || '';
+
+                if (!username || !password) {
+                    setError('line 1: missing required field', username ? 'password' : 'username');
+                    return;
+                }
+                if (!USERNAME_RE.test(username)) {
+                    setError('line 1: invalid identifier\nhint: 3-50 chars, [A-Za-z0-9_.-]', 'username');
+                    return;
+                }
+                if (password.length < 8 || password.length > 72) {
+                    setError('line 2: invalid value\nhint: 8-72 chars required', 'password');
+                    return;
+                }
+
+                submit.disabled = true;
+                submit.innerHTML = '<span class="lc-prompt">~</span> running...';
+
+                litecode.api.auth.login(username, password)
+                    .then(function (data) {
+                        var uname = (data && data.user && data.user.username) || username;
+                        litecode.toast.success('AC · welcome back, ' + uname);
+                        window.location.replace(next);
+                    })
+                    .catch(function (err) {
+                        var msg;
+                        switch (err.code) {
+                            case 'RATE_LIMITED':
+                                msg = 'line 0: too many attempts\nhint: wait a minute, then retry';
+                                break;
+                            case 'INVALID_INPUT':
+                                msg = err.message || 'input rejected by server';
+                                if (err.details && err.details.field) {
+                                    setError(msg, err.details.field);
+                                    return;
+                                }
+                                break;
+                            case 'UNAUTHORIZED':
+                                msg = 'line 2: rejected\nhint: invalid username or password';
+                                break;
+                            case 'INTERNAL_ERROR':
+                                msg = 'line 0: server unreachable\n' + (err.message || '');
+                                break;
+                            default:
+                                msg = err.message || ('unexpected: HTTP ' + (err.status || 0));
+                        }
+                        setError(msg);
+                        if (err.status !== 401) {
+                            litecode.toast.error(msg.split('\n')[0]);
+                        }
+                    })
+                    .finally(function () {
+                        submit.disabled = false;
+                        submit.innerHTML = '<span class="lc-prompt">&gt;</span> run ./login';
+                    });
             });
-        })();
+        });
+    })();
     </script>
 </body>
 </html>

@@ -9,201 +9,193 @@
     <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. -->
     <script src="/js/theme-boot.js"></script>
     <link rel="stylesheet" href="/css/style.css">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%230B0E14'/%3E%3Ctext x='14' y='42' font-family='JetBrains Mono, monospace' font-size='28' font-weight='700' fill='%235DC9E2'%3E%26lt%3B/%3E%3C/svg%3E">
 </head>
-<body>
+<body class="lc-auth-2026">
     <!--
-      Register page — Phase 5 ★ 注册页面（/register.html，密码强度提示）.
-
-      Guest-only: any authed user is bounced to /index.html before the
-      form renders (see `litecode.boot.shell({ guestOnly: true })`).
-      Same rationale as login.html — mounting the shared nav on a page
-      that's about to mint the auth state would show a misleading
-      "登录 / 注册" CTA. Theme is still applied so dark-mode users see
-      the right colors immediately.
-
-      Password policy (SPEC §4.1 + §6.3 + §15.1, mirrored from
-      password_hash.h::validate_password_strength):
-
-          8 ≤ length ≤ 72      (bcrypt cost=12 hard ceiling)
-          ≥ 1 letter (a-zA-Z)
-          ≥ 1 digit  (0-9)
-
-      The backend is the source of truth — it re-validates and returns
-      400 INVALID_INPUT with `details.field="password"` on mismatch.
-      This page gives the user instant feedback BEFORE the round-trip,
-      which is the SPEC §6.3 "前端校验，后端二次校验" pattern.
-
-      The "密码强度提示" affordance (SPEC §6.3) is rendered as:
-
-        1) A 4-segment strength bar + label (弱 / 中 / 良 / 强)
-        2) A live rule checklist showing which of the four rules the
-           current draft already satisfies (length, letter, digit,
-           confirm-match)
-        3) A separate "✓ 两次密码一致" hint on the confirm field that
-           only turns green once the two match.
-
-      The strength score is BONUS over the policy — it rewards long
-      passwords and character variety (mixed case, special chars) but
-      NEVER gates the submit button. A password that satisfies the
-      four required rules is registrable regardless of its strength
-      score, so we don't push users away from perfectly-acceptable
-      passphrases they prefer.
-
-      Username enumeration (SPEC §6.3): the backend distinguishes
-      "username already taken" (409 CONFLICT, details.field="username")
-      from "email already in use" (409 CONFLICT, details.field="email"),
-      so the page can focus the right input on conflict. This is the
-      EXPLICIT exception to login's anti-enumeration rule — SPEC §6.3
-      says username enumeration is OK on /register because the user
-      picks their own username; it's the LOGIN flow that has to
-      protect against an attacker probing whether a given username
-      exists. The two paths therefore show different CONFLICT text on
-      purpose.
-
-      Failure → message mapping (SPEC §5.7 envelope):
-          RATE_LIMITED   → "注册请求过于频繁"   (HTTP 429)
-          INVALID_INPUT  → err.message          (HTTP 400, details.field)
-          CONFLICT       → "已被占用 / 已注册"   (HTTP 409, details.field)
-          INTERNAL_ERROR → "服务暂时不可用"     (HTTP 5xx)
-
-      After successful registration, the backend stamps Set-Cookie
-      lc_refresh=… (HttpOnly; v1.2.21) and returns the access token
-      in the body. The JS layer stores the access token in memory;
-      the refresh rides the cookie. We then navigate to `?next=`
-      (with an open-redirect guard identical to login.html) or
-      /index.html. `window.location.replace` is used so the form post
-      isn't replayed by the back button.
+      v1.2.49-a: redesigned /register.html under the "code is identity"
+      theme. Mirrors login.html's structure (50/50 split). Same backend
+      contract — username enumeration is INTENTIONALLY allowed on
+      /register (SPEC §6.3): the user picked their own username, so
+      telling them it's taken is required UX.
     -->
-    <main class="lc-auth-page">
-        <div class="lc-auth-card">
-            <h1>注册 LiteCode 账号</h1>
-            <p class="lc-auth-subtitle">新用户默认角色为 <code>user</code>。</p>
-
-            <form class="lc-form" id="register-form" novalidate>
-                <div class="lc-form-row">
-                    <label for="username" class="lc-form-label">用户名</label>
-                    <input
-                        type="text"
-                        id="username"
-                        name="username"
-                        class="lc-input"
-                        autocomplete="username"
-                        autocapitalize="off"
-                        autocorrect="off"
-                        spellcheck="false"
-                        required
-                        minlength="3"
-                        maxlength="50"
-                        pattern="[A-Za-z0-9_.\-]+"
-                        aria-describedby="username-help">
-                    <span id="username-help" class="lc-form-help">
-                        3-50 字符，字母 / 数字 / 下划线 / 点 / 中划线，
-                        不能以点或中划线开头或结尾。
-                    </span>
-                </div>
-
-                <div class="lc-form-row">
-                    <label for="email" class="lc-form-label">邮箱（可选）</label>
-                    <input
-                        type="email"
-                        id="email"
-                        name="email"
-                        class="lc-input"
-                        autocomplete="email"
-                        maxlength="100"
-                        aria-describedby="email-help">
-                    <span id="email-help" class="lc-form-help">
-                        用于重置密码 / 通知；选填，但不可重复。
-                    </span>
-                </div>
-
-                <div class="lc-form-row">
-                    <label for="password" class="lc-form-label">密码</label>
-                    <input
-                        type="password"
-                        id="password"
-                        name="password"
-                        class="lc-input"
-                        autocomplete="new-password"
-                        minlength="8"
-                        maxlength="72"
-                        required
-                        aria-describedby="password-help password-strength">
-                    <span id="password-help" class="lc-form-help">
-                        8-72 字符，必须包含字母和数字（bcrypt 上限 72）。
-                    </span>
-
-                    <!--
-                      Password strength meter (SPEC §6.3 "密码强度提示").
-                      Updated on every `input` event — purely advisory, never
-                      disables the submit button. Each .lc-pw-strength-bar-fill
-                      segment is hidden until its index < current score.
-                    -->
-                    <div class="lc-pw-strength"
-                         id="password-strength"
-                         aria-live="polite"
-                         aria-label="密码强度">
-                        <div class="lc-pw-strength-track" aria-hidden="true">
-                            <span class="lc-pw-strength-bar-fill" data-seg="0"></span>
-                            <span class="lc-pw-strength-bar-fill" data-seg="1"></span>
-                            <span class="lc-pw-strength-bar-fill" data-seg="2"></span>
-                            <span class="lc-pw-strength-bar-fill" data-seg="3"></span>
-                        </div>
-                        <div class="lc-pw-strength-label" id="pw-strength-label">
-                            请输入密码
-                        </div>
-
-                        <ul class="lc-pw-rules" id="pw-rules">
-                            <li class="lc-pw-rule" data-rule="length">
-                                <span class="lc-pw-rule-mark" aria-hidden="true">○</span>
-                                <span class="lc-pw-rule-text">8-72 字符</span>
-                            </li>
-                            <li class="lc-pw-rule" data-rule="letter">
-                                <span class="lc-pw-rule-mark" aria-hidden="true">○</span>
-                                <span class="lc-pw-rule-text">至少一个字母</span>
-                            </li>
-                            <li class="lc-pw-rule" data-rule="digit">
-                                <span class="lc-pw-rule-mark" aria-hidden="true">○</span>
-                                <span class="lc-pw-rule-text">至少一个数字</span>
-                            </li>
-                            <li class="lc-pw-rule" data-rule="match">
-                                <span class="lc-pw-rule-mark" aria-hidden="true">○</span>
-                                <span class="lc-pw-rule-text">两次密码一致</span>
-                            </li>
-                        </ul>
-                    </div>
-                </div>
-
-                <div class="lc-form-row">
-                    <label for="password2" class="lc-form-label">确认密码</label>
-                    <input
-                        type="password"
-                        id="password2"
-                        name="password2"
-                        class="lc-input"
-                        autocomplete="new-password"
-                        minlength="8"
-                        maxlength="72"
-                        required
-                        aria-describedby="password2-help">
-                    <span id="password2-help" class="lc-pw-confirm-hint"
-                          data-state="empty">
-                        请再次输入密码
-                    </span>
-                </div>
-
-                <div id="form-error" class="lc-form-error" role="alert" aria-live="polite"></div>
-                <button type="submit" class="lc-btn lc-btn--primary lc-btn--block" id="submit-btn">
-                    注册
-                </button>
-            </form>
-
-            <div class="lc-auth-footer">
-                已有账号？<a href="/login.html">直接登录</a>
-                <span class="lc-auth-footer-sep">·</span>
-                <a href="/index.html">返回首页</a>
+    <main class="lc-auth-split">
+        <!-- ───── Left: KMP code hero (same as login) ──────────── -->
+        <section class="lc-auth-side lc-auth-side--code" aria-hidden="true">
+            <div class="lc-auth-logo" aria-label="LiteCode OJ">
+                <span class="lc-auth-logo__bracket">&gt;</span>
+                <span class="lc-auth-logo__name">LiteCode</span>
+                <span class="lc-auth-logo__sub">OJ · C++ Judge</span>
             </div>
-        </div>
+
+            <div class="lc-code-hero">
+                <div class="lc-code-hero__file"></div>
+                <div class="lc-code-hero__pane">
+<pre><span class="lc-syn-com">// KMP string matching — O(n + m)</span>
+<span class="lc-syn-com">// Never backtracks the pattern pointer.</span>
+<span class="lc-syn-kw">void</span> <span class="lc-syn-fn">kmp_search</span>(
+    <span class="lc-syn-kw">const char</span>* text, <span class="lc-syn-type">int</span> n,
+    <span class="lc-syn-kw">const char</span>* pat,  <span class="lc-syn-type">int</span> m) {
+
+    <span class="lc-syn-type">int</span> next[PAT_MAX] = {<span class="lc-syn-num">0</span>};
+    <span class="lc-syn-call">build_next</span>(pat, m, next);
+
+    <span class="lc-syn-type">int</span> j = <span class="lc-syn-num">0</span>;
+    <span class="lc-syn-kw">for</span> (<span class="lc-syn-type">int</span> i = <span class="lc-syn-num">0</span>; i &lt; n; i++) {
+        <span class="lc-syn-kw">while</span> (j &gt; <span class="lc-syn-num">0</span> &amp;&amp; text[i] != pat[j])
+            j = next[j - <span class="lc-syn-num">1</span>];
+        <span class="lc-syn-kw">if</span> (text[i] == pat[j]) j++;
+        <span class="lc-syn-kw">if</span> (j == m) {</pre>
+                </div>
+
+                <div class="lc-code-hero__status">
+                    <span><span class="lc-dot"></span>judge queue · <span class="lc-status-kw">idle</span></span>
+                    <span>warm pool · <span class="lc-status-kw">2 / 2</span></span>
+                    <span>build · <span class="lc-status-kw">ready</span></span>
+                    <span>session · <span class="lc-status-kw">guest</span></span>
+                </div>
+            </div>
+        </section>
+
+        <!-- ───── Right: register form ────────────────────────────── -->
+        <section class="lc-auth-side lc-auth-side--form">
+            <div class="lc-auth-form-wrap">
+                <div class="lc-auth-logo lc-auth-logo--center" aria-label="LiteCode OJ">
+                    <span class="lc-auth-logo__bracket">&gt;</span>
+                    <span class="lc-auth-logo__name">LiteCode</span>
+                    <span class="lc-auth-logo__sub">OJ</span>
+                </div>
+
+                <p class="lc-auth-heading">
+                    <span class="lc-prompt">$</span> <span class="lc-bin">./litecode</span> --register
+                </p>
+
+                <p class="lc-auth-subtitle">// mint a new user, role defaults to <code style="color: var(--a26-accent);">user</code></p>
+
+                <form class="lc-form" id="register-form" novalidate>
+                    <div class="lc-form-row">
+                        <label for="username" class="lc-cmd-label">username <span class="lc-required">*</span></label>
+                        <div class="lc-input-shell">
+                            <span class="lc-input-shell__prompt" aria-hidden="true">&gt;</span>
+                            <input
+                                type="text"
+                                id="username"
+                                name="username"
+                                class="lc-input"
+                                autocomplete="username"
+                                autocapitalize="off"
+                                autocorrect="off"
+                                spellcheck="false"
+                                placeholder="alice"
+                                required
+                                minlength="3"
+                                maxlength="50"
+                                pattern="[A-Za-z0-9_.\-]+"
+                                aria-describedby="username-help">
+                        </div>
+                        <span id="username-help" class="lc-form-help">
+                            // 3-50 chars · [A-Za-z0-9_.-] · no leading/trailing dot or dash
+                        </span>
+                    </div>
+
+                    <div class="lc-form-row">
+                        <label for="email" class="lc-cmd-label">email <span style="color:var(--a26-muted);">// optional</span></label>
+                        <div class="lc-input-shell">
+                            <span class="lc-input-shell__prompt" aria-hidden="true">&gt;</span>
+                            <input
+                                type="email"
+                                id="email"
+                                name="email"
+                                class="lc-input"
+                                autocomplete="email"
+                                placeholder="alice@example.com"
+                                maxlength="100"
+                                aria-describedby="email-help">
+                        </div>
+                        <span id="email-help" class="lc-form-help">
+                            // for password recovery · optional but unique
+                        </span>
+                    </div>
+
+                    <div class="lc-form-row">
+                        <label for="password" class="lc-cmd-label">password <span class="lc-required">*</span></label>
+                        <div class="lc-input-shell">
+                            <span class="lc-input-shell__prompt" aria-hidden="true">&gt;</span>
+                            <input
+                                type="password"
+                                id="password"
+                                name="password"
+                                class="lc-input"
+                                autocomplete="new-password"
+                                placeholder="••••••••"
+                                minlength="8"
+                                maxlength="72"
+                                required
+                                aria-describedby="password-help password-strength">
+                        </div>
+                        <span id="password-help" class="lc-form-help">
+                            // 8-72 chars · must include 1 letter + 1 digit (bcrypt ceiling 72)
+                        </span>
+
+                        <div class="lc-pw-strength"
+                             id="password-strength"
+                             aria-live="polite"
+                             aria-label="密码强度">
+                            <div class="lc-pw-strength-track" aria-hidden="true">
+                                <span class="lc-pw-strength-bar-fill" data-seg="0"></span>
+                                <span class="lc-pw-strength-bar-fill" data-seg="1"></span>
+                                <span class="lc-pw-strength-bar-fill" data-seg="2"></span>
+                                <span class="lc-pw-strength-bar-fill" data-seg="3"></span>
+                            </div>
+                            <div class="lc-pw-strength-label" id="pw-strength-label">
+                                // enter a password
+                            </div>
+                            <ul class="lc-pw-rules" id="pw-rules">
+                                <li class="lc-pw-rule" data-rule="length"><span class="lc-pw-rule-mark" aria-hidden="true">○</span><span>8-72 chars</span></li>
+                                <li class="lc-pw-rule" data-rule="letter"><span class="lc-pw-rule-mark" aria-hidden="true">○</span><span>1 letter</span></li>
+                                <li class="lc-pw-rule" data-rule="digit"><span class="lc-pw-rule-mark" aria-hidden="true">○</span><span>1 digit</span></li>
+                                <li class="lc-pw-rule" data-rule="match"><span class="lc-pw-rule-mark" aria-hidden="true">○</span><span>passwords match</span></li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div class="lc-form-row">
+                        <label for="password2" class="lc-cmd-label">password <span style="color:var(--a26-muted);">// again</span></label>
+                        <div class="lc-input-shell">
+                            <span class="lc-input-shell__prompt" aria-hidden="true">&gt;</span>
+                            <input
+                                type="password"
+                                id="password2"
+                                name="password2"
+                                class="lc-input"
+                                autocomplete="new-password"
+                                placeholder="••••••••"
+                                minlength="8"
+                                maxlength="72"
+                                required
+                                aria-describedby="password2-help">
+                        </div>
+                        <span id="password2-help" class="lc-pw-confirm-hint"
+                              data-state="empty">// type the password once more</span>
+                    </div>
+
+                    <div id="form-error" class="lc-form-error" role="alert" aria-live="polite"></div>
+
+                    <div class="lc-form-actions">
+                        <button type="submit" class="lc-cmd-submit" id="submit-btn">
+                            <span class="lc-prompt">&gt;</span> run ./register
+                        </button>
+                    </div>
+                </form>
+
+                <div class="lc-auth-footer">
+                    <span>// already a user?</span>
+                    <a href="/login.html">login</a>
+                    <span class="lc-sep">·</span>
+                    <a href="/index.html">return home</a>
+                </div>
+            </div>
+        </section>
     </main>
 
     <script src="/js/csp.js" defer></script>
@@ -211,407 +203,264 @@
     <script src="/js/app.js" defer></script>
 
     <script>
-        // ────────────────────────────────────────────────────────────────
-        //  Page-local script — kept inline because it is single-purpose
-        //  and tightly coupled to this page's DOM. The page handler is
-        //  intentionally short: validate → POST → branch on err.code.
-        //
-        //  Concerns handled:
-        //   1. guestOnly bounce (authed users → /index.html)
-        //   2. open-redirect protection on `?next=` (same-origin only)
-        //   3. front-end shape validation matching backend regexes
-        //      (validate_username / validate_email / validate_password_strength)
-        //   4. LIVE password strength meter (SPEC §6.3 "密码强度提示")
-        //      - 4-segment bar + label  (弱/中/良/强)
-        //      - 4-row rule checklist   (长度/字母/数字/两次一致)
-        //   5. live confirm-password match indicator on password2
-        //   6. loading state (disabled button + "注册中…") during the
-        //      network round-trip
-        //   7. CONFLICT differentiation: username vs email disambiguation
-        //      (anti-enumeration applies to LOGIN, not REGISTER — SPEC §6.3)
-        //   8. auto-focus first empty field — keyboard users land on
-        //      the form without needing to mouse-then-tab
-        // ────────────────────────────────────────────────────────────────
+    (function () {
+        'use strict';
 
-        (function () {
-            'use strict';
+        // v1.2.49-a: keep the same client-side validators as the
+        // legacy register.html (USERNAME_PATTERN / EMAIL_PATTERN /
+        // PW_MIN/MAX). The visual layer is new; the contract is
+        // identical.
+        var USERNAME_PATTERN = /^[A-Za-z0-9_.\-]+$/;
+        var EMAIL_PATTERN    = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        var PW_MIN = 8;
+        var PW_MAX = 72;
+        var HAS_LETTER = /[A-Za-z]/;
+        var HAS_DIGIT  = /[0-9]/;
 
-            // Mirror the backend validators (user_repo::validate_username
-            // + validate_email + password_hash::validate_password_strength)
-            // so users get consistent feedback before AND after the
-            // request leaves the browser. The backend re-validates
-            // (SPEC §6.3 "前端校验，后端二次校验") so this is purely for
-            // UX, not security.
-            //
-            // Username: 3-50 chars, [A-Za-z0-9_.\-], no leading/trailing
-            // dot or hyphen (matches user_repo.h::validate_username).
-            // We allow leading/trailing char in the regex but reject it
-            // in validateUsername() below so the user sees a precise
-            // message rather than a generic "regex mismatch".
-            var USERNAME_PATTERN = /^[A-Za-z0-9_.\-]+$/;
+        function resolveNext(rawNext) {
+            var fallback = '/index.html';
+            if (!rawNext) return fallback;
+            if (rawNext.charAt(0) !== '/') return fallback;
+            if (rawNext.charAt(1) === '/') return fallback;
+            if (/[\x00-\x1f]/.test(rawNext)) return fallback;
+            return rawNext;
+        }
 
-            // Email: lightweight shape check (matches user_repo.h::validate_email:
-            // local@domain with a dot in domain, no whitespace, exactly one @).
-            var EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        function scorePassword(pw) {
+            if (!pw) return 0;
+            var score = 0;
+            if (pw.length >= PW_MIN && pw.length <= PW_MAX) score++;
+            if (pw.length >= 12) score++;
+            if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) score++;
+            if (/[^A-Za-z0-9]/.test(pw) && HAS_LETTER.test(pw) && HAS_DIGIT.test(pw)) score++;
+            return Math.min(score, 4);
+        }
 
-            // Password: presence of letter + digit. Length cap mirrors
-            // the bcrypt 72-byte ceiling enforced server-side.
-            var PW_MIN = 8;
-            var PW_MAX = 72;
-            var HAS_LETTER = /[A-Za-z]/;
-            var HAS_DIGIT  = /[0-9]/;
+        function strengthLabel(score) {
+            switch (score) {
+                case 0: return '// enter a password';
+                case 1: return '// weak · meets minimum only';
+                case 2: return '// fair · lengthen or add variety';
+                case 3: return '// good · most recommendations met';
+                case 4: return '// strong · all recommendations met';
+                default: return '';
+            }
+        }
 
-            // Resolve the post-register redirect target. Same-origin
-            // paths starting with single "/" only — protocol-relative
-            // ("//evil.com") and absolute URLs ("http://...") are
-            // rejected as open-redirect vectors. Same logic as
-            // login.html's resolveNext() — kept in lock-step.
-            function resolveNext(rawNext) {
-                var fallback = '/index.html';
-                if (!rawNext) return fallback;
-                if (rawNext.charAt(0) !== '/') return fallback;
-                if (rawNext.charAt(1) === '/') return fallback;
-                if (/[\x00-\x1f]/.test(rawNext)) return fallback;
-                return rawNext;
+        window.addEventListener('DOMContentLoaded', function () {
+            litecode.boot.shell({ guestOnly: true });
+            if (!document.documentElement.classList.contains('dark')) {
+                document.body.classList.add('lc-auth-2026--light');
             }
 
-            // Classify password strength on a 0..4 scale.
-            //
-            //   0: empty                            (no bar shown)
-            //   1: weak   — only length >= 8 passes (red)
-            //   2: fair   — adds mixed-case OR length >= 12 (orange)
-            //   3: good   — adds length >= 12 AND mixed-case (yellow)
-            //   4: strong — adds at least one special char (green)
-            //
-            // The score NEVER blocks submission — it's advisory. A
-            // password that satisfies all four required rules is
-            // registrable regardless of its strength score, so users
-            // who prefer long passphrases (e.g. "correct horse battery
-            // staple" which scores low here but is high-entropy) aren't
-            // pushed into patterns they dislike.
-            function scorePassword(pw) {
-                if (!pw) return 0;
-                var score = 0;
+            var form        = document.getElementById('register-form');
+            var submit      = document.getElementById('submit-btn');
+            var errorBox    = document.getElementById('form-error');
+            var usernameEl  = document.getElementById('username');
+            var emailEl     = document.getElementById('email');
+            var passwordEl  = document.getElementById('password');
+            var password2El = document.getElementById('password2');
+            var strengthEl  = document.getElementById('password-strength');
+            var strengthLabelEl = document.getElementById('pw-strength-label');
+            var confirmHint = document.getElementById('password2-help');
+            var ruleEls = {
+                length: document.querySelector('.lc-pw-rule[data-rule="length"]'),
+                letter: document.querySelector('.lc-pw-rule[data-rule="letter"]'),
+                digit:  document.querySelector('.lc-pw-rule[data-rule="digit"]'),
+                match:  document.querySelector('.lc-pw-rule[data-rule="match"]'),
+            };
+
+            var next = resolveNext(
+                new URLSearchParams(window.location.search).get('next')
+            );
+
+            if (usernameEl && !usernameEl.value) usernameEl.focus();
+            else if (emailEl && !emailEl.value) emailEl.focus();
+            else if (passwordEl && !passwordEl.value) passwordEl.focus();
+            else if (password2El && !password2El.value) password2El.focus();
+            else if (usernameEl) usernameEl.focus();
+
+            function isUsernameValid(u) {
+                if (!u || u.length < 3 || u.length > 50) return false;
+                if (u.charAt(0) === '.' || u.charAt(0) === '-' ||
+                    u.charAt(u.length - 1) === '.' ||
+                    u.charAt(u.length - 1) === '-') return false;
+                return USERNAME_PATTERN.test(u);
+            }
+            function isEmailValid(e) {
+                if (!e) return true;
+                if (e.length > 100) return false;
+                return EMAIL_PATTERN.test(e);
+            }
+            function isPasswordStrongEnough(p) {
+                if (!p) return false;
+                if (p.length < PW_MIN || p.length > PW_MAX) return false;
+                if (!HAS_LETTER.test(p)) return false;
+                if (!HAS_DIGIT.test(p)) return false;
+                return true;
+            }
+            function doPasswordsMatch() {
+                return passwordEl.value !== '' && passwordEl.value === password2El.value;
+            }
+
+            function renderStrength() {
+                var pw  = passwordEl.value  || '';
+                var pw2 = password2El.value || '';
                 var lengthOk = pw.length >= PW_MIN && pw.length <= PW_MAX;
-                var hasLetter = HAS_LETTER.test(pw);
-                var hasDigit  = HAS_DIGIT.test(pw);
-                var hasLower  = /[a-z]/.test(pw);
-                var hasUpper  = /[A-Z]/.test(pw);
-                var hasSpecial = /[^A-Za-z0-9]/.test(pw);
-                var longEnough = pw.length >= 12;
+                var letterOk = pw.length > 0 && HAS_LETTER.test(pw);
+                var digitOk  = pw.length > 0 && HAS_DIGIT.test(pw);
+                var matchOk  = pw !== '' && pw === pw2;
 
-                // 1 point for satisfying the minimum length rule.
-                if (lengthOk) score++;
-                // 1 point for length >= 12 (passphrase-friendly).
-                if (longEnough) score++;
-                // 1 point for character-class variety (mixed case).
-                if (hasLower && hasUpper) score++;
-                // 1 point for special char presence.
-                if (hasSpecial && hasLetter && hasDigit) score++;
-                return Math.min(score, 4);
+                setRule(ruleEls.length, lengthOk);
+                setRule(ruleEls.letter, letterOk);
+                setRule(ruleEls.digit,  digitOk);
+                setRule(ruleEls.match,  matchOk);
+
+                var score = scorePassword(pw);
+                var segs = strengthEl.querySelectorAll('.lc-pw-strength-bar-fill');
+                for (var i = 0; i < segs.length; i++) {
+                    if (i < score) segs[i].classList.add('lc-pw-strength-bar-fill--on');
+                    else           segs[i].classList.remove('lc-pw-strength-bar-fill--on');
+                }
+                strengthEl.classList.remove(
+                    'lc-pw-strength--empty','lc-pw-strength--weak',
+                    'lc-pw-strength--fair','lc-pw-strength--good','lc-pw-strength--strong');
+                var klass;
+                if      (score === 0) klass = 'lc-pw-strength--empty';
+                else if (score === 1) klass = 'lc-pw-strength--weak';
+                else if (score === 2) klass = 'lc-pw-strength--fair';
+                else if (score === 3) klass = 'lc-pw-strength--good';
+                else                  klass = 'lc-pw-strength--strong';
+                strengthEl.classList.add(klass);
+
+                strengthLabelEl.textContent = strengthLabel(score);
+            }
+            function setRule(el, ok) {
+                if (!el) return;
+                var mark = el.querySelector('.lc-pw-rule-mark');
+                el.classList.remove('lc-pw-rule--ok','lc-pw-rule--bad');
+                if (ok) {
+                    el.classList.add('lc-pw-rule--ok');
+                    if (mark) mark.textContent = '✓';
+                } else {
+                    el.classList.add('lc-pw-rule--bad');
+                    if (mark) mark.textContent = '○';
+                }
+            }
+            function renderConfirmHint() {
+                var pw  = passwordEl.value  || '';
+                var pw2 = password2El.value || '';
+                confirmHint.classList.remove('lc-pw-confirm-hint--ok','lc-pw-confirm-hint--bad');
+                if (pw2 === '') {
+                    confirmHint.textContent = '// type the password once more';
+                    confirmHint.dataset.state = 'empty';
+                } else if (pw === pw2) {
+                    confirmHint.textContent = '✓ passwords match';
+                    confirmHint.classList.add('lc-pw-confirm-hint--ok');
+                    confirmHint.dataset.state = 'ok';
+                } else {
+                    confirmHint.textContent = '✗ passwords do not match';
+                    confirmHint.classList.add('lc-pw-confirm-hint--bad');
+                    confirmHint.dataset.state = 'bad';
+                }
             }
 
-            function strengthLabel(score) {
-                switch (score) {
-                    case 0: return '请输入密码';
-                    case 1: return '弱 — 仅满足最低要求，建议加长';
-                    case 2: return '中 — 长度或多样性可再加强';
-                    case 3: return '良 — 满足大部分建议';
-                    case 4: return '强 — 满足所有建议';
-                    default: return '';
-                }
-            }
-
-            window.addEventListener('DOMContentLoaded', function () {
-                litecode.boot.shell({ guestOnly: true, title: 'LiteCode · 注册' });
-
-                var form        = document.getElementById('register-form');
-                var submit      = document.getElementById('submit-btn');
-                var errorBox    = document.getElementById('form-error');
-                var usernameEl  = document.getElementById('username');
-                var emailEl     = document.getElementById('email');
-                var passwordEl  = document.getElementById('password');
-                var password2El = document.getElementById('password2');
-                var strengthEl  = document.getElementById('password-strength');
-                var strengthLabelEl = document.getElementById('pw-strength-label');
-                var confirmHint = document.getElementById('password2-help');
-                var ruleEls     = {
-                    length: document.querySelector('.lc-pw-rule[data-rule="length"]'),
-                    letter: document.querySelector('.lc-pw-rule[data-rule="letter"]'),
-                    digit:  document.querySelector('.lc-pw-rule[data-rule="digit"]'),
-                    match:  document.querySelector('.lc-pw-rule[data-rule="match"]'),
-                };
-
-                // Resolve `?next=` ONCE so a slow submit can't observe
-                // a changing window.location.search.
-                var next = resolveNext(
-                    new URLSearchParams(window.location.search).get('next')
-                );
-
-                // Auto-focus the first empty required field — username
-                // if empty, password if username is filled. Skip if
-                // either is already pre-filled (autofill from browser
-                // / password manager) — focus on a populated field is
-                // annoying.
-                if (usernameEl && !usernameEl.value) {
-                    usernameEl.focus();
-                } else if (emailEl && !emailEl.value) {
-                    emailEl.focus();
-                } else if (passwordEl && !passwordEl.value) {
-                    passwordEl.focus();
-                } else if (password2El && !password2El.value) {
-                    password2El.focus();
-                } else if (usernameEl) {
-                    usernameEl.focus();
-                }
-
-                // ────────────────────────────────────────────────────────
-                //  Live validators — return boolean; never throw.
-                // ────────────────────────────────────────────────────────
-
-                function isUsernameValid(u) {
-                    if (!u || u.length < 3 || u.length > 50) return false;
-                    if (u.charAt(0) === '.' || u.charAt(0) === '-' ||
-                        u.charAt(u.length - 1) === '.' ||
-                        u.charAt(u.length - 1) === '-') return false;
-                    return USERNAME_PATTERN.test(u);
-                }
-
-                function isEmailValid(e) {
-                    if (!e) return true; // empty is OK (email is optional)
-                    if (e.length > 100) return false;
-                    return EMAIL_PATTERN.test(e);
-                }
-
-                function isPasswordStrongEnough(p) {
-                    if (!p) return false;
-                    if (p.length < PW_MIN || p.length > PW_MAX) return false;
-                    if (!HAS_LETTER.test(p)) return false;
-                    if (!HAS_DIGIT.test(p)) return false;
-                    return true;
-                }
-
-                function doPasswordsMatch() {
-                    return passwordEl.value !== '' &&
-                           passwordEl.value === password2El.value;
-                }
-
-                // ────────────────────────────────────────────────────────
-                //  Strength meter renderer — pure DOM update, idempotent.
-                //  Called on every input event for both password fields.
-                // ────────────────────────────────────────────────────────
-
-                function renderStrength() {
-                    var pw = passwordEl.value || '';
-                    var pw2 = password2El.value || '';
-                    var lengthOk = pw.length >= PW_MIN && pw.length <= PW_MAX;
-                    var letterOk = pw.length > 0 && HAS_LETTER.test(pw);
-                    var digitOk  = pw.length > 0 && HAS_DIGIT.test(pw);
-                    var matchOk  = pw !== '' && pw === pw2;
-
-                    // Update rule checklist.
-                    setRule(ruleEls.length, lengthOk);
-                    setRule(ruleEls.letter, letterOk);
-                    setRule(ruleEls.digit,  digitOk);
-                    setRule(ruleEls.match,  matchOk);
-
-                    // Update bar + label.
-                    var score = scorePassword(pw);
-                    var segs = strengthEl.querySelectorAll('.lc-pw-strength-bar-fill');
-                    for (var i = 0; i < segs.length; i++) {
-                        var seg = segs[i];
-                        if (i < score) seg.classList.add('lc-pw-strength-bar-fill--on');
-                        else           seg.classList.remove('lc-pw-strength-bar-fill--on');
-                    }
-                    // Map score → CSS modifier on the track so each
-                    // segment picks up its color from the right var.
-                    strengthEl.classList.remove(
-                        'lc-pw-strength--empty', 'lc-pw-strength--weak',
-                        'lc-pw-strength--fair',  'lc-pw-strength--good',
-                        'lc-pw-strength--strong');
-                    var klass;
-                    if      (score === 0) klass = 'lc-pw-strength--empty';
-                    else if (score === 1) klass = 'lc-pw-strength--weak';
-                    else if (score === 2) klass = 'lc-pw-strength--fair';
-                    else if (score === 3) klass = 'lc-pw-strength--good';
-                    else                  klass = 'lc-pw-strength--strong';
-                    strengthEl.classList.add(klass);
-
-                    strengthLabelEl.textContent = strengthLabel(score);
-                }
-
-                function setRule(el, ok) {
-                    if (!el) return;
-                    var mark = el.querySelector('.lc-pw-rule-mark');
-                    el.classList.remove('lc-pw-rule--ok', 'lc-pw-rule--bad');
-                    if (ok) {
-                        el.classList.add('lc-pw-rule--ok');
-                        if (mark) mark.textContent = '✓';
-                    } else {
-                        el.classList.add('lc-pw-rule--bad');
-                        if (mark) mark.textContent = '○';
-                    }
-                }
-
-                function renderConfirmHint() {
-                    var pw  = passwordEl.value || '';
-                    var pw2 = password2El.value || '';
-                    confirmHint.classList.remove(
-                        'lc-pw-confirm-hint--ok', 'lc-pw-confirm-hint--bad');
-                    if (pw2 === '') {
-                        confirmHint.textContent = '请再次输入密码';
-                        confirmHint.dataset.state = 'empty';
-                    } else if (pw === pw2) {
-                        confirmHint.textContent = '✓ 两次密码一致';
-                        confirmHint.classList.add('lc-pw-confirm-hint--ok');
-                        confirmHint.dataset.state = 'ok';
-                    } else {
-                        confirmHint.textContent = '两次输入的密码不一致';
-                        confirmHint.classList.add('lc-pw-confirm-hint--bad');
-                        confirmHint.dataset.state = 'bad';
-                    }
-                }
-
-                // Wire the live-validators. `input` fires on every
-                // keystroke (or autofill change), so the meter is
-                // always in sync with what's actually in the box.
-                passwordEl.addEventListener('input', function () {
-                    renderStrength();
-                    renderConfirmHint();
-                });
-                password2El.addEventListener('input', function () {
-                    renderStrength();
-                    renderConfirmHint();
-                });
-
-                // Initial paint (in case the browser pre-filled the
-                // fields from a password manager before DOMContentLoaded).
+            passwordEl.addEventListener('input', function () {
                 renderStrength();
                 renderConfirmHint();
+            });
+            password2El.addEventListener('input', function () {
+                renderStrength();
+                renderConfirmHint();
+            });
+            renderStrength();
+            renderConfirmHint();
 
-                // ────────────────────────────────────────────────────────
-                //  Inline error helper — sets the alert-region text and
-                //  focuses the offending field if `field` is supplied.
-                // ────────────────────────────────────────────────────────
-
-                function setError(msg, field) {
-                    errorBox.textContent = msg || '';
-                    errorBox.style.display = msg ? 'block' : 'none';
-                    if (field) {
-                        var el = document.getElementById(field);
-                        if (el) {
-                            try { el.focus(); } catch (_) { /* element may be detached */ }
-                        }
+            function setError(msg, field) {
+                errorBox.textContent = msg || '';
+                errorBox.style.display = msg ? 'block' : 'none';
+                var shells = document.querySelectorAll('.lc-input-shell');
+                shells.forEach(function (s) { s.classList.remove('lc-input-shell--error'); });
+                if (field) {
+                    var target = document.getElementById(field);
+                    if (target) {
+                        var shell = target.closest('.lc-input-shell');
+                        if (shell) shell.classList.add('lc-input-shell--error');
+                        try { target.focus(); } catch (_) {}
                     }
                 }
+            }
 
-                // ────────────────────────────────────────────────────────
-                //  Submit handler — validate → POST → branch on err.code.
-                // ────────────────────────────────────────────────────────
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+                setError('');
 
-                form.addEventListener('submit', function (e) {
-                    e.preventDefault();
-                    setError('');
+                var username  = (usernameEl.value  || '').trim();
+                var email     = (emailEl.value     || '').trim();
+                var password  = passwordEl.value  || '';
+                var password2 = password2El.value || '';
 
-                    var username  = (usernameEl.value || '').trim();
-                    var email     = (emailEl.value || '').trim();
-                    var password  = passwordEl.value || '';
-                    var password2 = password2El.value || '';
+                if (!isUsernameValid(username)) {
+                    setError('line 1: invalid identifier\nhint: 3-50 chars, [A-Za-z0-9_.-], no leading/trailing dot/dash', 'username');
+                    return;
+                }
+                if (!isEmailValid(email)) {
+                    setError('line 2: invalid email\nhint: format user@host.tld', 'email');
+                    return;
+                }
+                if (!isPasswordStrongEnough(password)) {
+                    setError('line 3: password too weak\nhint: 8-72 chars, 1 letter + 1 digit', 'password');
+                    return;
+                }
+                if (password !== password2) {
+                    setError('line 4: passwords do not match', 'password2');
+                    return;
+                }
 
-                    if (!isUsernameValid(username)) {
-                        setError('用户名须为 3-50 字符，字母/数字/下划线/点/中划线，不能以点或中划线开头或结尾', 'username');
-                        return;
-                    }
-                    if (!isEmailValid(email)) {
-                        setError('邮箱格式不正确', 'email');
-                        return;
-                    }
-                    if (!isPasswordStrongEnough(password)) {
-                        setError('密码须为 8-72 字符，至少包含一个字母和一个数字', 'password');
-                        return;
-                    }
-                    if (password !== password2) {
-                        setError('两次输入的密码不一致', 'password2');
-                        return;
-                    }
+                submit.disabled = true;
+                submit.innerHTML = '<span class="lc-prompt">~</span> minting user...';
 
-                    submit.disabled = true;
-                    submit.textContent = '注册中…';
-
-                    litecode.api.auth.register(username, password, email || null)
-                        .then(function () {
-                            litecode.toast.success('注册成功，欢迎加入！');
-                            // Use `replace` so the back button doesn't
-                            // replay the POST (which would 409 because
-                            // the user row already exists).
-                            window.location.replace(next);
-                        })
-                        .catch(function (err) {
-                            // The `code` is the SPEC §5.7 envelope field,
-                            // NOT the HTTP status. Both go through
-                            // LitecodeApiError; `code` is the machine-
-                            // readable taxonomy, `status` is the HTTP
-                            // number — branch on the former for message
-                            // mapping.
-                            var field = (err.details && err.details.field) || null;
-                            var msg;
-                            switch (err.code) {
-                                case 'RATE_LIMITED':
-                                    msg = '注册请求过于频繁，请稍后再试';
-                                    break;
-                                case 'INVALID_INPUT':
-                                    // err.details.field (when present)
-                                    // tells us which input failed server-
-                                    // side validation. We don't branch
-                                    // the message here — we just focus
-                                    // the offending field.
-                                    msg = err.message || '输入有误';
-                                    if (field) {
-                                        setError(msg, field);
-                                        return;
-                                    }
-                                    break;
-                                case 'CONFLICT':
-                                    // SPEC §6.3 anti-enumeration is a
-                                    // LOGIN property, not a REGISTER
-                                    // property — the user picked their
-                                    // own username, so telling them it's
-                                    // taken is required UX. Disambiguate
-                                    // by `details.field` so we can also
-                                    // focus the right input.
-                                    msg = (field === 'username')
-                                        ? '该用户名已被占用'
-                                        : (field === 'email')
-                                            ? '该邮箱已被注册'
-                                            : '该账号已存在';
-                                    break;
-                                case 'INTERNAL_ERROR':
-                                    msg = '服务暂时不可用：' + (err.message || '');
-                                    break;
-                                default:
-                                    msg = err.message || ('注册失败（HTTP ' + (err.status || 0) + '）');
-                            }
-                            setError(msg, field);
-                            // Also surface a toast so users who didn't
-                            // notice the inline error (e.g. screen-reader
-                            // users jumping past the alert region) still
-                            // get the feedback. Skip on 401 — register
-                            // shouldn't 401 in practice, but if it does
-                            // (e.g. an api.js refresh-once race), the
-                            // global unauthorized handler already takes
-                            // over with a redirect, so a toast would be
-                            // noise on top.
-                            if (err.status !== 401) {
-                                litecode.toast.error(msg);
-                            }
-                        })
-                        .finally(function () {
-                            submit.disabled = false;
-                            submit.textContent = '注册';
-                        });
-                });
+                litecode.api.auth.register(username, password, email || null)
+                    .then(function () {
+                        litecode.toast.success('AC · welcome, ' + username);
+                        window.location.replace(next);
+                    })
+                    .catch(function (err) {
+                        var field = (err.details && err.details.field) || null;
+                        var msg;
+                        switch (err.code) {
+                            case 'RATE_LIMITED':
+                                msg = 'line 0: too many attempts\nhint: wait a minute, then retry';
+                                break;
+                            case 'INVALID_INPUT':
+                                msg = err.message || 'input rejected by server';
+                                if (field) { setError(msg, field); return; }
+                                break;
+                            case 'CONFLICT':
+                                msg = (field === 'username')
+                                    ? 'line 1: identifier already taken\nhint: pick a different username'
+                                    : (field === 'email')
+                                        ? 'line 2: email already registered\nhint: use a different email or login instead'
+                                        : 'line ?: account already exists';
+                                break;
+                            case 'INTERNAL_ERROR':
+                                msg = 'line 0: server unreachable\n' + (err.message || '');
+                                break;
+                            default:
+                                msg = err.message || ('unexpected: HTTP ' + (err.status || 0));
+                        }
+                        setError(msg, field);
+                        if (err.status !== 401) {
+                            litecode.toast.error(msg.split('\n')[0]);
+                        }
+                    })
+                    .finally(function () {
+                        submit.disabled = false;
+                        submit.innerHTML = '<span class="lc-prompt">&gt;</span> run ./register';
+                    });
             });
-        })();
+        });
+    })();
     </script>
 </body>
 </html>

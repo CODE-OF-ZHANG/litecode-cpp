@@ -3273,3 +3273,507 @@ html.lc-route-pending body {
     .lc-pagination { gap: 2px; }
     .lc-page-btn { min-width: 28px; padding: 4px 7px; }
 }
+/* =====================================================================
+   10. Auth pages v2 — "code is identity" (v1.2.49-a)
+   ---------------------------------------------------------------------
+   Full redesign for /login.html and /register.html. Sits BELOW the
+   existing .lc-auth-* rules so the new selectors win for the auth
+   pages. Other pages (problem list, problem detail, admin/*) are
+   untouched — they continue to use the warm-paper v1.2.47-d system.
+
+   Design intent:
+     - Dark default; light mode honored via .lc-auth-2026--light.
+     - "code is identity" — left half is a static KMP string-matching
+       block, right half is the form styled as code (// labels, >
+       prompts, error: line N reporting).
+     - LiteCode OJ logo (text+italic mark) appears twice: top-left of
+       the code panel and centered in the form header.
+   ===================================================================== */
+
+.lc-auth-2026 {
+    /* dark surface */
+    --a26-bg:           #0B0E14;
+    --a26-panel:        #11151D;
+    --a26-panel-2:      #161A24;
+    --a26-border:       #1E2530;
+    --a26-border-soft:  #161B24;
+    --a26-text:          #E4E9F0;
+    --a26-text-2:        #A4ADBC;
+    --a26-muted:         #6B7484;
+
+    /* ice-cyan accent (zero-error / engineer) */
+    --a26-accent:        #5DC9E2;
+    --a26-accent-dim:    #2E7B95;
+    --a26-accent-glow:   rgba(93, 201, 226, .18);
+    --a26-accent-soft:   rgba(93, 201, 226, .08);
+
+    /* syntax tokens for the KMP hero */
+    --a26-syn-kw:        #C792EA;
+    --a26-syn-type:      #82AAFF;
+    --a26-syn-str:       #C3E88D;
+    --a26-syn-num:       #F78C6C;
+    --a26-syn-com:       #5C6470;
+    --a26-syn-fn:        #5DC9E2;
+    --a26-syn-default:   #B8C0CC;
+    --a26-syn-cursor:    #5DC9E2;
+
+    /* verdict hues used for the > run ./... status row */
+    --a26-ok:            #4ADE80;
+    --a26-err:           #F87171;
+    --a26-warn:          #FACC15;
+
+    --a26-mono: 'JetBrains Mono', 'Fira Code', 'IBM Plex Mono',
+                 ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+    background: var(--a26-bg);
+    color: var(--a26-text);
+    font-family: var(--lc-font-sans);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Light override (v1.2.49-a): same structure, paper-toned background
+   + the same ice-cyan accent reads as "blueprint" on warm paper. */
+.lc-auth-2026.lc-auth-2026--light {
+    --a26-bg:           #F7F4EC;
+    --a26-panel:        #FFFFFF;
+    --a26-panel-2:      #FBF8F1;
+    --a26-border:       #E6E1D2;
+    --a26-border-soft:  #EFEADA;
+    --a26-text:          #16181D;
+    --a26-text-2:        #4A5060;
+    --a26-muted:         #6B7484;
+    --a26-accent:        #1B6E8C;
+    --a26-accent-dim:    #134C61;
+    --a26-accent-glow:   rgba(27, 110, 140, .16);
+    --a26-accent-soft:   rgba(27, 110, 140, .07);
+    --a26-syn-kw:        #8E44AD;
+    --a26-syn-type:      #1B6E8C;
+    --a26-syn-str:       #4F6E2A;
+    --a26-syn-num:       #B05A1A;
+    --a26-syn-com:       #8A8472;
+    --a26-syn-fn:        #1B6E8C;
+    --a26-syn-default:   #2E323A;
+    --a26-syn-cursor:    #1B6E8C;
+}
+
+/* ── 50/50 split layout ─────────────────────────────────────── */
+.lc-auth-2026 .lc-auth-split {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    min-height: 100vh;
+}
+
+.lc-auth-2026 .lc-auth-side {
+    padding: clamp(24px, 4vw, 56px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.lc-auth-2026 .lc-auth-side--code {
+    background: var(--a26-panel);
+    border-right: 1px solid var(--a26-border);
+    position: relative;
+    gap: 24px;
+}
+
+.lc-auth-2026 .lc-auth-side--form {
+    background: var(--a26-bg);
+    justify-content: center;
+    align-items: stretch;
+}
+
+@media (max-width: 900px) {
+    .lc-auth-2026 .lc-auth-split { grid-template-columns: 1fr; }
+    .lc-auth-2026 .lc-auth-side--code {
+        border-right: 0;
+        border-bottom: 1px solid var(--a26-border);
+        min-height: 40vh;
+    }
+}
+
+/* ── Logo block ─────────────────────────────────────────────── */
+.lc-auth-2026 .lc-auth-logo {
+    display: inline-flex;
+    align-items: stretch;
+    border: 1px solid var(--a26-border);
+    background: var(--a26-panel-2);
+    font-family: var(--a26-mono);
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: 0.04em;
+    color: var(--a26-text);
+    user-select: none;
+}
+.lc-auth-2026 .lc-auth-logo__bracket {
+    padding: 6px 8px;
+    color: var(--a26-accent);
+    background: var(--a26-accent-soft);
+    border-right: 1px solid var(--a26-border);
+}
+.lc-auth-2026 .lc-auth-logo__name {
+    padding: 6px 10px 6px 8px;
+    color: var(--a26-accent);
+    font-style: italic;
+    letter-spacing: 0.06em;
+}
+.lc-auth-2026 .lc-auth-logo__sub {
+    padding: 6px 10px;
+    color: var(--a26-muted);
+    font-weight: 400;
+    font-style: normal;
+    border-left: 1px solid var(--a26-border-soft);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-size: 11px;
+}
+.lc-auth-2026 .lc-auth-logo--center {
+    align-self: center;
+    margin-bottom: 28px;
+    font-size: 16px;
+    border-radius: 2px;
+}
+.lc-auth-2026 .lc-auth-logo--center .lc-auth-logo__bracket {
+    background: transparent;
+    border-right: 1px solid var(--a26-border);
+    padding: 8px 10px;
+}
+.lc-auth-2026 .lc-auth-logo--center .lc-auth-logo__name { padding: 8px 14px; font-size: 16px; }
+.lc-auth-2026 .lc-auth-logo--center .lc-auth-logo__sub  { padding: 8px 12px; font-size: 11px; }
+
+/* ── KMP code hero (left side) ───────────────────────────────── */
+.lc-auth-2026 .lc-code-hero {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-height: 0;
+}
+.lc-auth-2026 .lc-code-hero__file {
+    font-family: var(--a26-mono);
+    color: var(--a26-muted);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+}
+.lc-auth-2026 .lc-code-hero__file::before {
+    content: "~/litecode/algos/";
+    color: var(--a26-muted);
+}
+.lc-auth-2026 .lc-code-hero__file::after {
+    content: "kmp.cpp";
+    color: var(--a26-accent);
+}
+.lc-auth-2026 .lc-code-hero__pane {
+    flex: 1;
+    background: var(--a26-panel-2);
+    border: 1px solid var(--a26-border);
+    border-radius: 6px;
+    padding: 20px 22px;
+    overflow: auto;
+    font-family: var(--a26-mono);
+    font-size: 13.5px;
+    line-height: 1.7;
+    position: relative;
+}
+.lc-auth-2026 .lc-code-hero__pane pre {
+    margin: 0;
+    font-family: inherit;
+    color: var(--a26-syn-default);
+    white-space: pre;
+}
+.lc-auth-2026 .lc-code-hero__pane .lc-syn-kw    { color: var(--a26-syn-kw); }
+.lc-auth-2026 .lc-code-hero__pane .lc-syn-type  { color: var(--a26-syn-type); }
+.lc-auth-2026 .lc-code-hero__pane .lc-syn-str   { color: var(--a26-syn-str); }
+.lc-auth-2026 .lc-code-hero__pane .lc-syn-num   { color: var(--a26-syn-num); }
+.lc-auth-2026 .lc-code-hero__pane .lc-syn-com   { color: var(--a26-syn-com); font-style: italic; }
+.lc-auth-2026 .lc-code-hero__pane .lc-syn-fn    { color: var(--a26-syn-fn); }
+.lc-auth-2026 .lc-code-hero__pane .lc-syn-call  { color: var(--a26-syn-fn); }
+.lc-auth-2026 .lc-code-hero__pane .lc-syn-active {
+    background: linear-gradient(90deg, var(--a26-accent-glow) 0%, transparent 100%);
+    border-left: 2px solid var(--a26-accent);
+    margin-left: -22px;
+    padding-left: 20px;
+    display: inline-block;
+    width: calc(100% + 22px);
+}
+.lc-auth-2026 .lc-code-hero__pane .lc-cursor {
+    display: inline-block;
+    width: 7px;
+    height: 14px;
+    background: var(--a26-syn-cursor);
+    margin-left: 4px;
+    vertical-align: -2px;
+    animation: lc-a26-cursor-blink 1.05s steps(2) infinite;
+}
+@keyframes lc-a26-cursor-blink { 50% { opacity: 0; } }
+
+.lc-auth-2026 .lc-code-hero__status {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-family: var(--a26-mono);
+    font-size: 12px;
+    color: var(--a26-muted);
+    flex-wrap: wrap;
+}
+.lc-auth-2026 .lc-code-hero__status .lc-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--a26-ok);
+    box-shadow: 0 0 0 3px rgba(74, 222, 128, .15);
+    margin-right: 6px;
+    vertical-align: 1px;
+}
+.lc-auth-2026 .lc-code-hero__status .lc-status-kw { color: var(--a26-accent); }
+
+/* ── Form card (right side) ──────────────────────────────────── */
+.lc-auth-2026 .lc-auth-form-wrap {
+    width: 100%;
+    max-width: 420px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.lc-auth-2026 .lc-auth-heading {
+    margin: 0 0 8px;
+    font-family: var(--a26-mono);
+    color: var(--a26-text-2);
+    font-size: 13px;
+    letter-spacing: 0.04em;
+}
+.lc-auth-2026 .lc-auth-heading .lc-prompt { color: var(--a26-accent); }
+.lc-auth-2026 .lc-auth-heading .lc-bin   { color: var(--a26-accent); font-weight: 600; }
+
+.lc-auth-2026 .lc-form-row { display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.lc-auth-2026 .lc-cmd-label {
+    font-family: var(--a26-mono);
+    color: var(--a26-syn-com);
+    font-size: 12.5px;
+    font-style: italic;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+}
+.lc-auth-2026 .lc-cmd-label::before { content: "//"; color: var(--a26-syn-com); font-style: normal; }
+.lc-auth-2026 .lc-cmd-label .lc-required { color: var(--a26-syn-str); }
+
+.lc-auth-2026 .lc-input-shell {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+    background: var(--a26-panel-2);
+    border: 1px solid var(--a26-border);
+    border-radius: 4px;
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.lc-auth-2026 .lc-input-shell:focus-within {
+    border-color: var(--a26-accent);
+    box-shadow: 0 0 0 3px var(--a26-accent-glow);
+}
+.lc-auth-2026 .lc-input-shell--error {
+    border-color: var(--a26-err);
+    box-shadow: 0 0 0 3px rgba(248, 113, 113, .14);
+}
+.lc-auth-2026 .lc-input-shell__prompt {
+    padding: 10px 10px 10px 12px;
+    font-family: var(--a26-mono);
+    color: var(--a26-accent);
+    font-size: 13.5px;
+    user-select: none;
+    border-right: 1px solid var(--a26-border-soft);
+    background: rgba(93, 201, 226, .04);
+    min-width: 28px;
+    text-align: center;
+}
+.lc-auth-2026 .lc-input {
+    flex: 1;
+    background: transparent;
+    border: 0;
+    padding: 10px 12px;
+    color: var(--a26-text);
+    font-family: var(--a26-mono);
+    font-size: 14px;
+    letter-spacing: 0.01em;
+    outline: none;
+    min-width: 0;
+}
+.lc-auth-2026 .lc-input::placeholder { color: var(--a26-muted); font-style: italic; }
+.lc-auth-2026 .lc-input:focus { outline: none; }
+.lc-auth-2026 .lc-input:focus-visible { outline: none; }
+
+.lc-auth-2026 .lc-form-help {
+    font-family: var(--a26-mono);
+    color: var(--a26-muted);
+    font-size: 11.5px;
+    line-height: 1.5;
+    padding-left: 22px;
+    min-height: 14px;
+}
+.lc-auth-2026 .lc-form-help::before {
+    content: "#";
+    color: var(--a26-muted);
+    margin-right: 6px;
+}
+
+.lc-auth-2026 .lc-form-error {
+    display: none;
+    font-family: var(--a26-mono);
+    color: var(--a26-err);
+    font-size: 12.5px;
+    line-height: 1.6;
+    padding: 10px 12px;
+    background: rgba(248, 113, 113, .07);
+    border-left: 2px solid var(--a26-err);
+    border-radius: 0 4px 4px 0;
+    white-space: pre-wrap;
+}
+.lc-auth-2026 .lc-form-error::before {
+    content: "// error:";
+    display: block;
+    color: var(--a26-err);
+    font-style: italic;
+    margin-bottom: 4px;
+}
+.lc-auth-2026 .lc-form-error:empty { display: none; }
+
+.lc-auth-2026 .lc-form-actions {
+    margin-top: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.lc-auth-2026 .lc-cmd-submit {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: var(--a26-accent);
+    color: #04141A;
+    border: 0;
+    border-radius: 4px;
+    padding: 12px 18px;
+    font-family: var(--a26-mono);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: filter 120ms ease, transform 80ms ease;
+}
+.lc-auth-2026 .lc-cmd-submit:hover { filter: brightness(1.08); }
+.lc-auth-2026 .lc-cmd-submit:active { transform: translateY(1px); }
+.lc-auth-2026 .lc-cmd-submit:disabled { cursor: not-allowed; opacity: 0.6; filter: none; }
+.lc-auth-2026 .lc-cmd-submit .lc-prompt { color: #04141A; }
+.lc-auth-2026 .lc-cmd-submit[disabled] .lc-prompt { color: rgba(4, 20, 26, 0.5); }
+
+.lc-auth-2026 .lc-auth-footer {
+    margin-top: 18px;
+    font-family: var(--a26-mono);
+    color: var(--a26-muted);
+    font-size: 12.5px;
+    text-align: center;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px 12px;
+    line-height: 1.6;
+}
+.lc-auth-2026 .lc-auth-footer a {
+    color: var(--a26-accent);
+    text-decoration: none;
+    border-bottom: 1px dashed var(--a26-accent-dim);
+}
+.lc-auth-2026 .lc-auth-footer a:hover { border-bottom-style: solid; }
+.lc-auth-2026 .lc-auth-footer .lc-sep { color: var(--a26-border); }
+
+/* ── Strength meter (overrides v1.2.47-f styles for the new theme) ── */
+.lc-auth-2026 .lc-pw-strength {
+    margin-top: 6px;
+    padding: 8px 10px;
+    background: var(--a26-panel-2);
+    border: 1px solid var(--a26-border-soft);
+    border-radius: 4px;
+    font-family: var(--a26-mono);
+}
+.lc-auth-2026 .lc-pw-strength-track {
+    display: flex;
+    gap: 4px;
+    height: 4px;
+    margin-bottom: 6px;
+}
+.lc-auth-2026 .lc-pw-strength-bar-fill {
+    flex: 1;
+    background: var(--a26-border-soft);
+    border-radius: 1px;
+    transition: background 120ms ease;
+}
+.lc-auth-2026 .lc-pw-strength--empty  .lc-pw-strength-bar-fill { background: var(--a26-border-soft); }
+.lc-auth-2026 .lc-pw-strength--weak   .lc-pw-strength-bar-fill { background: var(--a26-err); }
+.lc-auth-2026 .lc-pw-strength--fair   .lc-pw-strength-bar-fill { background: var(--a26-warn); }
+.lc-auth-2026 .lc-pw-strength--good   .lc-pw-strength-bar-fill { background: var(--a26-accent); }
+.lc-auth-2026 .lc-pw-strength--strong .lc-pw-strength-bar-fill { background: var(--a26-ok); }
+.lc-auth-2026 .lc-pw-strength-label {
+    color: var(--a26-muted);
+    font-size: 11.5px;
+    margin-bottom: 6px;
+}
+
+.lc-auth-2026 .lc-pw-rules {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 12px;
+}
+.lc-auth-2026 .lc-pw-rule {
+    font-size: 11.5px;
+    color: var(--a26-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.lc-auth-2026 .lc-pw-rule-mark { color: var(--a26-muted); }
+.lc-auth-2026 .lc-pw-rule--ok  { color: var(--a26-ok); }
+.lc-auth-2026 .lc-pw-rule--ok  .lc-pw-rule-mark::before { content: "✓"; }
+.lc-auth-2026 .lc-pw-rule--bad .lc-pw-rule-mark::before { content: "○"; }
+
+.lc-auth-2026 .lc-pw-confirm-hint { color: var(--a26-muted); font-size: 11.5px; }
+.lc-auth-2026 .lc-pw-confirm-hint--ok  { color: var(--a26-ok); }
+.lc-auth-2026 .lc-pw-confirm-hint--bad { color: var(--a26-err); }
+
+/* Yield the legacy .lc-auth-page and .lc-auth-card in the new design.
+   The new HTML uses .lc-auth-2026 as the outer wrapper, and
+   .lc-auth-card inside is now used only as a logical container
+   (no styling) — the actual form is the new .lc-auth-form-wrap. */
+.lc-auth-2026 .lc-auth-page,
+.lc-auth-2026 .lc-auth-card { all: revert; }
+.lc-auth-2026 .lc-auth-card {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0;
+    max-width: none;
+    width: auto;
+}
+.lc-auth-2026 .lc-auth-subtitle { all: revert; }
+.lc-auth-2026 .lc-auth-subtitle {
+    color: var(--a26-muted);
+    font-family: var(--a26-mono);
+    font-size: 12.5px;
+    text-align: left;
+    margin: 0 0 4px;
+    font-style: italic;
+}
+.lc-auth-2026 .lc-auth-subtitle::before {
+    content: "// ";
+    color: var(--a26-syn-com);
+    font-style: normal;
+}
