@@ -67,7 +67,11 @@ struct JudgeDeps {
     std::unique_ptr<judge::JudgeScheduler> scheduler;
     std::unique_ptr<judge::JudgeNotifier>  notifier;
 };
-JudgeDeps build_judge_deps(const JudgeConfig& cfg);
+// v1.2.50: takes the db_pool so the scheduler can be started
+// here (pre-v1.2.50 the scheduler was constructed with db=nullptr
+// and never started, so submissions got 503 "judge queue is full").
+JudgeDeps build_judge_deps(const JudgeConfig& cfg,
+                           ConnectionPool*   db);
 
 // Returns a HealthService with probes wired against the supplied
 // deps. db_pool may be null (probe skipped); docker_client may be

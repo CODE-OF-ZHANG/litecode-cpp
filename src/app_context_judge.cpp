@@ -14,13 +14,16 @@
 #include "judge/docker_client.h"
 #include "judge/judge_notifier.h"
 #include "judge/judge_scheduler.h"
+
+#include <filesystem>
 #include "judge/warm_pool.h"
 
 #include <iostream>
 
 namespace litecode {
 
-JudgeDeps build_judge_deps(const JudgeConfig& cfg) {
+JudgeDeps build_judge_deps(const JudgeConfig& cfg,
+                           ConnectionPool*   db) {
     JudgeDeps out;
 
     // Docker socket client — nullptr when DOCKER_SOCKET_URL is empty
@@ -46,19 +49,40 @@ JudgeDeps build_judge_deps(const JudgeConfig& cfg) {
     }
 
     // Scheduler — always constructed; worker is no-op when
-    // docker_client is null.
+    // docker_client is null. The db_pool is passed in from main
+    // (after build_db_deps) so the scheduler's `start()` succeeds —
+    // start() returns false when db_ is null (judge_scheduler.h:392)
+    // and submissions then fail with "judge queue is full" because
+    // running_.load() == false.
     {
-        auto sched_cfg = judge::make_default_scheduler_config(cfg);
+        // v1.2.50: pass cfg.task_dir_parent explicitly so the scheduler
+        // can stage task.json on a host-visible shared volume
+        // (see docker-compose judge-tmp mount). Without this, the
+        // bind-mount source path lives inside the web container's
+        // /tmp and the host docker daemon can't see it.
+        auto sched_cfg = judge::make_default_scheduler_config(
+            cfg, std::filesystem::path(cfg.task_dir_parent));
         out.scheduler = std::make_unique<judge::JudgeScheduler>(
             out.docker_client.get(),
             out.warm_pool.get(),
-            /*db=*/nullptr,                       // wired by main after build_db_deps
+            db,                                    // wired here (was nullptr pre-v1.2.50)
             std::move(sched_cfg));
     }
 
     // SSE notifier + scheduler wiring.
     out.notifier = std::make_unique<judge::JudgeNotifier>();
     out.scheduler->set_notifier(out.notifier.get());
+
+    // v1.2.50: start the worker pool here so submissions can be
+    // enqueued. Pre-v1.2.50 this call was missing and the
+    // scheduler stayed in the un-started state — submissions got
+    // 503 "judge queue is full" because running_.load() == false.
+    if (out.scheduler) {
+        if (!out.scheduler->start()) {
+            std::cerr << "[boot] WARN: judge_scheduler start failed"
+                      << std::endl;
+        }
+    }
 
     return out;
 }

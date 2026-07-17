@@ -32,6 +32,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -93,6 +94,26 @@ struct JudgeConfig {
     std::string judge_image = "litecode-judge:latest";
     std::string network_mode = "none";       // SPEC §7.3 — full network isolation
     std::string pids_limit = "50";           // SPEC §7.3
+    std::filesystem::path task_dir_parent;   // v1.2.50: where task.json is
+                                             // staged inside the web container
+                                             // (must be a path the same docker
+                                             //  volume is mounted at, otherwise
+                                             //  the judge container can't see
+                                             //  the file). When empty the
+                                             //  scheduler falls back to
+                                             //  std::filesystem::temp_directory_path().
+    std::string            task_volume_name; // v1.2.50: docker named-volume name
+                                             // that BOTH the web container's
+                                             // task_dir_parent mount AND the
+                                             // judge container's task.json mount
+                                             // resolve to. Lets the judge
+                                             // container read task.json from
+                                             // the same backing storage without
+                                             // any host-path translation
+                                             // (works on Docker Desktop too).
+                                             // When empty the scheduler falls
+                                             // back to the bind-mount path
+                                             // (legacy / Linux-host dev).
 
     // Compile flags (SPEC §7.1)
     std::string cpp_compile_flags =
@@ -531,6 +552,23 @@ inline AppConfig load_config(const std::string& env_file_path = ".env",
     cfg.judge.max_queue_size =
         detail::getenv_int_or<int>("JUDGE_MAX_QUEUE_SIZE",
                                    cfg.judge.max_queue_size);
+    // v1.2.50: optional override for the tempdir where task.json is
+    // staged. Must be a directory inside the same docker volume that
+    // the judge container will mount to read it back (use the
+    // shared named volume in docker-compose). When empty the
+    // scheduler falls back to std::filesystem::temp_directory_path().
+    {
+        std::string tdp = detail::getenv_or("JUDGE_TASK_DIR_PARENT", "");
+        if (!tdp.empty()) cfg.judge.task_dir_parent = std::filesystem::path(tdp);
+    }
+    // v1.2.50: docker named-volume name that BOTH the web container's
+    // task_dir_parent mount and the judge container's task.json mount
+    // resolve to. Lets the judge container read task.json from the
+    // same backing storage without any host-path translation. Default
+    // empty → scheduler uses a bind mount (legacy / Linux-host dev).
+    cfg.judge.task_volume_name =
+        detail::getenv_or("JUDGE_TASK_VOLUME_NAME",
+                           cfg.judge.task_volume_name);
     cfg.judge.output_limit_bytes =
         detail::getenv_int_or<int>("JUDGE_OUTPUT_LIMIT_BYTES",
                                    cfg.judge.output_limit_bytes);

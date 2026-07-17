@@ -287,6 +287,16 @@ struct JudgeSchedulerConfig {
     // inside it for its task.json. Defaults to std::filesystem::temp_directory_path().
     // Tests override this to keep tmp directories out of /tmp.
     std::filesystem::path task_dir_parent;
+
+    // v1.2.50: docker named-volume name that BOTH the web
+    // container's task_dir_parent mount AND the judge container's
+    // task.json mount resolve to. When non-empty, the judge
+    // container is created with a `"Type": "volume"` mount instead
+    // of a bind mount — the named volume's backing dir lives in the
+    // docker daemon's storage area so it's reachable on Docker
+    // Desktop too (where bind-mount source paths break across the
+    // host-VM boundary). When empty, legacy bind-mount behavior.
+    std::string task_volume_name;
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -646,8 +656,15 @@ private:
         std::filesystem::path task_file;
         try {
             task_dir = make_task_dir(task.submission_id);
+            try { LOG_INFO("judge_scheduler: task_dir created",
+                           {{"submission_id", std::to_string(task.submission_id)},
+                            {"task_dir",      task_dir.string()}}); } catch (...) {}
             task_file = task_dir / "task.json";
             write_task_json(task_file, task);
+            try { LOG_INFO("judge_scheduler: task.json written",
+                           {{"submission_id", std::to_string(task.submission_id)},
+                            {"task_file",     task_file.string()},
+                            {"size",          std::to_string(std::filesystem::file_size(task_file))}}); } catch (...) {}
         } catch (const std::exception& e) {
             try { LOG_ERROR("judge_scheduler: task.json write failed",
                             {{"submission_id", std::to_string(task.submission_id)},
@@ -684,13 +701,20 @@ private:
             }
         }
 
-        // 4. Create per-task container with bind mount + JUDGE_TASK_FILE env.
+        // 4. Create per-task container with task.json mount + JUDGE_TASK_FILE env.
+        //    v1.2.50: when cfg_.task_volume_name is set, mount a NAMED
+        //    VOLUME rather than bind-mounting task_file. Both the web
+        //    container and the judge container see the same backing
+        //    storage of the named volume, regardless of host OS
+        //    filesystem quirks (Docker Desktop host-VM boundary
+        //    included). Empty task_volume_name → fall back to legacy
+        //    bind mount (keeps Linux-host dev / lab setups working).
         std::string cid;
         try {
             docker::CreateOptions opts;
             opts.image        = cfg_.judge_image;
             opts.command      = {"/usr/local/bin/judge.sh"};
-            opts.env          = {"JUDGE_TASK_FILE=/tmp/task.json",
+            opts.env          = {"JUDGE_TASK_FILE=" + task_file.string(),
                                   "JUDGE_HOME=/judge",
                                   "JUDGE_TMP=/tmp/judge"};
             opts.network_mode = cfg_.network_mode;
@@ -699,12 +723,47 @@ private:
             opts.cpus         = 0.0;             // rely on docker wait timeout for the wall clock
             opts.pids_limit   = 50;
             opts.security_opt = {"no-new-privileges:true"};
-            opts.tmpfs        = { {"/tmp", "size=64m,mode=1777"} };
+            // tmpfs mounts for the per-task container:
+            //   /tmp   — judge.sh mktemp dir, compile stderr file,
+            //            per-case stdin files, JSONL of case_results
+            //   /judge — judge.sh stages solution.cpp here, then
+            //            g++ writes the compiled `solution` binary
+            //            here. /judge is WORKDIR. The per-task
+            //            container's --read-only rootfs blocks the
+            //            printf at judge.sh:262 otherwise (returns
+            //            shell exit 1 with no JSON stdout → SE).
+            //
+            // Both mounts MUST carry `exec` because Docker's tmpfs
+            // default is noexec. With noexec, `[ -x /judge/solution ]`
+            // returns false even when the binary is built fine —
+            // judge.sh then exits "compile returned 0 but binary
+            // missing" (also SE). (Hit + diagnosed v1.2.50.)
+            opts.tmpfs        = { {"/tmp",  "size=64m,mode=1777,exec"},
+                                   {"/judge","size=64m,mode=1777,exec"} };
             opts.user         = "judgeuser";
             opts.working_dir  = "/judge";
-            opts.mounts = { docker::BindMount{
-                task_file.string(), "/tmp/task.json",
-                /*read_only=*/true } };
+            if (!cfg_.task_volume_name.empty()) {
+                // Named-volume path — mount the same volume web writes
+                // to at the SAME base path the worker stages task.json
+                // at. Both the web container and the per-task judge
+                // container mount "task-volume" at /tmp/litecode-judge,
+                // then web writes /tmp/litecode-judge/<subdir>/task.json
+                // and the judge reads /tmp/litecode-judge/<subdir>/task.json.
+                // The named volume has no separate "host source" — its
+                // backing dir lives in /var/lib/docker/volumes so the
+                // same path resolves on both sides of the docker-proxy
+                // boundary, including Docker Desktop Windows/macOS where
+                // a bind mount would be invisible to the host VM.
+                opts.mounts = { docker::Mount::volume_mount(
+                    cfg_.task_volume_name,
+                    "/tmp/litecode-judge",
+                    /*read_only=*/true) };
+            } else {
+                opts.mounts = { docker::Mount::bind_mount(
+                    task_file.string(),
+                    "/tmp/task.json",
+                    /*read_only=*/true) };
+            }
 
             auto cr = client_->create(opts);
             if (cr.id.empty()) {
@@ -764,7 +823,7 @@ private:
         try {
             logs = client_->logs(cid, /*stdout=*/true, /*stderr=*/false);
         } catch (const std::exception& e) {
-            try { LOG_WARN("judge_scheduler: docker logs failed",
+            try { LOG_WARN("judge_scheduler: docker logs (stdout) failed",
                           {{"submission_id", std::to_string(task.submission_id)},
                            {"error",         e.what()}}); } catch (...) {}
             logs.clear();
@@ -1098,6 +1157,7 @@ inline JudgeSchedulerConfig make_default_scheduler_config(
     c.judge_image                 = jc.judge_image;
     c.network_mode                = jc.network_mode;
     c.task_dir_parent             = std::move(task_dir_parent);
+    c.task_volume_name            = jc.task_volume_name;
     return c;
 }
 

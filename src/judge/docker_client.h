@@ -135,7 +135,7 @@ private:
                                      const std::string& body) {
         std::ostringstream os;
         os << "docker http " << status << " on " << url
-           << " (body=" << body.size() << " bytes)";
+           << " (body=" << body.size() << " bytes): " << body;
         return os.str();
     }
 
@@ -169,10 +169,17 @@ struct Endpoint {
     std::int32_t  timeout_ms = 30'000;      // per-call default
 
     // Render as `http://host:port` form that httplib::Client
-    // (scheme_host_port ctor) and curl accept verbatim.
+    // (scheme_host_port ctor) and curl accept verbatim. cpp-httplib
+    // v0.18.3 rejects `tcp://` outright with "'tcp' scheme is not
+    // supported" (httplib.h:9674) — but our proxy speaks plain
+    // HTTP-over-TCP, so we treat the user-facing `tcp://` as a
+    // synonym for `http://`. The `scheme` field is kept as-typed
+    // for documentation / future TLS use; only the rendered URL
+    // is normalized.
     std::string to_url() const {
         std::ostringstream os;
-        os << scheme << "://" << host << ":" << port;
+        os << (scheme == "tcp" ? "http" : scheme)
+           << "://" << host << ":" << port;
         return os.str();
     }
 
@@ -321,17 +328,151 @@ inline std::string build_query(
     return out;
 }
 
+// Strip the 8-byte Docker log frame headers from a /containers/:id/logs
+// response, keeping only the bytes that belong to the streams the
+// caller asked for (stdout / stderr / both).
+//
+// Format (Docker Engine v1.40+, multiplexed):
+//   For each frame:
+//     byte 0    : STREAM_TYPE  — 0 stdin (unused), 1 stdout, 2 stderr
+//     bytes 1-3 : 0 (reserved)
+//     bytes 4-7 : SIZE (uint32 big-endian)  — payload length
+//     bytes 8..8+SIZE : payload
+// The total body can chain multiple frames; we walk until we can't
+// read a full 8-byte header. Frames whose stream is excluded are
+// dropped (their `SIZE` payload is consumed to keep the walker in
+// sync with the actual byte offsets).
+//
+// If the body doesn't start with a plausible stream-type byte
+// (< 3), or `SIZE` would run past the end of the buffer, we assume
+// the response is NOT multiplexed (some daemon / client combos
+// return raw bytes when only one stream is requested) and return
+// the body verbatim.
+//
+// v1.2.50: added after discovering the docker-proxy forwards
+// multiplexed bytes from the engine, breaking parse_judge_result_json
+// (the 8-byte prefix isn't '{', so every judge was marked SE with
+// "no parseable result JSON").
+inline std::string strip_docker_log_frames(const std::string& body,
+                                           bool want_stdout,
+                                           bool want_stderr) {
+    if (body.size() < 8) return body;
+    unsigned char first = static_cast<unsigned char>(body[0]);
+    if (first > 2) {
+        // Not multiplexed — return verbatim.
+        return body;
+    }
+    std::string out;
+    out.reserve(body.size());
+    std::size_t pos = 0;
+    while (pos + 8 <= body.size()) {
+        const unsigned char* p =
+            reinterpret_cast<const unsigned char*>(body.data() + pos);
+        unsigned char stream = p[0];
+        std::uint32_t size   = (static_cast<std::uint32_t>(p[4]) << 24) |
+                                (static_cast<std::uint32_t>(p[5]) << 16) |
+                                (static_cast<std::uint32_t>(p[6]) <<  8) |
+                                (static_cast<std::uint32_t>(p[7])      );
+        if (pos + 8 + size > body.size()) {
+            // Trailing partial frame — treat the rest as raw and
+            // stop walking. Better to surface partial output than
+            // to drop it.
+            out.append(body, pos, body.size() - pos);
+            break;
+        }
+        bool keep = (stream == 1 && want_stdout) ||
+                    (stream == 2 && want_stderr) ||
+                    (stream == 0);  // stdin never appears post-start
+        if (keep) {
+            out.append(body, pos + 8, size);
+        }
+        pos += 8 + size;
+    }
+    // If we walked the entire buffer cleanly, `out` is the cleaned
+    // body. If we broke out early, `out` already has the trailing
+    // partial. Either way we return it.
+    return out;
+}
+
 } // namespace detail
 
 // ────────────────────────────────────────────────────────────────────────────
 //  Options / result types
 // ────────────────────────────────────────────────────────────────────────────
 
+// Bind mount (host path → container path). Works in dev / non-Docker-
+// Desktop hosts where the host filesystem is shared with the docker
+// daemon. NOT portable to Docker Desktop Windows / macOS — see
+// v1.2.50 known-issues for why bind mounts break in those setups.
 struct BindMount {
     std::string host_path;       // absolute host path
     std::string container_path;  // absolute container path
     bool        read_only = true;
 };
+
+// Named-volume mount. The volume name is a docker-managed identifier
+// (e.g. "litecode-judge-tmp"). At container-create time the daemon
+// resolves the name to its internal storage path and mounts the SAME
+// storage to any container that references that name. This is the
+// only mount type that survives Docker Desktop's host-VM boundary:
+// the named volume lives inside the VM's docker-storage area, so the
+// web process (writing via the named-volume mount at /tmp/litecode-
+// judge) and the judge container (referencing Source="…judge-tmp")
+// resolve to the same backing directory without any host-path
+// translation.
+//
+// The first mount of an unknown volume name auto-creates it.
+struct VolumeMount {
+    std::string volume_name;     // docker volume name
+    std::string container_path;  // absolute container path
+    bool        read_only = false;
+};
+
+// Discriminated mount — used as the element type of
+// CreateOptions::mounts. Build with docker::bind(...) /
+// docker::volume(...); the rest of the call site reads
+// mounts[i].kind() to route to the right Engine-API fields.
+struct Mount {
+    enum class Kind { Bind, Volume };
+    Kind        kind = Kind::Bind;
+    BindMount   bind;            // valid when kind == Bind
+    VolumeMount volume;          // valid when kind == Volume
+
+    static Mount bind_mount(std::string host_path,
+                            std::string container_path,
+                            bool read_only = true) {
+        Mount m;
+        m.kind = Kind::Bind;
+        m.bind.host_path      = std::move(host_path);
+        m.bind.container_path = std::move(container_path);
+        m.bind.read_only      = read_only;
+        return m;
+    }
+    static Mount volume_mount(std::string volume_name,
+                              std::string container_path,
+                              bool read_only = false) {
+        Mount m;
+        m.kind = Kind::Volume;
+        m.volume.volume_name    = std::move(volume_name);
+        m.volume.container_path = std::move(container_path);
+        m.volume.read_only      = read_only;
+        return m;
+    }
+    Kind kind_of() const noexcept { return kind; }
+};
+
+// Keep the bare BindMount constructor callable for the call sites
+// that haven't migrated yet — builds a Mount::Bind under the hood.
+inline Mount as_mount(BindMount b) {
+    return Mount::bind_mount(std::move(b.host_path),
+                             std::move(b.container_path),
+                             b.read_only);
+}
+inline Mount as_mount(VolumeMount v) {
+    return Mount::volume_mount(std::move(v.volume_name),
+                               std::move(v.container_path),
+                               v.read_only);
+}
 
 struct CreateOptions {
     std::string              image;       // required
@@ -350,7 +491,7 @@ struct CreateOptions {
     // ── security / tmpfs / mounts ──
     std::vector<std::string> security_opt;
     std::map<std::string, std::string> tmpfs;
-    std::vector<BindMount>   mounts;
+    std::vector<Mount>       mounts;
 };
 
 // Definition of `build_create_body` — HostConfig fields follow the
@@ -411,17 +552,38 @@ inline nlohmann::json build_create_body(const CreateOptions& opts) {
         hc["Tmpfs"] = t;
     }
 
-    // Mounts — only Bind mounts for now. Volume/Named/Tmpfs mounts
-    // have no use in the judge flow, and the proxy blocks them
-    // anyway.
+    // Mounts — Bind (host-path) and Volume (named) supported.
+    // Tmpfs mounts come through `opts.tmpfs` instead, and the proxy
+    // whitelist does not expose Volume-management endpoints — but the
+    // /containers/create body can still declare volume mounts (they
+    // auto-create the volume on first use, by Docker Engine spec).
+    //
+    // v1.2.50: switched the judge from a bind mount to a named
+    // volume. Bind mounts work in dev / Linux hosts where the host
+    // filesystem is the daemon's filesystem; on Docker Desktop
+    // Windows / macOS, the host filesystem is *inside* the VM and the
+    // proxy forwarding the bind source path resolves to a path that
+    // the VM-side daemon can't see. A named volume lives in the
+    // daemon's /var/lib/docker/volumes, so web (writing via the
+    // named-volume mount at /tmp/litecode-judge) and the judge
+    // container (mounting Source="…judge-tmp" at /tmp) share the
+    // same backing directory regardless of where the host's /tmp
+    // actually is.
     if (!opts.mounts.empty()) {
         nlohmann::json mounts = nlohmann::json::array();
         for (const auto& m : opts.mounts) {
             nlohmann::json j;
-            j["Type"]     = "bind";
-            j["Source"]   = m.host_path;
-            j["Target"]   = m.container_path;
-            j["ReadOnly"] = m.read_only;
+            if (m.kind_of() == Mount::Kind::Volume) {
+                j["Type"]     = "volume";
+                j["Source"]   = m.volume.volume_name;
+                j["Target"]   = m.volume.container_path;
+                j["ReadOnly"] = m.volume.read_only;
+            } else {
+                j["Type"]     = "bind";
+                j["Source"]   = m.bind.host_path;
+                j["Target"]   = m.bind.container_path;
+                j["ReadOnly"] = m.bind.read_only;
+            }
             mounts.push_back(j);
         }
         hc["Mounts"] = mounts;
@@ -652,7 +814,30 @@ public:
         try {
             auto r = do_request("GET", path, nullptr,
                                 /*expect_json=*/false);
-            if (r.status == 200) return r.raw;
+            if (r.status == 200) {
+                // v1.2.50: the Docker Engine JSON logs endpoint
+                // returns a MULTIPLEXED stream when stdout/stderr are
+                // both enabled and the container was created without
+                // TTY. Each frame has an 8-byte header:
+                //   byte 0    : STREAM_TYPE (0 stdin, 1 stdout, 2 stderr)
+                //   bytes 1-3 : 0
+                //   bytes 4-7 : SIZE (uint32 big-endian)
+                // followed by SIZE bytes of payload. The judge.sh
+                // output JSON is on stdout (type=1); callers ask for
+                // one stream at a time (stdout XOR stderr), so we
+                // walk the framed bytes and concatenate only the
+                // frames matching the requested stream. Non-framed
+                // responses (some docker versions, or when only
+                // stdout/stderr is requested and the other stream
+                // is empty) bypass the loop and return raw.
+                //
+                // Found and fixed v1.2.50: parse_judge_result_json
+                // walked log lines looking for a leading '{' but the
+                // 8-byte prefix didn't match — every judge was marked
+                // SE ("judge produced no parseable result JSON")
+                // despite stdout containing exactly one JSON line.
+                return detail::strip_docker_log_frames(r.raw, stdout_, stderr_);
+            }
         } catch (const std::exception& e) {
             try {
                 LOG_WARN("docker logs failed",

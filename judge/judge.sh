@@ -199,8 +199,22 @@ for ((i = 0; i < TC_COUNT; i++)); do
     cdir="${TEST_CASES_DIR}/${i}"
     mkdir -p "${cdir}"
     set +e
-    jq -r ".test_cases[${i}].input // \"\""            "${TASK_FILE}" | strip_bom | strip_crlf > "${cdir}/input.txt"
-    jq -r ".test_cases[${i}].expected_output // \"\""   "${TASK_FILE}" | strip_bom | strip_crlf > "${cdir}/expected.txt"
+    # `jq -r` always appends a trailing '\n' to scalar string output.
+    # Without dropping it, expected.txt / input.txt would always carry
+    # one extra newline byte compared to what the user's code wrote to
+    # stdout, making compare_exact return MISMATCH for every test case
+    # (v1.2.50 hit this — every AC submission landed as WA). We use
+    # `printf '%s'` so jq's trailing newline is preserved as part of
+    # the value, then `sed '$ {/^$/d}'` trims exactly one trailing
+    # newline IF (and only if) the file ends with one. Empty strings
+    # (e.g. expected_output for problems with no expected) end up as
+    # truly empty files, which is the desired behavior.
+    jq -r ".test_cases[${i}].input // \"\""            "${TASK_FILE}" \
+        | strip_bom | strip_crlf \
+        | sed -e '$ {/^$/d}' > "${cdir}/input.txt"
+    jq -r ".test_cases[${i}].expected_output // \"\""   "${TASK_FILE}" \
+        | strip_bom | strip_crlf \
+        | sed -e '$ {/^$/d}' > "${cdir}/expected.txt"
     jq -r ".test_cases[${i}].judge_type // \"exact\""  "${TASK_FILE}" > "${cdir}/judge_type"
     jq -r ".test_cases[${i}].float_epsilon // 0.000001" "${TASK_FILE}" > "${cdir}/float_epsilon"
     set -e

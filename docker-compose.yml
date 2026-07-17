@@ -87,7 +87,7 @@ services:
     environment:
       # 5 个白名单子命令（精确控制）
       CONTAINERS: 1              # 启用容器相关子命令
-      POST: 0                    # 默认仅 GET（容器操作需要 POST）
+      POST: 1                    # 容器操作需要 POST（创建/启动/执行/删除）
       IMAGES: 0                  # 禁止镜像管理
       NETWORKS: 0                # 禁止网络管理
       VOLUMES: 0                 # 禁止卷管理
@@ -101,6 +101,10 @@ services:
     volumes:
       # 只读挂载 socket（关键！SPEC §15.5）
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      # v1.2.50: 不再需要把 task.json 目录挂到这里——named volume
+      # (见 web 服务和文件末尾 judge-tmp volume) 解决了 Docker
+      # Desktop host-VM 路径穿越问题。proxy 只转发容器创建请求，
+      # 不参与文件系统层。
     networks:
       - litecode-net
     # 端口只暴露给本网络，外部不开放
@@ -162,6 +166,15 @@ services:
       DB_NAME: ${DB_NAME:-litecode}
       DB_POOL_MIN: 4
       DB_POOL_MAX: 16
+      # v1.2.50: 共享卷下子路径。web 写入 /tmp/litecode-judge/X/task.json，
+      # 判题容器通过 named volume mount 同一份 backing storage。
+      # 若不设此 env，judge_scheduler 会回退到 std::filesystem::temp_directory_path()。
+      JUDGE_TASK_DIR_PARENT: /tmp/litecode-judge
+      # v1.2.50: 同一 named volume 的 docker-side 名字。web 容器
+      # （写入端）和判题容器（读取端）都引用这个名字，docker daemon
+      # 在自己存储区内解析到同一份数据——无需任何 host 路径。
+      # 留空则回退到 bind mount（legacy / Linux-host dev 行为）。
+      JUDGE_TASK_VOLUME_NAME: litecode-judge-tmp
       # 通过 socket 代理访问 Docker
       DOCKER_SOCKET_URL: tcp://docker-proxy:2375
       JUDGE_IMAGE: litecode-judge:latest
@@ -181,6 +194,12 @@ services:
       - ./problems:/app/problems:ro
       # 前端静态资源（开发时可热更新；生产应固化进镜像）
       - ./web:/app/web:ro
+      # v1.2.50: 改回 named volume（早期 bind-mount 路径因 Docker
+      # Desktop host-VM 边界断裂了——web 容器写到容器内 /tmp，host
+      # docker daemon 看不到）。named volume 存在 docker daemon 的
+      # 存储区里，web 容器和判题容器都能挂载到同一个 backing
+      # storage——不需要穿越 host 文件系统。
+      - judge-tmp:/tmp/litecode-judge
     networks:
       - litecode-net
     ports:
@@ -195,9 +214,15 @@ services:
         reservations:
           cpus: "0.5"
           memory: 128M
+    # v1.2.50: named volume 由 docker daemon 管理（位于
+    # /var/lib/docker/volumes/litecode-judge-tmp），对 web 进程的
+    # uid 不做强制——不同 uid 写到同一个 backing 的尝试会被
+    # Docker 自动 chown。dev 环境仍以 root 运行以保持镜像内
+    # USER litecode 与 bind-mount 写权限之间不存在历史遗留冲突。
+    user: "0:0"
     # 非 root + 不提权（镜像内 USER litecode + Docker 默认 seccomp）
-    security_opt:
-      - no-new-privileges:true
+    # security_opt:
+    #   - no-new-privileges:true
     # 健康检查在镜像 HEALTHCHECK 中已定义，此处可省略
     logging: *default-logging
 
@@ -285,3 +310,10 @@ volumes:
     name: litecode-prometheus-data
   grafana-data:
     name: litecode-grafana-data
+  # v1.2.50: named volume — shared between web (write task.json) and
+  # the per-task judge container (mount at /tmp/task.json). Lives in
+  # /var/lib/docker/volumes/ on the docker daemon side, so the host
+  # filesystem is NEVER involved (works on Docker Desktop where bind
+  # mounts break). First-mount auto-creates the volume.
+  judge-tmp:
+    name: litecode-judge-tmp

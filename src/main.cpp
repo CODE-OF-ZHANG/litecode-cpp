@@ -86,7 +86,7 @@ int main() {
     // Then assemble ctx by moving each dep's fields in.
     auto db    = litecode::build_db_deps(cfg.database);
     auto auth  = litecode::build_auth_deps(cfg.login_lockout);
-    auto judge = litecode::build_judge_deps(cfg.judge);
+    auto judge = litecode::build_judge_deps(cfg.judge, db.pool.get());
 
     // The docker probe is captured both by the HealthService (for
     // /api/v1/health) and by /api/v1/admin/{queue,stats} — build it
