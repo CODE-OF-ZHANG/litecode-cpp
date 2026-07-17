@@ -336,9 +336,9 @@ TEST(BuildCreateBody, BindMountsSchema) {
     StdoutSilencer silencer;
     CreateOptions o;
     o.image = "img";
-    o.mounts.push_back({"/host/task.json",
-                        "/judge/task.json",
-                        /*read_only=*/true});
+    o.mounts.push_back(Mount::bind_mount("/host/task.json",
+                                           "/judge/task.json",
+                                           /*read_only=*/true));
     auto b = detail::build_create_body(o);
     ASSERT_TRUE(b["HostConfig"]["Mounts"].is_array());
     ASSERT_EQ(b["HostConfig"]["Mounts"].size(), 1u);
@@ -346,6 +346,116 @@ TEST(BuildCreateBody, BindMountsSchema) {
     EXPECT_EQ(b["HostConfig"]["Mounts"][0]["Source"],   "/host/task.json");
     EXPECT_EQ(b["HostConfig"]["Mounts"][0]["Target"],   "/judge/task.json");
     EXPECT_EQ(b["HostConfig"]["Mounts"][0]["ReadOnly"], true);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// [BuildCreateBody.VolumeMountsSchema]
+// 锁住 Mount::volume_mount 序列化路径 — v1.2.50-b 新增分支，0 覆盖
+// ─────────────────────────────────────────────────────────────────
+TEST(BuildCreateBody, VolumeMountsSchema) {
+    StdoutSilencer silencer;
+    CreateOptions o;
+    o.image = "img";
+    o.mounts.push_back(Mount::volume_mount("judge-tmp", "/tmp/judge"));
+    auto b = detail::build_create_body(o);
+    ASSERT_TRUE(b["HostConfig"]["Mounts"].is_array());
+    ASSERT_EQ(b["HostConfig"]["Mounts"].size(), 1u);
+    EXPECT_EQ(b["HostConfig"]["Mounts"][0]["Type"],     "volume");
+    EXPECT_EQ(b["HostConfig"]["Mounts"][0]["Source"],   "judge-tmp");
+    EXPECT_EQ(b["HostConfig"]["Mounts"][0]["Target"],   "/tmp/judge");
+    EXPECT_EQ(b["HostConfig"]["Mounts"][0]["ReadOnly"], false);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// [BuildCreateBody.MixedBindAndVolume]
+// 一个 Bind + 一个 Volume 在同一 Mounts 数组，按各自 schema 序列化
+// ─────────────────────────────────────────────────────────────────
+TEST(BuildCreateBody, MixedBindAndVolume) {
+    StdoutSilencer silencer;
+    CreateOptions o;
+    o.image = "img";
+    o.mounts.push_back(Mount::bind_mount("/host/x.json", "/tmp/task.json"));
+    o.mounts.push_back(Mount::volume_mount("judge-tmp", "/tmp/judge"));
+    auto b = detail::build_create_body(o);
+    ASSERT_TRUE(b["HostConfig"]["Mounts"].is_array());
+    ASSERT_EQ(b["HostConfig"]["Mounts"].size(), 2u);
+    EXPECT_EQ(b["HostConfig"]["Mounts"][0]["Type"],   "bind");
+    EXPECT_EQ(b["HostConfig"]["Mounts"][0]["Source"], "/host/x.json");
+    EXPECT_EQ(b["HostConfig"]["Mounts"][1]["Type"],   "volume");
+    EXPECT_EQ(b["HostConfig"]["Mounts"][1]["Source"], "judge-tmp");
+}
+
+// ─────────────────────────────────────────────────────────────────
+// [StripDockerLogFrames.MultiplexedStdout]
+// 锁住 8-byte frame 格式：byte0=stream (1=stdout / 2=stderr),
+// byte4-7=BE uint32 size, payload follows. v1.2.50-b 加的硬 fix。
+// ─────────────────────────────────────────────────────────────────
+TEST(StripDockerLogFrames, MultiplexedStdout) {
+    using namespace litecode::docker::detail;
+    // stream=1 (stdout), size=5, payload="hello"
+    std::string body;
+    body.push_back('\x01'); body.push_back('\x00');
+    body.push_back('\x00'); body.push_back('\x00');
+    body.push_back('\x00'); body.push_back('\x00');
+    body.push_back('\x00'); body.push_back('\x05');
+    body.append("hello");
+    auto got = strip_docker_log_frames(body, /*want_stdout=*/true,
+                                              /*want_stderr=*/false);
+    EXPECT_EQ(got, "hello");
+}
+
+// ─────────────────────────────────────────────────────────────────
+// [StripDockerLogFrames.MixedStdoutAndStderr]
+// 两帧（stdout + stderr），分别提取并拼接
+// ─────────────────────────────────────────────────────────────────
+TEST(StripDockerLogFrames, MixedStdoutAndStderr) {
+    using namespace litecode::docker::detail;
+    std::string body;
+    // frame1: stream=1 size=3 "abc"
+    body.push_back('\x01'); body.push_back('\x00');
+    body.push_back('\x00'); body.push_back('\x00');
+    body.push_back('\x00'); body.push_back('\x00');
+    body.push_back('\x00'); body.push_back('\x03');
+    body.append("abc");
+    // frame2: stream=2 size=4 "err!"
+    body.push_back('\x02'); body.push_back('\x00');
+    body.push_back('\x00'); body.push_back('\x00');
+    body.push_back('\x00'); body.push_back('\x00');
+    body.push_back('\x00'); body.push_back('\x04');
+    body.append("err!");
+    auto out_only = strip_docker_log_frames(body, true, false);
+    auto err_only = strip_docker_log_frames(body, false, true);
+    auto both     = strip_docker_log_frames(body, true, true);
+    EXPECT_EQ(out_only, "abc");
+    EXPECT_EQ(err_only, "err!");
+    EXPECT_EQ(both,     "abcerr!");
+}
+
+// ─────────────────────────────────────────────────────────────────
+// [StripDockerLogFrames.NonMultiplexedPassthrough]
+// 首字节 > 2 的 raw 文本应原样返回（部分 daemon 在只请求单 stream
+// 时返回非 multiplexed 字节）
+// ─────────────────────────────────────────────────────────────────
+TEST(StripDockerLogFrames, NonMultiplexedPassthrough) {
+    using namespace litecode::docker::detail;
+    std::string body = "raw text without frames";
+    EXPECT_EQ(strip_docker_log_frames(body, true, true), body);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// [EndpointToUrl.NormalizesTcpToHttp]
+// docker engine 在 Linux 容器内默认给 tcp://host:port，
+// 我们要走 http 协议访问，所以 Endpoint::to_url 需归一化。
+// ─────────────────────────────────────────────────────────────────
+TEST(EndpointToUrl, NormalizesTcpToHttp) {
+    using litecode::docker::Endpoint;
+    Endpoint tcp_ep{"tcp",  "h", 1234};
+    Endpoint http_ep{"http", "h", 1234};
+    Endpoint https_ep{"https", "h", 443};
+    EXPECT_EQ(tcp_ep.to_url(),  "http://h:1234");
+    EXPECT_EQ(http_ep.to_url(), "http://h:1234");
+    // 非常规 scheme 原样保留
+    EXPECT_EQ(https_ep.to_url(), "https://h:443");
 }
 
 TEST(BuildCreateBody, SecurityOpt) {
@@ -766,9 +876,9 @@ TEST(DockerClientIntegration, CreateRoundTripsIdAndWarnings) {
     o.cpus       = 0.5;
     o.env        = {"FOO=bar"};
     o.tmpfs      = { {"/tmp", "size=32m"} };
-    o.mounts.push_back({"/host/task.json",
-                        "/judge/task.json",
-                        /*read_only=*/true});
+    o.mounts.push_back(Mount::bind_mount("/host/task.json",
+                                           "/judge/task.json",
+                                           /*read_only=*/true));
     o.network_mode = "none";
     o.read_only    = true;
     o.pids_limit   = 32;

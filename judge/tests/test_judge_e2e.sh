@@ -165,6 +165,25 @@ int main() { std::cout << "hello\n"; return 0; }
 fi
 
 # ─────────────────────────────────────────────────────────────
+# [AC] empty expected_output regression
+# 锁定 judge.sh:212-217 的 `sed -e '$ {/^$/d}'` 行为：
+# 当 expected_output 是空字符串时，jq -r 会输出 "\n"（行终止符），
+# buggy 代码会让 expected.txt = "\n" (1 byte) vs 沉默 solution = ""
+# → cmp 不等 → WA；
+# fixed 代码经 sed 删空行 → expected.txt = "" (0 byte) → AC。
+# (实测: 在 alpine + jq 1.6 下，jq -r '""' 输出 1 byte "\n"，
+#  sed '$ {/^$/d}' 把这唯一一行空行删掉 → 0 bytes。)
+# ─────────────────────────────────────────────────────────────
+if guard_or_skip "AC-empty-expected"; then
+    code='#include <iostream>
+int main() { return 0; }'
+    cases='[{"input":"","expected_output":"","judge_type":"exact","float_epsilon":1e-6}]'
+    make_task "${code}" "${cases}"
+    out="$(run_judge "${TEST_ROOT}/task.json")"
+    expect_status "$(get_status "${out}")" "ac" "AC with empty expected_output (jq-empty-line regression)"
+fi
+
+# ─────────────────────────────────────────────────────────────
 # [WA] 输出与预期不匹配
 # ─────────────────────────────────────────────────────────────
 if guard_or_skip "WA"; then
@@ -266,6 +285,19 @@ int main() {
     make_task "${code}" "${cases}" 1000 128 10000 30000 1048576
     out="$(run_judge "${TEST_ROOT}/task.json")"
     expect_status "$(get_status "${out}")" "ole" "OLE > 1MB"
+fi
+
+# ─────────────────────────────────────────────────────────────
+# [MLE] 申请超过 memory_limit_mb 的大数组 → kill by OOM
+# ─────────────────────────────────────────────────────────────
+if guard_or_skip "MLE"; then
+    code='#include <vector>
+int main() { std::vector<int> v(200 * 1024 * 1024 / 4, 0); return (int)v.size(); }'
+    cases='[{"input":"","expected_output":"0","judge_type":"exact","float_epsilon":1e-6}]'
+    # args: tlm mlm ctm rht olb — 1000ms / 64MB / 10000ms / 30000ms / 16MB
+    make_task "${code}" "${cases}" 1000 64 10000 30000 16777216
+    out="$(run_judge "${TEST_ROOT}/task.json")"
+    expect_status "$(get_status "${out}")" "mle" "MLE 200MB > 64MB limit"
 fi
 
 # ─────────────────────────────────────────────────────────────

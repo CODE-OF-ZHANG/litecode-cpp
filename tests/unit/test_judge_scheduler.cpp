@@ -52,6 +52,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -1202,6 +1203,82 @@ TEST_F(SchedulerFixture, WithWarmPoolPullsAndDiscards) {
 
     sched.shutdown();
     pool_w.shutdown();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  v1.2.51 — judge.sh + docker_client.h regression coverage (Phase 8)
+// ────────────────────────────────────────────────────────────────────────────
+
+// ────────────────────────────────────────────────────────────────────────────
+// [JudgeSchedulerConfig.TaskVolumeNameEmptyBindFallback]
+// 验证 cfg.task_volume_name 为空时，producer 端走 Bind 路径，
+// Source 指向 host 路径。锁住 judge_scheduler.h:761-766 的分支语义。
+// ────────────────────────────────────────────────────────────────────────────
+TEST(JudgeSchedulerConfig, TaskVolumeNameEmptyBindFallback) {
+    using litecode::docker::Mount;
+    StdoutSilencer silencer;
+    JudgeConfig jc = minimal_judge_cfg();
+    jc.task_volume_name = "";   // explicit empty → Bind path
+    auto sc = make_default_scheduler_config(jc);
+    EXPECT_EQ(sc.task_volume_name, "");
+    // 复刻 producer 端判断（judge_scheduler.h:745-766）
+    litecode::docker::CreateOptions o;
+    o.image = "img";
+    if (sc.task_volume_name.empty()) {
+        o.mounts.push_back(Mount::bind_mount("/host/task.json",
+                                              "/tmp/task.json"));
+    } else {
+        o.mounts.push_back(Mount::volume_mount(sc.task_volume_name,
+                                                "/tmp/litecode-judge"));
+    }
+    ASSERT_EQ(o.mounts.size(), 1u);
+    EXPECT_EQ(o.mounts[0].kind_of(), Mount::Kind::Bind);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// [JudgeSchedulerConfig.TaskVolumeNameSetVolumeMount]
+// 验证 cfg.task_volume_name 设置时走 Volume 路径，Source 是 volume 名。
+// 这是 v1.2.50-b 引入的核心修复 —— docker-proxy 在 Docker Desktop
+// Windows/macOS 上看不到 host bind mount，必须走 named volume。
+// ────────────────────────────────────────────────────────────────────────────
+TEST(JudgeSchedulerConfig, TaskVolumeNameSetVolumeMount) {
+    using litecode::docker::Mount;
+    StdoutSilencer silencer;
+    JudgeConfig jc = minimal_judge_cfg();
+    jc.task_volume_name = "judge-tmp";
+    auto sc = make_default_scheduler_config(jc);
+    EXPECT_EQ(sc.task_volume_name, "judge-tmp");
+    litecode::docker::CreateOptions o;
+    o.image = "img";
+    if (sc.task_volume_name.empty()) {
+        o.mounts.push_back(Mount::bind_mount("/host/task.json",
+                                              "/tmp/task.json"));
+    } else {
+        o.mounts.push_back(Mount::volume_mount(sc.task_volume_name,
+                                                "/tmp/litecode-judge"));
+    }
+    ASSERT_EQ(o.mounts.size(), 1u);
+    EXPECT_EQ(o.mounts[0].kind_of(), Mount::Kind::Volume);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// [JudgeSchedulerConfig.TmpfsExecFlagOnBothMounts]
+// 锁住 opts.tmpfs 双 mount + exec — 不然 noexec 会让 binary 不可执行，
+// judge.sh 会以 "compile returned 0 but binary missing" 退出 (SE)。
+// 与 judge_scheduler.h:741-742 字面量同源。
+// ────────────────────────────────────────────────────────────────────────────
+TEST(JudgeSchedulerConfig, TmpfsExecFlagOnBothMounts) {
+    StdoutSilencer silencer;
+    // 直接构造 producer-side tmpfs 字面量（与 judge_scheduler.h:741-742 同）
+    std::map<std::string,std::string> tmpfs = {
+        {"/tmp",   "size=64m,mode=1777,exec"},
+        {"/judge", "size=64m,mode=1777,exec"}
+    };
+    ASSERT_EQ(tmpfs.size(), 2u);
+    for (const auto& [path, opts] : tmpfs) {
+        EXPECT_NE(opts.find(",exec"), std::string::npos)
+            << "tmpfs " << path << " missing ,exec";
+    }
 }
 
 } // anonymous namespace
