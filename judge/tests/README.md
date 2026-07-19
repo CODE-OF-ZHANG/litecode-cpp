@@ -5,12 +5,17 @@
 | 文件 | 范围 | 依赖 |
 |------|------|------|
 | `test_common_unit.sh` | `lib/common.sh` / `cgroup.sh` / `compare.sh` 纯 bash 单元测试 | bash + jq |
-| `test_judge_e2e.sh` | `judge.sh` 端到端：13 个状态分支（AC / AC-empty-expected / WA / CE-syntax / CE-bomb / TLE / RE / OLE / MLE / ignore_trailing / float_eps / SJ / SE-missing / CRLF-BOM） | bash + jq + docker + host g++ (GNU ld) |
+| `test_judge_e2e.sh` | `judge.sh` 端到端：13 个状态分支（AC / AC-empty-expected / WA / CE-syntax / CE-bomb / TLE / RE / OLE / MLE / ignore_trailing / float_eps / SJ / SE-missing / CRLF-BOM） | bash + jq + docker + host g++ (GNU ld) + docker-image 内置 gawk |
 
 > **v1.2.52 image note**: e2e relies on `litecode-judge:test` 镜像包含 v1.2.50-b 的
 > `sed -e '$ {/^$/d}'` 修复。改完 `judge.sh` 后必须 `docker build --no-cache -t
 > litecode-judge:test judge/`，否则镜像里是 stale 旧版，所有 AC case 都会变 WA
 > （expected.txt 比 output.txt 多 1 byte，因为 sed 没 strip trailing empty line）。
+>
+> **v1.2.53 image note**: 镜像现在带 `gawk`，且 `update-alternatives --set awk /usr/bin/gawk`
+> 把 `/usr/bin/awk` 从 mawk 切到 GNU Awk（ubuntu:22.04 默认是 mawk，gawk 不自动接管）。
+> 任何动 `judge/Dockerfile` 的操作都必须 `docker build --no-cache -t litecode-judge:test judge/`，否则
+> `compare_float_eps` 多维数组路径会回到 mawk，导致 float_eps case WA。
 
 ## 跑命令
 

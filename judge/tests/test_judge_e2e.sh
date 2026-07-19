@@ -330,23 +330,16 @@ fi
 
 # ─────────────────────────────────────────────────────────────
 # [float_eps] 容差内
+# 锁定 compare.sh::compare_float_eps 用 gawk 多维数组 a_tok[lnA][i] 的能力。
+# 镜像已自带 gawk（v1.2.53），ubuntu:22.04 显式 update-alternatives --set。
 # ─────────────────────────────────────────────────────────────
-# [float_eps] 容差内
-# v1.2.52 known-issue: compare.sh::compare_float_eps 用 gawk 多维数组
-# (a_tok[lnA][i])，busybox mawk 不支持。容器默认只有 mawk → 解析失败
-# → 永远 WA。等 Dockerfile 加 gawk 后去掉 skip 即可。
-# ─────────────────────────────────────────────────────────────
-if guard_or_skip "float_eps (needs gawk, see compare.sh:90)"; then
-    if ! docker run --rm --entrypoint=/bin/sh "${JUDGE_IMAGE}" -c 'command -v gawk' >/dev/null 2>&1; then
-        skip "[float_eps] gawk not in ${JUDGE_IMAGE}; mawk fails on a_tok[ln][i]"
-    else
-        code='#include <cstdio>
+if guard_or_skip "float_eps"; then
+    code='#include <cstdio>
 int main(){ printf("3.14159 3.141593\n"); return 0; }'
-        cases='[{"input":"","expected_output":"3.14159 3.141593","judge_type":"float_eps","float_epsilon":1e-6}]'
-        make_task "${code}" "${cases}"
-        out="$(run_judge "${TEST_ROOT}/task.json")"
-        expect_status "$(get_status "${out}")" "ac" "float_eps within tolerance"
-    fi
+    cases='[{"input":"","expected_output":"3.14159 3.141593","judge_type":"float_eps","float_epsilon":1e-6}]'
+    make_task "${code}" "${cases}"
+    out="$(run_judge "${TEST_ROOT}/task.json")"
+    expect_status "$(get_status "${out}")" "ac" "float_eps within tolerance"
 fi
 
 # ─────────────────────────────────────────────────────────────

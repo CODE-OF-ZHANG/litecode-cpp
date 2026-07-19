@@ -32,9 +32,13 @@ ENV DEBIAN_FRONTEND=noninteractive
 #   - jq                  解析任务 JSON（SPEC §7.1 的输入契约）
 #   - libc6-dev           <stdio.h>/<stdlib.h> 等运行时头文件
 #   - ca-certificates     升级证书（防御供应链）
+#   - gawk                浮点 epsilon 比对（compare.sh:66-124 用多维数组
+#                         a_tok[lnA][i]；busybox mawk 不支持多维数组）。
+#                         ubuntu:22.04 默认 /usr/bin/awk 指向 mawk，仅装包
+#                         不会改 update-alternatives 默认 → 显式 set。
 # --
-# SPEC §7.4 CE/RE 截断用 head/tail；浮点比对用 awk；其它 GNU 用户态工具
-# 已通过 coreutils 提供，不再多装包以缩小镜像与攻击面。
+# SPEC §7.4 CE/RE 截断用 head/tail；浮点比对用 awk（必须 gawk）；其它 GNU
+# 用户态工具已通过 coreutils 提供，不再多装包以缩小镜像与攻击面。
 RUN apt-get update && apt-get install -y --no-install-recommends \
         g++ \
         gcc \
@@ -44,6 +48,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         jq \
         libc6-dev \
         ca-certificates \
+        gawk \
+    && update-alternatives --set awk /usr/bin/gawk \
     && rm -rf /var/lib/apt/lists/* \
     && find /usr/share/doc /usr/share/man -type f -delete 2>/dev/null || true
 
