@@ -111,9 +111,17 @@ run_judge() {
         #     作为 $1 传给 ENTRYPOINT（judge.sh 本身），judge.sh 把可读的自身当作
         #     task 文件 → jq 解析失败 → SE "submission_id missing"。
         #     /bin/sh 在容器内不可读 → judge.sh 走 stdin 分支读 task.json。
+        # v1.2.54: 把 task.json 的 memory_limit_mb 直接透传给 docker run --memory。
+        # 之前固定 --memory 256m，MLE case 想在 256m 内分配 200MB → 永远不 OOM →
+        # exit 0 → status=ac，掩盖了 mle 分支。
+        local task_mem_mb
+        task_mem_mb="$(jq -r '.memory_limit_mb // 256' "$1" 2>/dev/null || echo 256)"
+        case "${task_mem_mb}" in
+            ''|*[!0-9]*) task_mem_mb=256 ;;
+        esac
         cat "$1" | MSYS_NO_PATHCONV=1 docker run --rm -i \
             -e "JUDGE_LIB_DIR=/usr/local/lib/judge" \
-            --network none --memory 256m --pids-limit 50 \
+            --network none --memory "${task_mem_mb}m" --pids-limit 50 \
             --security-opt no-new-privileges \
             "${JUDGE_IMAGE}" /nonexistent_sentinel_for_stdin_branch 2>/dev/null
     else
@@ -297,23 +305,19 @@ fi
 
 # ─────────────────────────────────────────────────────────────
 # [MLE] 申请超过 memory_limit_mb 的大数组 → kill by OOM
-# v1.2.52 known-issue: e2e 镜像无 cgroup v2 配置，per-case memory_limit_mb
-# 无法精确强制（容器 --memory 256m > task 64MB）。生产环境 judge_scheduler
-# 走 cgroup v2 fine-grained 控制。200MB 实际分到 256m 容器内就活着 → WA。
-# 跳过而非 fail，避免 CI 噪音。
+# v1.2.54: run_judge() 现在按 task.json 的 memory_limit_mb 透传给 docker run
+# 的 --memory 参数；镜像自带 cgroup v2，OOM-killer 会 SIGKILL 进程 → exit 137
+# → judge.sh 进入 mle 分支（line 408）。
+# 之前固定 --memory 256m 时，MLE case 在 200MB 分配下从不死；status 永远 ac。
 # ─────────────────────────────────────────────────────────────
-if guard_or_skip "MLE (e2e docker has no cgroup, see judge_scheduler.h)"; then
-    if ! docker run --rm --entrypoint=/bin/sh "${JUDGE_IMAGE}" -c 'cat /proc/self/cgroup | grep -q "0::/"' >/dev/null 2>&1; then
-        skip "[MLE] e2e container has no cgroup v2 hierarchy; per-case 64MB not enforced"
-    else
-        code='#include <vector>
+if guard_or_skip "MLE"; then
+    code='#include <vector>
 int main() { std::vector<int> v(200 * 1024 * 1024 / 4, 0); return (int)v.size(); }'
-        cases='[{"input":"","expected_output":"0","judge_type":"exact","float_epsilon":1e-6}]'
-        # args: tlm mlm ctm rht olb — 1000ms / 64MB / 10000ms / 30000ms / 16MB
-        make_task "${code}" "${cases}" 1000 64 10000 30000 16777216
-        out="$(run_judge "${TEST_ROOT}/task.json")"
-        expect_status "$(get_status "${out}")" "mle" "MLE 200MB > 64MB limit"
-    fi
+    cases='[{"input":"","expected_output":"0","judge_type":"exact","float_epsilon":1e-6}]'
+    # args: tlm mlm ctm rht olb — 1000ms / 64MB / 10000ms / 30000ms / 16MB
+    make_task "${code}" "${cases}" 1000 64 10000 30000 16777216
+    out="$(run_judge "${TEST_ROOT}/task.json")"
+    expect_status "$(get_status "${out}")" "mle" "MLE 200MB > 64MB limit"
 fi
 
 # ─────────────────────────────────────────────────────────────

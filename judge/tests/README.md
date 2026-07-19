@@ -16,6 +16,12 @@
 > 把 `/usr/bin/awk` 从 mawk 切到 GNU Awk（ubuntu:22.04 默认是 mawk，gawk 不自动接管）。
 > 任何动 `judge/Dockerfile` 的操作都必须 `docker build --no-cache -t litecode-judge:test judge/`，否则
 > `compare_float_eps` 多维数组路径会回到 mawk，导致 float_eps case WA。
+>
+> **v1.2.54 wrapper note**: `run_judge()` 现在按 task.json 的 `memory_limit_mb`
+> 透传给 docker run 的 `--memory`。**这是 e2e 唯一能 force per-case OOM 的地方**——
+> 镜像本身一直有 cgroup v2（`/proc/self/cgroup` → `0::/`）；但 fix 之前 wrapper 写死
+> `--memory 256m`，所以 MLE case 想 200MB 分配永远不 OOM → status 误为 ac。
+> 现在：task.json memory_limit_mb=64 → wrapper --memory 64m → OOM kill → mle。
 
 ## 跑命令
 
@@ -40,7 +46,7 @@ bash judge/tests/test_judge_e2e.sh
 | case | 锁住的不变量 |
 |------|-------------|
 | `AC-empty-expected` | `judge.sh:212-217` 的 `sed -e '$ {/^$/d}'` —— 空 expected_output 时 sed 把 jq 的行终止符删掉，避免 expected.txt = "\n" vs solution = "" 的 cmp 不等 |
-| `MLE` | 200MB > 64MB limit → docker OOM kill → mle 状态 |
+| `MLE` | 200MB > 64MB limit → docker OOM kill → mle 状态（v1.2.54 起 e2e 真正能跑通；之前 fixed `--memory 256m` 把这条 case 锁死） |
 
 ## v1.2.51 新增 gtest（`tests/unit/`）
 
