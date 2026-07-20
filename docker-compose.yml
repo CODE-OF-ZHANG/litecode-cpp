@@ -81,7 +81,7 @@ services:
   #   - DELETE /containers/{id}
   # Web 通过 DOCKER_SOCKET_URL=tcp://docker-proxy:2375 访问
   docker-proxy:
-    image: tecnativa/docker-socket-proxy:0.1
+    image: tecnativa/docker-socket-proxy:0.3
     container_name: litecode-docker-proxy
     restart: unless-stopped
     environment:
@@ -248,7 +248,7 @@ services:
   # ───── 5. Caddy 反向代理（可选，profile=proxy 启用）───────
   # SPEC §11 Phase 1 / Phase 7：本地 HTTP-only；生产可改 HTTPS
   caddy:
-    image: caddy:2.8-alpine
+    image: caddy:2.11-alpine
     container_name: litecode-caddy
     restart: unless-stopped
     profiles: ["proxy"]
@@ -309,7 +309,7 @@ services:
 
   # ───── 6a. Alertmanager（Phase 7 ☆ / SPEC §16.4）──────────
   alertmanager:
-    image: prom/alertmanager:v0.27.0
+    image: prom/alertmanager:v0.33.1
     container_name: litecode-alertmanager
     restart: unless-stopped
     profiles: ["monitoring"]
@@ -338,7 +338,7 @@ services:
   # ───── 6b. cAdvisor（容器资源 — Phase 9 ☆）───────────────────
   # 抓取 Docker 容器 CPU / 内存 / 网络；Grafana 资源面板数据源
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
     container_name: litecode-cadvisor
     restart: unless-stopped
     profiles: ["monitoring"]
@@ -363,7 +363,7 @@ services:
 
   # ───── 6c. node-exporter（宿主机指标 — Phase 9 ☆）───────────
   node-exporter:
-    image: prom/node-exporter:v1.8.2
+    image: prom/node-exporter:v1.12.1
     container_name: litecode-node-exporter
     restart: unless-stopped
     profiles: ["monitoring"]
@@ -429,7 +429,7 @@ services:
   # 手动跑：  docker compose --profile backup up backup
   #          或：docker compose exec backup /usr/local/bin/backup.sh
   backup:
-    image: alpine:3.20
+    image: alpine:3.24
     container_name: litecode-backup
     restart: unless-stopped
     profiles: ["backup"]              # 默认不启；--profile backup 才拉起
