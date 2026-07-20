@@ -1,0 +1,186 @@
+# =============================================================
+# LiteCode-CPP — Prometheus 告警规则
+# =============================================================
+# SPEC §16.4 / Phase 7 ☆ 监控告警：
+#   - 判题 P99 延迟 > 5s 告警
+#   - 队列积压 > 50 告警
+#   - 配套：Web 5xx 错误率 / DB 连接池饱和 / 磁盘 / 证书过期
+# -------------------------------------------------------------
+# 这些指标由 src/routes/metrics.cpp 暴露（Phase 9 ★）。
+# 触发条件用 `for:` 子句去抖，避免抖动导致告警风暴。
+# =============================================================
+
+groups:
+  # ───── 判题 ──────────────────────────────────────────
+  - name: litecode-judge
+    interval: 30s
+    rules:
+      - alert: JudgeDurationP99TooHigh
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (
+              rate(litecode_judge_duration_seconds_bucket{service="web"}[5m])
+            )
+          ) > 5
+        for: 2m
+        labels:
+          severity: critical
+          service: judge
+          component: latency
+        annotations:
+          summary: "判题 P99 延迟过高 (>5s)"
+          description: |
+            最近 5 分钟内判题 P99 延迟为 {{ $value | humanizeDuration }}，
+            超过 5s 阈值（SPEC §16.4）。可能原因：编译炸弹提交、判题机
+            资源争抢、或 judge 容器镜像版本漂移。
+          runbook: "1) 检查 /admin/dashboard.html 看 warm_pool / queue;
+                    2) 抽样 WAIT 长 submission 看是编译慢还是运行慢;
+                    3) docker stats 看 web 容器内存是否触顶 OOM。"
+
+      - alert: JudgeQueueBacklog
+        expr: litecode_judge_queue_size > 50
+        for: 1m
+        labels:
+          severity: warning
+          service: judge
+          component: queue
+        annotations:
+          summary: "判题队列积压 > 50"
+          description: |
+            队列当前长度 {{ $value }}，超过 50 阈值（SPEC §16.4）。
+            用户提交可能大量超时；考虑临时扩容 JUDGE_MAX_CONCURRENT
+            或检查是否有死锁提交卡死 worker。
+
+      - alert: JudgeSubmissionsHighFailureRate
+        expr: |
+          (
+            sum(rate(litecode_submissions_total{status!~"AC"}[5m]))
+            /
+            sum(rate(litecode_submissions_total[5m]))
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          service: judge
+          component: error_rate
+        annotations:
+          summary: "判题失败率 > 50%"
+          description: |
+            最近 5 分钟非 AC 提交占比 {{ $value | humanizePercentage }}。
+            正常刷题场景下失败率应在 30-60%（取决于题目难度），但
+            持续 > 50% 可能意味着：判题机故障 / 镜像损坏 / 大量 WA 提交。
+
+      - alert: JudgeWarmPoolDepleted
+        expr: litecode_judge_warm_pool_size == 0
+        for: 3m
+        labels:
+          severity: warning
+          service: judge
+          component: warm_pool
+        annotations:
+          summary: "判题预热池空了"
+          description: |
+            Warm pool 当前大小 {{ $value }}，持续 3 分钟无预热容器。
+            每个提交将付出 ~2s 冷启动开销，P99 延迟会显著劣化。
+            检查 web 进程是否正常（崩溃后 warm pool 也会归零）。
+
+  # ───── Web 服务 ───────────────────────────────────────
+  - name: litecode-web
+    interval: 30s
+    rules:
+      - alert: Web5xxErrorRate
+        expr: |
+          (
+            sum(rate(litecode_http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(litecode_http_requests_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          service: web
+          component: error_rate
+        annotations:
+          summary: "Web 5xx 错误率 > 5%"
+          description: |
+            最近 5 分钟 5xx 占比 {{ $value | humanizePercentage }}。
+            立即查看 web 容器日志（docker logs litecode-web --tail 200）。
+
+      - alert: WebContainerDown
+        expr: up{job="litecode-web"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: web
+          component: availability
+        annotations:
+          summary: "Web 容器不可达"
+          description: |
+            Prometheus 连续 1 分钟抓取不到 /api/v1/metrics。容器可能
+            崩溃 / OOM / 网络断开。docker ps + docker logs 检查。
+
+      - alert: DbPoolSaturated
+        expr: litecode_db_pool_active / litecode_db_pool_size > 0.9
+        for: 2m
+        labels:
+          severity: warning
+          service: web
+          component: db
+        annotations:
+          summary: "DB 连接池饱和 (>90%)"
+          description: |
+            连接池 active/total = {{ $value | humanizePercentage }}，
+            持续 2 分钟。可能原因：长查询阻塞 / 连接泄漏 / 池上限
+            偏低（DB_POOL_MAX 默认 16）。
+
+  # ───── 基础设施 ───────────────────────────────────────
+  - name: litecode-infra
+    interval: 30s
+    rules:
+      - alert: HostDiskSpaceLow
+        expr: |
+          (
+            (node_filesystem_avail_bytes{mountpoint="/"} * 100)
+            /
+            node_filesystem_size_bytes{mountpoint="/"}
+          ) < 10
+        for: 5m
+        labels:
+          severity: warning
+          service: host
+          component: disk
+        annotations:
+          summary: "根磁盘剩余 < 10%"
+          description: |
+            根分区仅剩 {{ $value | humanize }}% 可用空间。Docker volume
+            / 日志 / 备份都可能占用大量空间。运行 `docker system df`
+            排查。
+
+      - alert: HostDiskWillFillIn24h
+        expr: |
+          predict_linear(node_filesystem_avail_bytes{mountpoint="/"}[6h], 24 * 3600) < 0
+        for: 10m
+        labels:
+          severity: critical
+          service: host
+          component: disk
+        annotations:
+          summary: "按当前速率，磁盘将在 24h 内写满"
+          description: |
+            线性外推显示 {{ $value | humanize }}B。立即清理 / 扩容 / 调
+            整 retention。备份最容易撑爆磁盘。
+
+      - alert: TlsCertificateExpiringSoon
+        expr: probe_ssl_earliest_cert_expiry - time() < 86400 * 14
+        for: 1h
+        labels:
+          severity: warning
+          service: proxy
+          component: tls
+        annotations:
+          summary: "TLS 证书 14 天内过期"
+          description: |
+            证书将在 {{ $value | humanizeDuration }} 后过期。
+            生产环境由 Caddy 自动续期；如未自动续期检查 DNS API
+            token 与 rate limit。

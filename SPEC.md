@@ -1105,13 +1105,13 @@ litecode-cpp/
 
 ### Phase 7 - 部署
 
-- [ ] ★ 完善 Docker Compose（Web + MySQL + Judge + Socket Proxy + Caddy + Prometheus + Grafana）
-- [ ] ★ Docker Socket 代理（[tecnativa/docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy)，白名单 5 子命令）
-- [ ] ★ Web 容器资源限制（--cpus=2 --memory=512m，非 root 运行）
-- [ ] ★ Caddy 反向代理（生产 HTTPS / 本地 HTTP）
-- [ ] ★ README + 部署文档（环境变量 + 管理员创建 + 灾备恢复）
-- [ ] ☆ 备份脚本（backup.sh：mysqldump 每日 + 异地）
-- [ ] ☆ 监控告警（Grafana 面板：判题 P99 延迟 > 5s 告警 / 队列积压 > 50 告警）
+- [x] ★ 完善 Docker Compose（Web + MySQL + Judge + Socket Proxy + Caddy + Prometheus + Grafana）—— v1.2.57（11 个服务：mysql / docker-proxy / judge / web / caddy / prometheus / alertmanager / grafana / cadvisor / node-exporter / backup；4 个 profile：default / proxy / monitoring / backup；web 容器 user: "1000:1000" + no-new-privileges + docker-proxy healthcheck + judge 旧语法 `!reset []` 修复）
+- [x] ★ Docker Socket 代理（[tecnativa/docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy)，白名单 5 子命令）
+- [x] ★ Web 容器资源限制（--cpus=2 --memory=512m，非 root 运行）
+- [x] ★ Caddy 反向代理（生产 HTTPS / 本地 HTTP）
+- [x] ★ README + 部署文档（环境变量 + 管理员创建 + 灾备恢复）—— v1.2.57（`docs/deployment.md` 11 节：拓扑 / 启动 / env / admin / 灾备 / 升级 / 监控 / 安全合规清单 / 常见坑 / 故障排查 / 资源总表）
+- [x] ☆ 备份脚本（backup.sh：mysqldump 每日 + 异地）—— v1.2.57（alpine 镜像 + dcron 03:00 自动跑 + gzip/zstd 压缩 + 14 天保留 + rclone 异地钩子）
+- [x] ☆ 监控告警（Grafana 面板：判题 P99 延迟 > 5s 告警 / 队列积压 > 50 告警）—— v1.2.57（Phase 9 Overview dashboard 5 panel 分组 + alertmanager + 10 条告警规则）
 
 ### Phase 8 - 质量保障（v1.2 新增）
 

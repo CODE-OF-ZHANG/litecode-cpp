@@ -1,0 +1,63 @@
+# =============================================================
+# LiteCode-CPP — Alertmanager 配置
+# =============================================================
+# SPEC §16.4：P99 延迟 / 队列积压 / 磁盘 / 证书过期告警
+# ---------------------------------------------------------
+# 默认路由到 webhook（自托管环境用 webhook 接 IM 机器人；生产
+# 可改成 slack_configs / pagerduty_configs / email_configs）。
+#
+# 用法：
+#   docker compose --profile monitoring up -d alertmanager
+#   浏览器访问 :9093 查看告警事件 / 静默 / receivers
+# =============================================================
+
+global:
+  resolve_timeout: 5m                # 5 分钟未恢复即认为告警消失
+  smtp_smoke: false                 # 关闭 SMTP 邮件烟测（dev 默认无邮件）
+
+# ───── 模板 ──────────────────────────────────────────────
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'   # 可选；当前未挂载模板目录则忽略
+
+# ───── 路由 ──────────────────────────────────────────────
+# group_by 把同类告警聚合成一条通知；group_wait 给上游 30s 聚合窗口
+# （避免一次突发抖动触发几十条告警轰炸）；repeat_interval 4h 表示
+# 一条 firing 告警每 4h 重发一次直到解决（避免长时静默被遗忘）。
+route:
+  receiver: 'default-webhook'
+  group_by: ['alertname', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    # 严重告警单独走 #critical 通道
+    - match:
+        severity: critical
+      receiver: 'critical-webhook'
+      group_wait: 10s
+      repeat_interval: 1h
+
+# ───── 接收器 ────────────────────────────────────────────
+# 默认 webhook: POST 一段 JSON 到 LITECODE_WEBHOOK_URL（不设则只 log）
+# critical 同上，但走 LITECODE_CRITICAL_WEBHOOK_URL（独立 IM 群）
+receivers:
+  - name: 'default-webhook'
+    webhook_configs:
+      - url: 'http://127.0.0.1:5001/alerts'
+        send_resolved: true
+        max_alerts: 0                  # 0 = 不限制每批条数
+
+  - name: 'critical-webhook'
+    webhook_configs:
+      - url: 'http://127.0.0.1:5002/alerts/critical'
+        send_resolved: true
+        max_alerts: 0
+
+# ───── 抑制规则 ─────────────────────────────────────────
+# critical 已 firing 时，抑制同 alertname 的 warning（避免重复通知）
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'service']

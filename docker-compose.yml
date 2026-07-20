@@ -115,6 +115,16 @@ services:
       resources:
         limits:
           memory: 64M
+    # v1.2.57 健康检查：tecnativa 镜像仅暴露 /v1.41/containers/json 等
+    # 受白名单控制的端点；这里用 `nc -z`（busybox nc 支持）做 TCP 端口
+    # 可达性探测 —— 端口 listen 即视为健康；HTTP 协议级校验交给 web
+    # 容器实际跑判题任务时再验证。
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 2375 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
     logging: *default-logging
 
   # ───── 3. 判题镜像（构建目标）───────────────────────────────
@@ -129,8 +139,8 @@ services:
     container_name: litecode-judge-build
     # 构建完成后立即退出（不常驻）
     command: ["true"]
-    # 不加入业务网络（纯构建步骤）
-    networks: !reset []
+    # 不加入业务网络（纯构建步骤；显式空数组，避免被默认网络纳入）
+    networks: []
     logging: *default-logging
 
   # ───── 4. Web 服务（C++ HTTP 服务器）─────────────────────
@@ -152,7 +162,7 @@ services:
       mysql:
         condition: service_healthy
       docker-proxy:
-        condition: service_started
+        condition: service_healthy      # v1.2.57: 等 proxy healthcheck 通过
       judge:
         condition: service_completed_successfully
     env_file:
@@ -188,7 +198,10 @@ services:
       # 时区
       TZ: Asia/Shanghai
     volumes:
-      # 日志目录（容器写、宿主机可观察）
+      # 日志目录（容器写、宿主机可观察）。注意：uid 1000 写入宿主机
+      # ./logs 时若目录属主为 root 会失败 —— 首次启动前在 host 上
+      # `chown -R 1000:1000 logs` 或 `mkdir -p logs && chmod 777 logs`
+      # （README 部署文档有详细步骤）。
       - ./logs:/app/logs
       # 题库数据（管理员导入/读取 JSON）
       - ./problems:/app/problems:ro
@@ -214,15 +227,21 @@ services:
         reservations:
           cpus: "0.5"
           memory: 128M
-    # v1.2.50: named volume 由 docker daemon 管理（位于
-    # /var/lib/docker/volumes/litecode-judge-tmp），对 web 进程的
-    # uid 不做强制——不同 uid 写到同一个 backing 的尝试会被
-    # Docker 自动 chown。dev 环境仍以 root 运行以保持镜像内
-    # USER litecode 与 bind-mount 写权限之间不存在历史遗留冲突。
-    user: "0:0"
-    # 非 root + 不提权（镜像内 USER litecode + Docker 默认 seccomp）
-    # security_opt:
-    #   - no-new-privileges:true
+    # SPEC §15.5：非 root 运行。镜像 Dockerfile 第 113-119 行已创建
+    # uid=1000 的 litecode 用户并切到 USER litecode；这里显式声明是
+    # 双重保险（覆盖任何第三方 child 镜像的 USER 变化）。
+    #
+    # 注意：与宿主机 ./logs、./problems、./web 的写权限要求：
+    #   - logs  : web 需写 → host 上 chown 1000:1000 logs/ 或 chmod 777
+    #   - problems : 镜像 USER 需只读 → :ro 已满足，UID 无所谓
+    #   - web  : 同上，:ro 已满足
+    # v1.2.57 修复：历史版本写过 user: "0:0" 是因 judge-tmp named volume
+    # 在某些 host 上有 uid 错位 bug；但当前 docker daemon 已自动 chown，
+    # 切回 1000 不再有问题。详见 docs/deployment.md 的"权限前置"。
+    user: "1000:1000"
+    # SPEC §15.5：禁止提权（防 setuid binary / capability 注入）
+    security_opt:
+      - no-new-privileges:true
     # 健康检查在镜像 HEALTHCHECK 中已定义，此处可省略
     logging: *default-logging
 
@@ -254,11 +273,16 @@ services:
     restart: unless-stopped
     profiles: ["monitoring"]
     depends_on:
-      - web
+      web:
+        condition: service_started   # 不等 healthy — /metrics 是可选端口
+      alertmanager:
+        condition: service_started
     ports:
-      - "${PROMETHEUS_PORT:-9090}:9090"
+      - "${PROMETHEUS_BIND:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # 告警规则（Phase 7 ☆ / SPEC §16.4）
+      - ./monitoring/alerting:/etc/prometheus/alerts:ro
       - prometheus-data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -266,8 +290,98 @@ services:
       - "--storage.tsdb.retention.time=15d"
       - "--web.console.libraries=/usr/share/prometheus/console_libraries"
       - "--web.console.templates=/usr/share/prometheus/consoles"
+      # v1.2.57：每次 reload 配置时优雅生效（不丢抓取）
+      - "--web.enable-lifecycle"
     networks:
       - litecode-net
+    # 资源硬上限（TSDB + web UI 总和）
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: *default-logging
+
+  # ───── 6a. Alertmanager（Phase 7 ☆ / SPEC §16.4）──────────
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: litecode-alertmanager
+    restart: unless-stopped
+    profiles: ["monitoring"]
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    ports:
+      - "${ALERTMANAGER_BIND:-127.0.0.1}:${ALERTMANAGER_PORT:-9093}:9093"
+    volumes:
+      - ./monitoring/alerting/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    networks:
+      - litecode-net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9093/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: *default-logging
+
+  # ───── 6b. cAdvisor（容器资源 — Phase 9 ☆）───────────────────
+  # 抓取 Docker 容器 CPU / 内存 / 网络；Grafana 资源面板数据源
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: litecode-cadvisor
+    restart: unless-stopped
+    profiles: ["monitoring"]
+    # cadvisor 必须特权挂载宿主机文件系统（只读）才能枚举容器
+    privileged: true                  # SPEC §15.5 例外：cAdvisor 本身只读
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "${CADVISOR_BIND:-127.0.0.1}:${CADVISOR_PORT:-8088}:8080"
+    networks:
+      - litecode-net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    logging: *default-logging
+
+  # ───── 6c. node-exporter（宿主机指标 — Phase 9 ☆）───────────
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: litecode-node-exporter
+    restart: unless-stopped
+    profiles: ["monitoring"]
+    command:
+      - "--path.rootfs=/host"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    volumes:
+      - /:/host:ro,rslave
+    ports:
+      - "${NODE_EXPORTER_BIND:-127.0.0.1}:${NODE_EXPORTER_PORT:-9100}:9100"
+    networks:
+      - litecode-net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 64M
+    pid: host                         # 需要看宿主进程
     logging: *default-logging
 
   # ───── 7. Grafana（可选，profile=monitoring 启用）─────────
@@ -277,18 +391,97 @@ services:
     restart: unless-stopped
     profiles: ["monitoring"]
     depends_on:
-      - prometheus
+      prometheus:
+        condition: service_healthy
     ports:
-      - "${GRAFANA_PORT:-3000}:3000"
+      - "${GRAFANA_BIND:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin_change_me}
       GF_USERS_ALLOW_SIGN_UP: "false"
+      # Phase 9 ★：provisioning 文件已挂载时允许 UI 编辑（read-only = false）
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_LOG_MODE: "console"
     volumes:
       - ./monitoring/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      # v1.2.57 Phase 9 ★：dashboards provisioning（系统/判题/错误率/队列/资源）
+      - ./monitoring/grafana/dashboards/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      # dashboard JSON 文件实际目录（Grafana 从这里加载）
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     networks:
       - litecode-net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: *default-logging
+
+  # ───── 8. 数据库备份（Phase 7 ☆ / SPEC §16.5）────────────────
+  # alpine 镜像 + mysql-client + dcron + zstd + rclone，自带 mysqldump
+  # 且体积小（~80MB）。默认 24h 一次 + 保留 14 天 + 可选 rclone 异地。
+  # 手动跑：  docker compose --profile backup up backup
+  #          或：docker compose exec backup /usr/local/bin/backup.sh
+  backup:
+    image: alpine:3.20
+    container_name: litecode-backup
+    restart: unless-stopped
+    profiles: ["backup"]              # 默认不启；--profile backup 才拉起
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: ${MYSQL_HOST:-mysql}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-changeme_root}
+      DB_NAME: ${DB_NAME:-litecode}
+      BACKUP_DIR: /backup
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_COMPRESS: ${BACKUP_COMPRESS:-gzip}
+      RCLONE_REMOTE: ${RCLONE_REMOTE:-}
+      TZ: Asia/Shanghai
+    volumes:
+      - ./scripts/backup.sh:/usr/local/bin/backup.sh:ro
+      - backup-data:/backup
+    # alpine 缺客户端：装 mysql-client (含 mysqldump) + dcron + rclone + 压缩工具
+    # 然后注册 cron 03:00 跑一次（前缀 cron env 注入 MYSQL_PASSWORD）
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "set -e;
+         apk add --no-cache mysql-client dcron zstd rclone bash tzdata >/dev/null;
+         cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime 2>/dev/null || true;
+         printf '%s' \"$${MYSQL_PASSWORD}\" > /tmp/_dbpw;
+         (umask 077; printf 'SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MYSQL_HOST=%s
+MYSQL_PORT=%s
+MYSQL_USER=%s
+MYSQL_PASSWORD=%s
+DB_NAME=%s
+BACKUP_DIR=%s
+BACKUP_RETENTION_DAYS=%s
+BACKUP_COMPRESS=%s
+RCLONE_REMOTE=%s
+TZ=%s
+0 3 * * * /usr/local/bin/backup.sh >> /backup/backup.log 2>&1
+' \"$$MYSQL_HOST\" \"$$MYSQL_PORT\" \"$$MYSQL_USER\" \"$$(cat /tmp/_dbpw)\" \"$$DB_NAME\" \"$$BACKUP_DIR\" \"$$BACKUP_RETENTION_DAYS\" \"$$BACKUP_COMPRESS\" \"$$RCLONE_REMOTE\" \"$$TZ\" > /etc/crontabs/root);
+         rm -f /tmp/_dbpw;
+         echo '[backup] cron registered; starting crond';
+         crond -f -L /backup/crond.log"
+    networks:
+      - litecode-net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
     logging: *default-logging
 
 # ───── 网络 ──────────────────────────────────────────────────
@@ -310,6 +503,10 @@ volumes:
     name: litecode-prometheus-data
   grafana-data:
     name: litecode-grafana-data
+  alertmanager-data:
+    name: litecode-alertmanager-data
+  backup-data:
+    name: litecode-backup-data
   # v1.2.50: named volume — shared between web (write task.json) and
   # the per-task judge container (mount at /tmp/task.json). Lives in
   # /var/lib/docker/volumes/ on the docker daemon side, so the host

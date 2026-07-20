@@ -1,8 +1,18 @@
 # =============================================================
-# LiteCode-CPP — Prometheus 抓取配置
+# LiteCode-CPP — Prometheus 抓取 / 告警配置
 # =============================================================
-# SPEC §16.2：监控 LiteCode Web 服务的 /api/v1/metrics
-# 同时收集宿主机 Docker 指标（cAdvisor 可选，见注释）
+# SPEC §16.2 / §16.4
+# -------------------------------------------------------------
+# 抓取目标：
+#   1. litecode-web        — /api/v1/metrics（Phase 9 ★）
+#   2. prometheus          — 自身健康
+#   3. alertmanager        — 告警事件健康
+#   4. cadvisor            — 容器资源（CPU / mem / net）（可选）
+#   5. node-exporter       — 宿主机指标（可选）
+#
+# 告警规则：
+#   - alerting/prometheus-alerts.yml（独立加载）
+#   - alertmanager 静态 target：alertmanager:9093
 # =============================================================
 
 global:
@@ -13,22 +23,22 @@ global:
     env: dev                       # 生产改为 production
 
 # ───── 告警规则（SPEC §16.4）─────────────────────────────
-# 完整告警规则放 alerting/ 目录，这里先预留文件路径
-# rule_files:
-#   - "alerts/*.yml"
+rule_files:
+  - /etc/prometheus/alerts/*.yml
 
 # ───── 告警管理器 ──────────────────────────────────────
-# alerting:
-#   alertmanagers:
-#     - static_configs:
-#         - targets: ['alertmanager:9093']
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
 
 # ───── 抓取目标 ─────────────────────────────────────────
 scrape_configs:
-  # 1. LiteCode Web 服务（核心）
+  # 1. LiteCode Web 服务（核心指标：submissions_total / judge_duration / queue / pool）
   - job_name: litecode-web
     metrics_path: /api/v1/metrics
     scheme: http
+    scrape_timeout: 10s            # metrics 端点返回可能较慢（histogram 多）
     static_configs:
       - targets:
           - 'litecode-web:8080'
@@ -36,31 +46,28 @@ scrape_configs:
           service: web
           tier: application
 
-  # 2. Prometheus 自身指标
+  # 2. Prometheus 自身
   - job_name: prometheus
     static_configs:
       - targets: ['localhost:9090']
 
-  # 3. cAdvisor（Docker 容器指标，可选）
-  #    需要单独启动 cAdvisor 服务，docker-compose 中可加：
-  #    cadvisor:
-  #      image: gcr.io/cadvisor/cadvisor:v0.49.1
-  #      volumes:
-  #        - /:/rootfs:ro
-  #        - /var/run:/var/run:ro
-  #        - /sys:/sys:ro
-  #        - /var/lib/docker/:/var/lib/docker:ro
-  #      ports: ["8080:8080"]
-  #    取消下方注释启用：
-  # - job_name: cadvisor
-  #   static_configs:
-  #     - targets: ['cadvisor:8080']
-  #       labels:
-  #         service: cadvisor
+  # 3. Alertmanager 健康抓取
+  - job_name: alertmanager
+    static_configs:
+      - targets: ['alertmanager:9093']
 
-  # 4. Node exporter（宿主机指标，可选）
-  # - job_name: node
-  #   static_configs:
-  #     - targets: ['node-exporter:9100']
-  #       labels:
-  #         service: host
+  # 4. cAdvisor（容器资源 — Phase 9 ☆ 资源面板数据源）
+  - job_name: cadvisor
+    static_configs:
+      - targets: ['cadvisor:8080']
+        labels:
+          service: cadvisor
+          tier: infrastructure
+
+  # 5. Node exporter（宿主机磁盘 / 内存 / CPU）
+  - job_name: node
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels:
+          service: host
+          tier: infrastructure
