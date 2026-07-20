@@ -133,7 +133,7 @@
 - [ ] ★ E2E 验收脚本 `scripts/e2e_acceptance.sh`（覆盖 §12.1 A1–A34）
 - [ ] ★ 编译炸弹防护测试（提交模板元递归 / `#include` 炸弹，验证 10s 超时）
 - [ ] ★ OLE 判定测试（提交死循环输出 100MB，验证 OLE + 容器不被撑爆）
-- [ ] ★ 限流测试（注册/登录 1 分钟内 100 次请求，验证 429 + Retry-After）
+- [x] ★ 限流测试（注册/登录 1 分钟内 100 次请求，验证 429 + Retry-After）—— v1.2.63（e2e A26 拆 A26a 注册 quota 5/min/IP + A26b 登录 quota 10/min/IP：用独立 X-Forwarded-For IP 把两个 bucket 隔离，不污染 default IP 的 register/login quota 状态——避免 A27/A35 误 hit429；每个子用例五重断言：HTTP 429 + Retry-After ∈ [1,60] 整数秒 + X-RateLimit-Limit==该 quota capacity + X-RateLimit-Remaining==0 + .code==RATE_LIMITED + .error.details.quota 命中预期 name；登录子用例用错误密码「先 401 再 429」的方式不依赖前置 register 配额。SPEC「1 分钟 100 次」措辞沿用 Phase 2 ★ 旧版描述，实际按 SPEC §5.1 默认值 register=5/min、login=10/min 打到第 N+1 次即触发，quota 阈值由 `RATE_LIMIT_REGISTER_PER_MIN` / `RATE_LIMIT_LOGIN_PER_MIN` 注入；单测覆盖在 `tests/unit/test_rate_limit.cpp`）
 - [ ] ★ 审计日志测试（删题/改角色后查 audit-logs 验证写入）
 - [ ] ☆ 压测报告（5/10/20 人并发判题，验证 P95 < 5s）
 - [ ] ☆ 渗透测试（XSS / SQL 注入 / CSRF 扫描）
@@ -1120,7 +1120,7 @@ litecode-cpp/
 - [x] ★ E2E 验收脚本（scripts/e2e_acceptance.sh：覆盖 §12.1 所有 A1–A34 用例）—— v1.2.61（`scripts/e2e_acceptance.sh` 黑盒验收 curl+jq，覆盖 A1–A35 含 A3b：API 用例走公开 HTTP 面断言状态码/错误信封，JUDGE 用例提交真实 C++ 轮询终态，STATIC 用例（A13/A16/A23/A24/A32/A33/A34）沿用 test_frontend_xss.sh 先例对 web/ 源码 grep；能力探测 SERVER/JUDGE/WEB/COMPOSE 优雅降级 + 默认宽松（缺能力记 skip）+ `E2E_STRICT=1` 把缺能力 skip 升级为 fail 供 CI 强约束；provision 自动注册测试用户 + 登录 admin + bulk-import two-sum 保证可判题目；无栈干跑 20 assert 全绿 exit 0，STRICT 无栈 exit 1；不注册进 ctest，需 live stack 手动/CI 调用）
 - [x] ★ 编译炸弹防护测试（提交模板元递归 / `#include` 炸弹，验证 10s 超时）—— v1.2.61（e2e A29 拆 A29a + A29b 双子用例：A29a 用 B<40> 五路 Fibonacci 模板元递归验证 judge.sh Section C 的 124|137 分支 → `error_message` 含指纹 `Compilation timeout (limit 10s)`，10s `compile_timeout_ms` 真正截断 g++；A29b 用 `#include __FILE__` 自递归触发 g++ `#include` 嵌套深度上限 fatal error，证明编译炸弹被拦下、终态非 AC；两个子用例都断言墙钟 ≤ 15s + 事后 `/health` 不被打挂；e2e dry-run 20/0/29 exit 0，STRICT 1/29 exit 1）
 - [x] ★ OLE 判定测试（提交死循环输出 100MB，验证 OLE + 容器不被撑爆）—— v1.2.61 + v1.2.62 补强（e2e A30：`while(true) fwrite(buf,1,4096,stdout);` 死循环输出 → judge.sh Section D 的 OLE 立即判定分支（`RAW_OUT > OUTPUT_LIMIT_BYTES(16MB)`），三层断言：1) 顶层 status=ole（API contract）；2) `error_message` 含指纹 `output exceeded [0-9]+ bytes \(got [0-9]+\)`，证明 16MB 截断真在 judge.sh 而不是容器被 OOM 后的副产物；3) 事后 `/health` 仍 200（容器不被撑爆）+ 墙钟 ≤ 15s。v1.2.61 commit message 自报"两条 [ ]→[x]"但漏翻了这一条，v1.2.62 flip `[x]` + 把 case-level OLE 落地证明从 info 字段（同源指纹）改成更稳的 `error_message` 指纹断言）
-- [ ] ★ 限流测试（注册/登录 1 分钟内 100 次请求，验证 429 + Retry-After）
+- [x] ★ 限流测试（注册/登录 1 分钟内 100 次请求，验证 429 + Retry-After）—— v1.2.63（e2e A26 拆 A26a 注册 quota 5/min/IP + A26b 登录 quota 10/min/IP：用独立 X-Forwarded-For IP 把两个 bucket 隔离，不污染 default IP 的 register/login quota 状态——避免 A27/A35 误 hit429；每个子用例五重断言：HTTP 429 + Retry-After ∈ [1,60] 整数秒 + X-RateLimit-Limit==该 quota capacity + X-RateLimit-Remaining==0 + .code==RATE_LIMITED + .error.details.quota 命中预期 name；登录子用例用错误密码「先 401 再 429」的方式不依赖前置 register 配额。SPEC「1 分钟 100 次」措辞沿用 Phase 2 ★ 旧版描述，实际按 SPEC §5.1 默认值 register=5/min、login=10/min 打到第 N+1 次即触发，quota 阈值由 `RATE_LIMIT_REGISTER_PER_MIN` / `RATE_LIMIT_LOGIN_PER_MIN` 注入；单测覆盖在 `tests/unit/test_rate_limit.cpp`）
 - [ ] ★ 审计日志测试（删题/改角色后查 audit-logs 验证写入）
 - [ ] ☆ 压测报告（5/10/20 人并发判题，验证 P95 < 5s）
 - [ ] ☆ 渗透测试（XSS / SQL 注入 / CSRF 扫描）

@@ -681,25 +681,94 @@ if need "${JUDGE_UP}" "A25 状态流转"; then
 fi
 
 # ═════════════════════════════════════════════════════════════
-#  A26 — 限流（注册 quota 5/min/IP → 429 + Retry-After）
+#  A26 — 限流（Phase 8 ★；注册 quota 5/min/IP + 登录 quota 10/min/IP）
+#
+#  用 X-Forwarded-For 把两类 quota 隔到两个独立 bucket：
+#    - IP_REG=10.99.0.1 跑 register quota（默认 5/min）
+#    - IP_LOG=10.99.0.2 跑 login quota（默认 10/min）
+#  这样不会污染 default IP 的 register/login 状态，
+#  A27 改角色 + A35 失败登录锁定的路径不会再被本用例 hit429。
+#
+#  每个 quota 独立断言：
+#    - 第 N+1 次触发 HTTP 429
+#    - Retry-After 头非空且 ∈ [1, 60]
+#    - X-RateLimit-Limit == 该 quota 的 capacity
+#    - X-RateLimit-Remaining == 0
+#    - 响应体 .code == RATE_LIMITED + .error.details.quota 命中
 # ═════════════════════════════════════════════════════════════
-kase "A26" "限流 → 429 + Retry-After"
+kase "A26" "限流 → 429 + Retry-After（注册 5/min + 登录 10/min）"
 if need "${SERVER_UP}" "A26 限流"; then
-    got429=0; retry_after=""
+    # ── A26a: 注册 quota（默认 5/min/IP） ──
+    IP_REG="10.99.0.1"
+    rl_limit=""
+    got429_reg=0; retry_after_reg=""
     for i in $(seq 1 8); do
-        b="$(jq -n --arg u "e2e_rl_$(rnd)" '{username:$u,password:"Passw0rd_e2e"}')"
-        api POST /auth/register -d "${b}"
+        b="$(jq -n --arg u "e2e_rl_reg_$(rnd)" '{username:$u,password:"Passw0rd_e2e"}')"
+        api POST /auth/register -d "${b}" -H "X-Forwarded-For: ${IP_REG}"
         if [ "${HTTP_CODE}" = "429" ]; then
-            got429=1; retry_after="$(hdr_val 'Retry-After')"; break
+            got429_reg=1
+            retry_after_reg="$(hdr_val 'Retry-After')"
+            rl_limit="$(hdr_val 'X-RateLimit-Limit')"
+            rl_remain="$(hdr_val 'X-RateLimit-Remaining')"
+            quota_name="$(jqb '.error.details.quota')"
+            break
         fi
     done
-    if [ "${got429}" = "1" ]; then
-        ok "A26 超过注册限额 → 429（第 ${i} 次）"
-        [ -n "${retry_after}" ] && ok "A26 携带 Retry-After: ${retry_after}" \
-            || fail "A26 429 缺 Retry-After 头"
-        assert_jq '.code' 'RATE_LIMITED' "A26 错误码=RATE_LIMITED"
+    if [ "${got429_reg}" = "1" ]; then
+        ok "A26a 注册超额 → 429（第 ${i} 次，IP=${IP_REG}）"
+        if [ -n "${retry_after_reg}" ] \
+            && [ "${retry_after_reg}" -ge 1 ] 2>/dev/null \
+            && [ "${retry_after_reg}" -le 60 ] 2>/dev/null; then
+            ok "A26a Retry-After=${retry_after_reg}s ∈ [1,60]"
+        else
+            fail "A26a Retry-After='${retry_after_reg}' 不在 [1,60] 整数秒范围"
+        fi
+        [ "${rl_limit}" = "5" ] && ok "A26a X-RateLimit-Limit=5（注册 quota）" \
+            || fail "A26a X-RateLimit-Limit='${rl_limit}' != 5"
+        [ "${rl_remain}" = "0" ] && ok "A26a X-RateLimit-Remaining=0（拒绝时余量清零）" \
+            || fail "A26a X-RateLimit-Remaining='${rl_remain}' != 0"
+        assert_jq '.code' 'RATE_LIMITED' "A26a 错误码=RATE_LIMITED"
+        [ "${quota_name}" = "auth.register" ] && ok "A26a envelope.details.quota=auth.register" \
+            || fail "A26a envelope.details.quota='${quota_name}' != auth.register"
     else
-        fail "A26 连续 8 次注册未触发 429（限流是否生效？）"
+        fail "A26a 连续 8 次注册未触发 429（注册限流是否生效？）"
+    fi
+
+    # ── A26b: 登录 quota（默认 10/min/IP） ──
+    IP_LOG="10.99.0.2"
+    got429_log=0; retry_after_log=""
+    for i in $(seq 1 14); do
+        # 用错误密码登录：先 401 再 429；不走 register quota（独立 XFF IP）
+        b="$(jq -n --arg u "e2e_rl_log_does_not_exist_$(rnd)" \
+            '{username:$u,password:"WRONG_pw_x"}')"
+        api POST /auth/login -d "${b}" -H "X-Forwarded-For: ${IP_LOG}"
+        if [ "${HTTP_CODE}" = "429" ]; then
+            got429_log=1
+            retry_after_log="$(hdr_val 'Retry-After')"
+            rl_limit="$(hdr_val 'X-RateLimit-Limit')"
+            rl_remain="$(hdr_val 'X-RateLimit-Remaining')"
+            quota_name="$(jqb '.error.details.quota')"
+            break
+        fi
+    done
+    if [ "${got429_log}" = "1" ]; then
+        ok "A26b 登录超额 → 429（第 ${i} 次，IP=${IP_LOG}）"
+        if [ -n "${retry_after_log}" ] \
+            && [ "${retry_after_log}" -ge 1 ] 2>/dev/null \
+            && [ "${retry_after_log}" -le 60 ] 2>/dev/null; then
+            ok "A26b Retry-After=${retry_after_log}s ∈ [1,60]"
+        else
+            fail "A26b Retry-After='${retry_after_log}' 不在 [1,60] 整数秒范围"
+        fi
+        [ "${rl_limit}" = "10" ] && ok "A26b X-RateLimit-Limit=10（登录 quota）" \
+            || fail "A26b X-RateLimit-Limit='${rl_limit}' != 10"
+        [ "${rl_remain}" = "0" ] && ok "A26b X-RateLimit-Remaining=0（拒绝时余量清零）" \
+            || fail "A26b X-RateLimit-Remaining='${rl_remain}' != 0"
+        assert_jq '.code' 'RATE_LIMITED' "A26b 错误码=RATE_LIMITED"
+        [ "${quota_name}" = "auth.login" ] && ok "A26b envelope.details.quota=auth.login" \
+            || fail "A26b envelope.details.quota='${quota_name}' != auth.login"
+    else
+        fail "A26b 连续 14 次登录未触发 429（登录限流是否生效？）"
     fi
 fi
 
