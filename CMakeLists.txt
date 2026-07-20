@@ -82,6 +82,41 @@ find_package(OpenSSL REQUIRED)
 find_package(mysql-concpp CONFIG REQUIRED
     HINTS ${MYSQL_CONNECTOR_DIR})
 
+# v1.2.55 fix-up: the monolithic Win install at
+# ${MYSQL_CONNECTOR_DIR}/lib64/vs14/ ships release-only DLLs
+# (lib64/mysqlcppconnx-2-vs14.dll + lib64/vs14/mysqlcppconnx.lib).
+# Oracle's mysql-concpp-config.cmake line 798-803 fabricates fake
+# paths under lib64/debug/vs14/ when no Debug DLL is present, so
+# a Debug build of any consumer fails at link time with:
+#     LINK : fatal error LNK1104: 无法打开文件
+#     '.../lib64/debug/vs14/mysqlcppconnx.lib'
+#
+# We mirror the Release paths to the Debug and RelWithDebInfo
+# per-config forms directly. MAP_IMPORTED_CONFIG_DEBUG alone is
+# insufficient because Oracle's config sets IMPORTED_LOCATION
+# without a _RELEASE suffix, so the per-config Debug form remains
+# unset and the linker resolves it to 'mysql::concpp-xdevapi-NOTFOUND.obj'.
+# The connector's STL surface never crosses our boundary:
+# mysqlx::Row / Value are always normalized to std::string / POD
+# the instant fetchOne() returns, so there's no _ITERATOR_DEBUG_LEVEL
+# mismatch in practice. (MySQL only ships a debug-symbol package on
+# Linux; Windows debug DLLs are a separate, paid SKU.)
+function(lc_mirror_connector_debug_config _tgt)
+    if(NOT TARGET ${_tgt})
+        return()
+    endif()
+    foreach(_prop IMPORTED_LOCATION IMPORTED_IMPLIB)
+        get_target_property(_val "${_tgt}" "${_prop}")
+        if(_val AND NOT _val STREQUAL "${_prop}-NOTFOUND")
+            set_target_properties("${_tgt}" PROPERTIES
+                "${_prop}_DEBUG"           "${_val}"
+                "${_prop}_RELWITHDEBINFO"  "${_val}")
+        endif()
+    endforeach()
+endfunction()
+lc_mirror_connector_debug_config(mysql::concpp-xdevapi)
+lc_mirror_connector_debug_config(mysql::concpp-xdevapi-static)
+
 # ─── bcrypt C library (Phase 2 ★ password_hash.h's backend) ───
 # Sourced from OpenBSD's bcrypt; wrapped in src/auth/bcrypt/litecode_bcrypt.h
 # (renamed to dodge Windows SDK's <bcrypt.h> collision). Built as a small
