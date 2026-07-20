@@ -51,6 +51,16 @@ add_executable(test_admin_users       unit/test_admin_users.cpp)
 add_executable(test_admin_stats       unit/test_admin_stats.cpp)
 add_executable(test_admin_audit_logs  unit/test_admin_audit_logs.cpp)
 add_executable(test_admin_queue       unit/test_admin_queue.cpp)
+# v1.2.60 Phase 8 ★ 单元测试覆盖率 ≥ 60%：5 个 pure-unit 测试文件覆盖 repo 层
+# validators / filter clamps / build_where_clause — 这些过去没有独立 gtest，
+# 只在 route-level 测试里被间接触达。这层新增测试大幅提升 core 覆盖率（auth
+# / judge / repo / rate_limit / audit 五块的核心模块），让 scripts/coverage.sh
+# gate 在 CI 上能真实 ≥ 60%。
+add_executable(test_test_case_repo    unit/test_test_case_repo.cpp)
+add_executable(test_submission_repo   unit/test_submission_repo.cpp)
+add_executable(test_user_repo_helpers unit/test_user_repo_helpers.cpp)
+add_executable(test_problem_repo_helpers unit/test_problem_repo_helpers.cpp)
+add_executable(test_audit_log_helpers unit/test_audit_log_helpers.cpp)
 
 foreach(_tgt test_config test_config_singleton test_logger test_uuid test_request_id test_error_handler)
     target_link_libraries(${_tgt} PRIVATE GTest::gtest_main)
@@ -882,3 +892,84 @@ if(MSVC)
     target_compile_options(test_admin_queue PRIVATE /bigobj)
 endif()
 add_test(NAME admin_queue          COMMAND test_admin_queue)
+
+# ───────────────────────────────────────────────────────────────────────────
+#  v1.2.60 — Phase 8 ★ 单元测试覆盖率 ≥ 60%
+#  新增 5 个 pure-unit test_*.cpp 覆盖 5 块核心模块(repo / audit / user /
+#  problem / problem_revisions / submission / test_case)的 validators /
+#  helpers / build_where_clause，过去只被 route-level 测试间接触达。
+#  link 集合参考对应的 route-level test_* 二进制（mysql::concpp +
+#  nlohmann_json + OpenSSL，部分 + jwt-cpp）。test_submission_repo 和
+#  test_user_repo_helpers / test_problem_repo_helpers / test_audit_log_helpers
+#  都是 pure C++（无 MySQL / httplib），只需要 conpp + json 的头文件路径。
+# ───────────────────────────────────────────────────────────────────────────
+
+# test_test_case_repo.cpp — sample_case 表的 6 个公共方法 +
+# SampleCaseRow 默认值 + kSampleCaseSelectColumns 常量。IT 部分需要 MySQL，
+# pure unit 部分纯 C++。Link 集合对齐 test_problem.cpp (mysql::concpp +
+# OpenSSL)。
+target_link_libraries(test_test_case_repo PRIVATE
+    GTest::gtest_main
+    mysql::concpp
+    OpenSSL::SSL
+    OpenSSL::Crypto)
+target_include_directories(test_test_case_repo PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+add_test(NAME test_case_repo       COMMAND test_test_case_repo)
+
+# test_submission_repo.cpp — submission_repo 的 pure unit validators
+# (is_valid_status / is_terminal_status / is_valid_language /
+# validate_code_length / clamp_list_filter / kStatus* / kMin/MaxCodeLength
+# / kSubmissionSelectColumns + 异常层次 + struct defaults)。
+# 全部纯 C++，无需 MySQL/httplib，但 include 路径走 ${CMAKE_SOURCE_DIR}/src
+# 让 <db/submission_repo.h> 找得到。
+target_link_libraries(test_submission_repo PRIVATE
+    GTest::gtest_main
+    OpenSSL::SSL
+    OpenSSL::Crypto)
+target_include_directories(test_submission_repo PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+add_test(NAME submission_repo      COMMAND test_submission_repo)
+
+# test_user_repo_helpers.cpp — user_repo 的 pure unit validators
+# (is_valid_username_char / validate_username / validate_email /
+# clamp_user_list_filter + 异常层次 + struct defaults)。纯 C++。
+target_link_libraries(test_user_repo_helpers PRIVATE
+    GTest::gtest_main
+    OpenSSL::SSL
+    OpenSSL::Crypto)
+target_include_directories(test_user_repo_helpers PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+add_test(NAME user_repo_helpers    COMMAND test_user_repo_helpers)
+
+# test_problem_repo_helpers.cpp — problem_repo + problem_revisions_repo 的
+# pure unit validators + looks_like_dup_key_error heuristic + clamp_list_filter
+# （两个 repo 的版本）。纯 C++，无 MySQL/httplib/jwt。
+target_link_libraries(test_problem_repo_helpers PRIVATE
+    GTest::gtest_main
+    OpenSSL::SSL
+    OpenSSL::Crypto)
+target_include_directories(test_problem_repo_helpers PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+add_test(NAME problem_repo_helpers COMMAND test_problem_repo_helpers)
+
+# test_audit_log_helpers.cpp — audit_log_repo 的 validators +
+# detail::build_where_clause（覆盖 6 个 optional filter 的所有排列）。纯 C++，
+# 但 build_where_clause 返回的 WhereClause 里 bound_str 是 std::string 数组，
+# 所以不依赖 mysqlx；但 detail::WhereClause 在头文件里 #include 了
+# <vector><string>，所以 link nlohmann_json + conpp 跟 test_audit_log 保持一致
+# 避免某个间接 include 路径意外。
+target_link_libraries(test_audit_log_helpers PRIVATE
+    GTest::gtest_main
+    mysql::concpp
+    nlohmann_json::nlohmann_json
+    OpenSSL::SSL
+    OpenSSL::Crypto)
+target_include_directories(test_audit_log_helpers PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+add_test(NAME audit_log_helpers    COMMAND test_audit_log_helpers)

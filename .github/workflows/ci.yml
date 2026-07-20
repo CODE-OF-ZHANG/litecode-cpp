@@ -398,8 +398,13 @@ jobs:
       - name: Coverage report (HTML + summary)
         run: ./scripts/coverage.sh report
       - name: Threshold gate (核心 ≥ 80% / 全库 ≥ 40%)
-        # commit 1: || true warn-only（收集 baseline %）；commit 2: 去掉。
-        run: ./scripts/coverage.sh gate || true
+        # v1.2.60：Phase 8 ★ 单元测试覆盖率 ≥ 60%（SPEC.md:1119）+ 我们决策的
+        # 严口径（核心 ≥ 80% / 全库 ≥ 40%）— 真实硬门禁。失败即 fail 整 job。
+        # baseline 已通过 v1.2.59 收集并提交 5 个新 pure-unit 测试
+        # (test_test_case_repo / test_submission_repo / test_user_repo_helpers
+        #  / test_problem_repo_helpers / test_audit_log_helpers) 把核心模块
+        # 覆盖率拉到阈值之上。
+        run: ./scripts/coverage.sh gate
       - name: Upload to Codecov (PR + main, fail-soft)
         uses: codecov/codecov-action@v4
         with:
