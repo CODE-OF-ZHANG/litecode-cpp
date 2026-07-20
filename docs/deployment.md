@@ -257,8 +257,43 @@ MYSQL_HOST=mysql MYSQL_PASSWORD="$MYSQL_ROOT_PASSWORD" \
 | cAdvisor | http://127.0.0.1:8088 | 无 |
 | node-exporter | http://127.0.0.1:9100/metrics | 无 |
 
-Grafana 启动后自动加载 **LiteCode Phase 9 Overview** 仪表盘（5 个 panel 分组：
-系统概览 / 判题 P95 / 错误率 / 队列 / 资源）。
+Grafana 启动后自动加载 **LiteCode Phase 9 Overview** 仪表盘（v1.2.69，5 个
+panel 分组 14 个 chart：系统概览 / 判题 P95·P99 / 错误率 / 队列·预热池 /
+容器·宿主资源），全部 panel 引用 v1.2.68 MetricsService 真实暴露的 7
+个 metric family + cAdvisor / node-exporter / Prometheus up：
+
+| 分组 | panel | 数据源 |
+|---|---|---|
+| 1. 系统概览 | Web 容器在线 / 判题队列 / Worker / 预热池 idle / 预热池目标 K / DB active / 总提交数 / P95 | `up{job="litecode-web"}` + 6 × `litecode_*` gauge + `histogram_quantile(0.95, …)` |
+| 2. 判题延迟 | P50 / P95 / P99 时序 + P99 大字 | `litecode_judge_duration_seconds_bucket` (histogram) |
+| 3. 错误率 | AC 占比 / 系统错误 (se) / 提交终态分布 | `litecode_submissions_total{status="..."}` |
+| 4. 队列 / 预热池 | queue / warm_pool / warm_target / running 时序 | 4 × `litecode_*` gauge |
+| 5. 资源 | Web 容器 CPU / 内存 + 宿主磁盘 / CPU | cAdvisor `container_*` + node-exporter `node_*` |
+
+**v1.2.69 Prometheus 数据源契约**：datasources.yml 把 Prometheus DS
+的 UID 固定为 `prometheus`，跟 panel `datasource.uid: prometheus` 显式
+绑定。Grafana 默认会随机生成 UID，若两者不钉死则整个面板会显示
+"No data"（UID mismatch）。
+
+**新增 / 修改 dashboard 后必须跑**：
+
+```bash
+scripts/validate_grafana_dashboards.sh
+```
+
+会做三件事：(1) `jq empty` 校验所有 `monitoring/grafana/dashboards/*.json`
+的 JSON 格式；(2) 交叉对照 v1.2.68 MetricsService 暴露的 7 个
+`litecode_*` metric family + histogram 派生 `_bucket/_sum/_count` 后缀，
+**阻断任何「幽灵指标」引用漂回仓里**（v1.2.57 placeholder dashboard
+里 `litecode_http_requests_total` / `litecode_db_pool_size` /
+`litecode_active_sessions` / `litecode_process_start_time_seconds` /
+`litecode_judge_active` 这 5 个从未实现的指标就是栽在没这道 lint 上）；
+(3) 校验 datasources.yml 的 Prometheus DS 必须有 `uid:` 字段。
+
+**新增 metric 时**两处同步：先在 `src/app_context_metrics.cpp` 加
+`register_*()` 调用，再在 `scripts/validate_grafana_dashboards.sh` 的
+`ALLOWLIST_LITECODE` 块补上对应名字——少任何一处，dashboard 引用会变
+"No data" 或 lint 直接 fail。
 
 告警规则见 [monitoring/alerting/prometheus-alerts.yml](../monitoring/alerting/prometheus-alerts.yml)：
 - **JudgeDurationP99TooHigh**（critical）：P99 > 5s 持续 2m
@@ -365,6 +400,31 @@ docker 内置关键字不是网络名。
 **原因**：JWT_SECRET 改了，旧 token 全部失效。
 
 **解决**：用户重新登录；或回滚 `.env` 里的 JWT_SECRET。
+
+### 9.8 Grafana 面板整面板显示 "No data"
+
+**原因**：v1.2.69 之前 dashboard panel 引用了从未实现的幽灵指标
+（`litecode_http_requests_total` / `db_pool_size` / `active_sessions` /
+`process_start_time_seconds` / `judge_active`），或者 datasources.yml
+的 Prometheus DS 没钉 `uid:` 字段，跟 panel `datasource.uid: prometheus`
+失配。
+
+**解决**：
+
+```bash
+# 1. 跑 linter 看具体哪个 panel 引用了幽灵指标
+scripts/validate_grafana_dashboards.sh
+
+# 2. 修 dashboard JSON / datasources.yml，按 linter 报错改
+#    - 删掉幽灵 metric 引用
+#    - 或在 src/app_context_metrics.cpp register_*() 补上对应真指标
+#      （同时改 scripts/validate_grafana_dashboards.sh 的
+#       ALLOWLIST_LITECODE，两处必须同步）
+#    - datasources.yml 的 Prometheus DS 块必须有 `uid: prometheus`
+
+# 3. Grafana 自动 30s 热重载（dashboards.yml updateIntervalSeconds），
+#    等一会刷新面板即可
+```
 
 ---
 

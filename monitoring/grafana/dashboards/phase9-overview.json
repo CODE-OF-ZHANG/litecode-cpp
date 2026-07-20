@@ -2,7 +2,7 @@
   "annotations": {
     "list": []
   },
-  "description": "LiteCode-CPP Phase 9 监控总览：系统概览 + 判题 P95 + 错误率 + 队列 + 资源（SPEC §16.3）。",
+  "description": "LiteCode-CPP Phase 9 监控总览：系统概览 + 判题 P95/P99 + 错误率 + 队列/预热池 + 宿主/容器资源（SPEC §16.3）。v1.2.69 panels 仅引用 v1.2.68 MetricsService 真实暴露的 7 个 metric family + cAdvisor / node-exporter / prometheus up。",
   "editable": false,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -13,7 +13,7 @@
     {
       "id": 1,
       "type": "row",
-      "title": "1. 系统概览",
+      "title": "1. 系统概览（v1.2.68 §16.4 live gauges）",
       "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
       "collapsed": false,
       "panels": []
@@ -22,14 +22,10 @@
       "id": 2,
       "type": "stat",
       "title": "Web 容器在线",
-      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
+      "gridPos": {"h": 4, "w": 3, "x": 0, "y": 1},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
-        {
-          "expr": "up{job=\"litecode-web\"}",
-          "legendFormat": "up",
-          "refId": "A"
-        }
+        {"expr": "up{job=\"litecode-web\"}", "legendFormat": "up", "refId": "A"}
       ],
       "options": {
         "reduceOptions": {"calcs": ["lastNotNull"]},
@@ -43,119 +39,170 @@
             {"options": {"0": {"text": "DOWN", "color": "red"}}, "type": "value"},
             {"options": {"1": {"text": "UP",   "color": "green"}}, "type": "value"}
           ],
-          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "red", "value": null},
+            {"color": "green", "value": 1}
+          ]}
         }
       }
     },
     {
       "id": 3,
       "type": "stat",
-      "title": "QPS (最近 1m)",
-      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 1},
+      "title": "判题队列",
+      "gridPos": {"h": 4, "w": 3, "x": 3, "y": 1},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
-        {
-          "expr": "sum(rate(litecode_http_requests_total[1m]))",
-          "refId": "A"
-        }
+        {"expr": "litecode_judge_queue_size", "refId": "A"}
       ],
       "options": {
         "reduceOptions": {"calcs": ["lastNotNull"]},
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "area",
         "textMode": "auto"
       },
-      "fieldConfig": {"defaults": {"unit": "reqps"}}
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green",  "value": null},
+            {"color": "yellow", "value": 20},
+            {"color": "red",    "value": 50}
+          ]}
+        }
+      }
     },
     {
       "id": 4,
       "type": "stat",
-      "title": "DB 连接池使用率",
-      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1},
+      "title": "判题 Worker",
+      "gridPos": {"h": 4, "w": 3, "x": 6, "y": 1},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "litecode_judge_running_count", "refId": "A"}
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "fieldConfig": {"defaults": {"unit": "short"}}
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "预热池 (idle)",
+      "gridPos": {"h": 4, "w": 3, "x": 9, "y": 1},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "litecode_judge_warm_pool_size", "refId": "A"}
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "red",   "value": null},
+            {"color": "yellow", "value": 1},
+            {"color": "green",  "value": 2}
+          ]}
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "预热池目标 K",
+      "gridPos": {"h": 4, "w": 3, "x": 12, "y": 1},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "litecode_judge_warm_pool_target", "refId": "A"}
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "fieldConfig": {"defaults": {"unit": "short"}}
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "DB 连接池 active",
+      "gridPos": {"h": 4, "w": 3, "x": 15, "y": 1},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "litecode_db_pool_active", "refId": "A"}
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green",  "value": null},
+            {"color": "yellow", "value": 12},
+            {"color": "red",    "value": 16}
+          ]}
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "总提交数（累计）",
+      "gridPos": {"h": 4, "w": 3, "x": 18, "y": 1},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum(litecode_submissions_total)", "refId": "A"}
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "fieldConfig": {"defaults": {"unit": "short"}}
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "P95 (1m)",
+      "gridPos": {"h": 4, "w": 3, "x": 21, "y": 1},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "litecode_db_pool_active / litecode_db_pool_size",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(litecode_judge_duration_seconds_bucket[5m])))",
           "refId": "A"
         }
       ],
       "options": {
         "reduceOptions": {"calcs": ["lastNotNull"]},
         "colorMode": "background",
-        "graphMode": "none",
-        "textMode": "auto"
+        "graphMode": "area"
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "percentunit",
+          "unit": "s",
           "thresholds": {"mode": "absolute", "steps": [
             {"color": "green",  "value": null},
-            {"color": "yellow", "value": 0.7},
-            {"color": "red",    "value": 0.9}
+            {"color": "yellow", "value": 3},
+            {"color": "red",    "value": 5}
           ]}
         }
       }
-    },
-    {
-      "id": 5,
-      "type": "stat",
-      "title": "在线用户 (5m)",
-      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [
-        {
-          "expr": "sum(litecode_active_sessions)",
-          "refId": "A"
-        }
-      ],
-      "options": {
-        "reduceOptions": {"calcs": ["lastNotNull"]},
-        "colorMode": "value",
-        "graphMode": "none"
-      }
-    },
-    {
-      "id": 6,
-      "type": "stat",
-      "title": "总提交数 (累计)",
-      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [
-        {
-          "expr": "sum(litecode_submissions_total)",
-          "refId": "A"
-        }
-      ],
-      "options": {
-        "reduceOptions": {"calcs": ["lastNotNull"]},
-        "colorMode": "value",
-        "graphMode": "none"
-      }
-    },
-    {
-      "id": 7,
-      "type": "stat",
-      "title": "Uptime (web)",
-      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [
-        {
-          "expr": "time() - litecode_process_start_time_seconds{job=\"litecode-web\"}",
-          "refId": "A"
-        }
-      ],
-      "options": {
-        "reduceOptions": {"calcs": ["lastNotNull"]},
-        "colorMode": "value",
-        "graphMode": "none"
-      },
-      "fieldConfig": {"defaults": {"unit": "s"}}
     },
 
     {
       "id": 20,
       "type": "row",
-      "title": "2. 判题 P95 / P99 延迟",
+      "title": "2. 判题 P50 / P95 / P99 延迟",
       "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5},
       "collapsed": false,
       "panels": []
@@ -163,7 +210,7 @@
     {
       "id": 21,
       "type": "timeseries",
-      "title": "判题延迟分位数",
+      "title": "判题延迟分位数（histogram_quantile over _bucket[5m]）",
       "gridPos": {"h": 9, "w": 16, "x": 0, "y": 6},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
@@ -192,7 +239,7 @@
     {
       "id": 22,
       "type": "stat",
-      "title": "P99 (1m)",
+      "title": "P99 (last 5m)",
       "gridPos": {"h": 9, "w": 8, "x": 16, "y": 6},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
@@ -221,39 +268,71 @@
     {
       "id": 30,
       "type": "row",
-      "title": "3. 错误率",
+      "title": "3. 错误率（v1.2.68 暂未暴露 litecode_http_requests_total；以提交终态分布为代理）",
       "gridPos": {"h": 1, "w": 24, "x": 0, "y": 15},
       "collapsed": false,
       "panels": []
     },
     {
       "id": 31,
-      "type": "timeseries",
-      "title": "HTTP 错误率 (5xx / 4xx)",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "type": "stat",
+      "title": "AC 占比 (5m)",
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 16},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(rate(litecode_http_requests_total{status=~\"5..\"}[5m])) / sum(rate(litecode_http_requests_total[5m]))",
-          "legendFormat": "5xx",
+          "expr": "sum(rate(litecode_submissions_total{status=\"ac\"}[5m])) / clamp_min(sum(rate(litecode_submissions_total[5m])), 0.001)",
           "refId": "A"
-        },
-        {
-          "expr": "sum(rate(litecode_http_requests_total{status=~\"4..\"}[5m])) / sum(rate(litecode_http_requests_total[5m]))",
-          "legendFormat": "4xx",
-          "refId": "B"
         }
       ],
-      "fieldConfig": {"defaults": {"unit": "percentunit"}},
       "options": {
-        "legend": {"displayMode": "table", "placement": "bottom"},
-        "tooltip": {"mode": "multi"}
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "red",   "value": null},
+            {"color": "yellow", "value": 0.4},
+            {"color": "green",  "value": 0.6}
+          ]}
+        }
       }
     },
     {
       "id": 32,
+      "type": "stat",
+      "title": "系统错误 (5m)",
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(rate(litecode_submissions_total{status=\"se\"}[5m]))",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green", "value": null},
+            {"color": "red",   "value": 0.01}
+          ]}
+        }
+      }
+    },
+    {
+      "id": 33,
       "type": "timeseries",
-      "title": "提交判题结果分布",
+      "title": "提交终态分布（rate by status）",
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
@@ -281,25 +360,14 @@
     {
       "id": 41,
       "type": "timeseries",
-      "title": "判题队列长度 / 预热池大小 / 并发",
+      "title": "队列 / 预热池 / 并发 worker",
       "gridPos": {"h": 9, "w": 24, "x": 0, "y": 25},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
-        {
-          "expr": "litecode_judge_queue_size",
-          "legendFormat": "queue",
-          "refId": "A"
-        },
-        {
-          "expr": "litecode_judge_warm_pool_size",
-          "legendFormat": "warm_pool",
-          "refId": "B"
-        },
-        {
-          "expr": "litecode_judge_active",
-          "legendFormat": "active",
-          "refId": "C"
-        }
+        {"expr": "litecode_judge_queue_size",        "legendFormat": "queue",       "refId": "A"},
+        {"expr": "litecode_judge_warm_pool_size",    "legendFormat": "warm_pool",   "refId": "B"},
+        {"expr": "litecode_judge_warm_pool_target",  "legendFormat": "warm_target", "refId": "C"},
+        {"expr": "litecode_judge_running_count",     "legendFormat": "running",     "refId": "D"}
       ],
       "fieldConfig": {
         "defaults": {
@@ -316,7 +384,7 @@
     {
       "id": 50,
       "type": "row",
-      "title": "5. 资源 (cAdvisor + node-exporter)",
+      "title": "5. 资源（cAdvisor 容器 + node-exporter 宿主）",
       "gridPos": {"h": 1, "w": 24, "x": 0, "y": 34},
       "collapsed": false,
       "panels": []
@@ -395,6 +463,6 @@
   "timezone": "browser",
   "title": "LiteCode Phase 9 Overview",
   "uid": "litecode-phase9",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }
