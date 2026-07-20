@@ -793,6 +793,54 @@
     }
 
     // ────────────────────────────────────────────────────────────────────
+    //  Terminal status — single source of truth (v1.2.56)
+    //
+    //  Pages that watch a submission via SSE (subscribe below) tear
+    //  down once a terminal row arrives. The set is shared with the
+    //  server (judge_notifier::wait_for short-circuits on these —
+    //  see src/judge/judge_notifier.h:270). Adding a new terminal
+    //  status requires editing this list AND the server enum
+    //  together. Keep them in lockstep.
+    // ────────────────────────────────────────────────────────────────────
+
+    var TERMINAL_STATUSES = {
+        ac: 1, wa: 1, tle: 1, mle: 1,
+        re: 1, ole: 1, pe: 1, ce: 1, se: 1
+    };
+    function isTerminalStatus(s) { return !!TERMINAL_STATUSES[s]; }
+
+    // ────────────────────────────────────────────────────────────────────
+    //  subscribeSubmission — v1.2.56 convenience shim over sse()
+    //
+    //  The common shape across profile.html's recent-submissions
+    //  list and problem.html's history tab is "I have a submission
+    //  id and a row element; hand me the terminal row when the
+    //  worker publishes one." Wiring that pattern through openSse's
+    //  handlers object at every call site would duplicate the four
+    //  no-op handlers and the path concatenation. This shim
+    //  collapses both into one line of caller code.
+    //
+    //  Returns { close, mode } from sse(); the caller is responsible
+    //  for `close()` on terminal / pagehide / filter change. We
+    //  deliberately do NOT auto-close on terminal here: the
+    //  in-place row-replace path wants to keep the handle open
+    //  until the caller decides the row is truly done.
+    //
+    //  opts is forwarded verbatim so callers can pass { signal,
+    //  timeoutMs }. The DOM-touching decision (where to mount the
+    //  new row, when to tear down) lives in the caller, not here.
+    // ────────────────────────────────────────────────────────────────────
+
+    function subscribeSubmission(id, onUpdate, opts) {
+        return openSse('/submissions/sse/' + id, {
+            onResult:  onUpdate || function () {},
+            onPending: function () {},
+            onError:   function () {},
+            onClose:   function () {},
+        }, opts);
+    }
+
+    // ────────────────────────────────────────────────────────────────────
     //  Module surface
     // ────────────────────────────────────────────────────────────────────
 
@@ -813,6 +861,15 @@
         // Escapes
         rawFetch: rawFetch,
         sse:      openSse,
+
+        // SSE helpers (v1.2.56) — convenience shim + terminal-status
+        // check shared with the server. Pages subscribe via
+        // `subscribeSubmission(id, onUpdate, opts)` and tear down
+        // with the returned { close, mode }. `isTerminalStatus`
+        // answers "should I keep watching this row?" in one place.
+        subscribeSubmission: subscribeSubmission,
+        TERMINAL_STATUSES:   TERMINAL_STATUSES,
+        isTerminalStatus:    isTerminalStatus,
 
         // SSE parsers (pure functions, exposed for the unit-test
         // harness; production callers go through `sse()` above).

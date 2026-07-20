@@ -109,6 +109,10 @@
                     <a href="/index.html" class="lc-form-help" id="browse-link">去刷题 →</a>
                 </div>
                 <ul class="lc-history-list" id="recent-list" style="margin-top: 12px;"></ul>
+                <!-- v1.2.56 — live SSE caption. Hidden when no
+                     non-terminal rows are visible. Populated by
+                     renderRecent() after the list is rendered. -->
+                <p class="lc-form-help" id="recent-live-cap" hidden></p>
                 <p class="lc-form-help" id="recent-empty" hidden>还没有提交记录，去题库挑一道题开始吧。</p>
                 <p class="lc-form-help" id="stats-note" hidden></p>
             </section>
@@ -382,50 +386,149 @@
             $('status-empty').hidden = anyStatus;
         }
 
+        // profileRecentRowNode — build one <li> for the recent-submissions
+        // list. Extracted (v1.2.56) so the live-update manager can
+        // rebuild the same node on a terminal status change without
+        // copy-pasting the top-row construction. The class change
+        // from --{pending|running} to --{ac|wa|tle|…} triggers the
+        // CSS transition in style.css.
+        function profileRecentRowNode(row, meta) {
+            var status = row.status || 'pending';
+            var metaForRow = meta || {};
+            var li = el('li', { class: 'lc-history-row lc-history-row--' + status });
+            // free ARIA / DOM-inspectability hook + a stable handle for
+            // any future re-render that doesn't keep a closure ref.
+            li.dataset.submissionId = String(row.id);
+
+            var top = el('div', { class: 'lc-history-row__top' });
+            top.appendChild(el('span', {
+                class: 'lc-status lc-status--' + status,
+                text: STATUS_LABEL[status] || status.toUpperCase(),
+            }));
+
+            // Problem title → link to the problem page when we know
+            // the slug; otherwise fall back to a plain #id label.
+            if (metaForRow.slug) {
+                top.appendChild(el('a', {
+                    class: 'lc-history-row__id',
+                    href: '/problem.html?slug=' + encodeURIComponent(metaForRow.slug),
+                    text: metaForRow.title || metaForRow.slug,
+                }));
+            } else {
+                top.appendChild(el('span', {
+                    class: 'lc-history-row__id',
+                    text: '题目 #' + row.problem_id,
+                }));
+            }
+
+            top.appendChild(el('span', {
+                class: 'lc-history-row__lang',
+                text: LANG_LABEL[row.language] || row.language || '?',
+            }));
+            top.appendChild(el('span', {
+                class: 'lc-history-row__time',
+                title: String(row.created_at || ''),
+                text: formatProfileTime(row.created_at),
+            }));
+            li.appendChild(top);
+            return li;
+        }
+
+        // RowSubscriptionManager (v1.2.56) — same shape as problem.html's
+        // duplicate. The pure-helper (`mergeSubmissionRows`) is owned by
+        // problem.html and unit-tested there; profile.html doesn't
+        // re-test it because the surface is identical. See
+        // `web/test/history.test.js` for coverage.
+        //
+        //  Differences from problem.html's copy
+        //  ------------------------------------
+        //   * No filter/pagination guard — the "recent" list is always
+        //     the same 10 most-recent rows; we never page.
+        //   * `meta` argument is closure-captured per-row (problem.html
+        //     always rebuilds via the canonical `tabHistoryRowNode`,
+        //     which doesn't need a meta lookup because each row is
+        //     already self-described).
+        function RowSubscriptionManager(metaMap) {
+            var self = this;
+            var handles = new Map();   // submission id → { abort, close }
+
+            self.attach = function (li, id, row) {
+                if (!li || handles.has(id)) return;
+                if (litecode.api && litecode.api.isTerminalStatus(row && row.status)) return;
+
+                var abort = new AbortController();
+                var currentLi = li;
+                var rowMeta = metaMap[String(id)] || null;
+                var handle = litecode.api.subscribeSubmission(id, function (newRow) {
+                    if (!newRow || newRow.id == null) return;
+
+                    if (!currentLi.isConnected) {
+                        try { handle.close(); } catch (_) {}
+                        handles.delete(id);
+                        return;
+                    }
+
+                    var parent = currentLi.parentNode;
+                    if (!parent) return;
+                    var newLi = profileRecentRowNode(newRow, rowMeta);
+                    parent.replaceChild(newLi, currentLi);
+                    currentLi = newLi;
+
+                    if (litecode.api && litecode.api.isTerminalStatus(newRow.status)) {
+                        try { handle.close(); } catch (_) {}
+                        handles.delete(id);
+                    }
+                }, { signal: abort.signal });
+
+                handles.set(id, { abort: abort, close: handle.close });
+            };
+
+            self.destroy = function () {
+                handles.forEach(function (h) {
+                    try { h.close(); } catch (_) {}
+                    try { h.abort.abort(); } catch (_) {}
+                });
+                handles.clear();
+            };
+
+            self.count = function () { return handles.size; };
+
+            return self;
+        }
+
         function renderRecent(subs, metaMap) {
             var list = $('recent-list');
             list.textContent = '';
             var recent = subs.slice(0, 10);
             $('recent-empty').hidden = recent.length > 0;
 
+            // v1.2.56: tear down any prior batch + build a fresh
+            // manager for this render. Safe because profile.html
+            // re-renders only on page load or a Retry click, never
+            // while the user is browsing.
+            if (window._profileRowMgr) window._profileRowMgr.destroy();
+            window._profileRowMgr = new RowSubscriptionManager(metaMap);
+
+            var liveCount = 0;
             recent.forEach(function (row) {
                 var status = row.status || 'pending';
                 var meta = metaMap[String(row.problem_id)] || {};
-                var li = el('li', { class: 'lc-history-row lc-history-row--' + status });
-
-                var top = el('div', { class: 'lc-history-row__top' });
-                top.appendChild(el('span', {
-                    class: 'lc-status lc-status--' + status,
-                    text: STATUS_LABEL[status] || status.toUpperCase(),
-                }));
-
-                // Problem title → link to the problem page when we know
-                // the slug; otherwise fall back to a plain #id label.
-                if (meta.slug) {
-                    top.appendChild(el('a', {
-                        class: 'lc-history-row__id',
-                        href: '/problem.html?slug=' + encodeURIComponent(meta.slug),
-                        text: meta.title || meta.slug,
-                    }));
-                } else {
-                    top.appendChild(el('span', {
-                        class: 'lc-history-row__id',
-                        text: '题目 #' + row.problem_id,
-                    }));
-                }
-
-                top.appendChild(el('span', {
-                    class: 'lc-history-row__lang',
-                    text: LANG_LABEL[row.language] || row.language || '?',
-                }));
-                top.appendChild(el('span', {
-                    class: 'lc-history-row__time',
-                    title: String(row.created_at || ''),
-                    text: formatProfileTime(row.created_at),
-                }));
-                li.appendChild(top);
+                var li = profileRecentRowNode(row, meta);
                 list.appendChild(li);
+
+                if (!litecode.api.isTerminalStatus(status)) {
+                    window._profileRowMgr.attach(li, row.id, row);
+                    liveCount++;
+                }
             });
+
+            var cap = $('recent-live-cap');
+            if (cap) {
+                cap.hidden = (liveCount === 0);
+                cap.textContent = liveCount > 0
+                    ? ('正在监听 ' + liveCount + ' 个判题…')
+                    : '';
+            }
         }
 
         // ── Orchestration ──────────────────────────────────────────
@@ -499,6 +602,15 @@
             $('retry-btn').addEventListener('click', function () {
                 if (currentUser) loadStats().catch(showError);
                 else window.location.reload();
+            });
+
+            // v1.2.56: page-leave teardown so half-open SSE streams
+            // don't pin the worker to a closing tab. fetch + reader
+            // respect AbortController.abort() on `pagehide`.
+            window.addEventListener('pagehide', function () {
+                if (window._profileRowMgr) {
+                    window._profileRowMgr.destroy();
+                }
             });
         });
     })();

@@ -2148,7 +2148,15 @@ html.dark .lc-gauge--danger {
        palette. Default neutral border on the left for rows that
        don't override. */
     border-left: 4px solid var(--lc-color-border);
-    transition: border-color 120ms ease, transform 120ms ease;
+    /* v1.2.56: dedicated, longer transition on the left-stripe
+       color so an in-place class swap (e.g. a future refactor that
+       mutates the same <li> rather than replaceChild-ing a fresh
+       one) animates the --{status} flip visibly. 600ms is slow
+       enough to read without dragging; the existing 120ms covers
+       the rest of the border + transform. */
+    transition: border-color 120ms ease,
+                border-left-color 600ms ease-out,
+                transform 120ms ease;
 }
 .lc-history-row:hover {
     border-color: var(--lc-color-info);

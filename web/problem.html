@@ -380,6 +380,11 @@
 
                 <ol id="history-list" class="lc-history-list"
                     aria-label="提交记录"></ol>
+
+                <!-- v1.2.56 — live SSE caption. Hidden when no
+                     non-terminal rows are visible. Populated by
+                     tabHistoryLoad() after the list is rendered. -->
+                <p class="lc-form-help" id="history-live-cap" hidden></p>
             </div>
 
             <!-- Pagination footer. Hidden when total ≤ limit. -->
@@ -484,7 +489,6 @@
             ce:      'CE',
             se:      'SE',
         };
-        var TERMINAL_STATUSES = { ac:1, wa:1, tle:1, mle:1, re:1, ole:1, pe:1, ce:1, se:1 };
 
         // ── URL state ──────────────────────────────────────────────
         function getSlug() {
@@ -1256,7 +1260,13 @@
             }
         }
 
-        function isTerminal(status) { return !!TERMINAL_STATUSES[status]; }
+        // v1.2.56: TERMINAL_STATUSES moved to litecode.api.* (single
+        // source of truth shared with the server). The function name
+        // kept short for call-site readability inside the IIFE; the
+        // canonical exported name on `litecode.api` is `isTerminalStatus`.
+        function isTerminal(status) {
+            return !!(litecode.api && litecode.api.isTerminalStatus(status));
+        }
 
         // handleTerminalRow — shared "submission has finished" hook.
         // Called from BOTH the SSE-result path and the polling path;
@@ -1883,6 +1893,131 @@
             tabHistoryRenderPagination(total);
         }
 
+        // ──────────────────────────────────────────────────────────────────
+        //  History: SSE live-update for non-terminal rows (v1.2.56)
+        // ──────────────────────────────────────────────────────────────────
+        //
+        //  When this page is on the History tab and shows a
+        //  pending/running row, we want the row to update live without
+        //  a manual refresh. Each non-terminal row gets one
+        //  /submissions/sse/:id subscription; the worker's `publish`
+        //  callback (server side: JudgeNotifier) hands back the full
+        //  terminal row, which we use to replace the in-place <li>.
+        //
+        //  Inline (not api.js) because the manager is DOM-coupled and
+        //  api.js is the JSON/SSE transport layer (no document access).
+        //  profile.html gets its own copy (~50 lines) with the same
+        //  mergeSubmissionRows helper exported on __lcTest for unit
+        //  tests.
+        // ──────────────────────────────────────────────────────────────────
+
+        // mergeSubmissionRows — pure: returns a NEW array with the row
+        // whose id === newRow.id replaced. Mutates nothing. The DOM
+        // work (replacing the <li>) is the manager's job; this helper
+        // is the only piece unit-tested and is the public surface of
+        // the merge logic across both pages.
+        function mergeSubmissionRows(rows, newRow) {
+            if (!newRow || newRow.id == null) return (rows || []).slice();
+            var src = rows || [];
+            // Empty + new → initialize (the "first SSE arrival" case:
+            // the page didn't have this row yet — seed it).
+            if (src.length === 0) return [newRow];
+            // Otherwise: replace by id, or no-op when the id isn't
+            // present (we don't append — append would silently grow
+            // the user's list with rows they didn't ask for).
+            var out = new Array(src.length);
+            var found = false;
+            for (var i = 0; i < src.length; i++) {
+                if (src[i] && String(src[i].id) === String(newRow.id)) {
+                    out[i] = newRow;
+                    found = true;
+                } else {
+                    out[i] = src[i];
+                }
+            }
+            return found ? out : src.slice();
+        }
+
+        // RowSubscriptionManager — one instance per history-tab render.
+        // Tracks an open SSE handle per submission id; tear-down
+        // happens either via terminal status (per-row callback closes
+        // its own handle after replaceChild) or via destroy() (called
+        // on tabHistoryLoad + pagehide).
+        //
+        //  Design notes
+        //  ------------
+        //   * `li.isConnected` — row may have been filtered or
+        //     paginated away while we waited; drop the subscription
+        //     rather than touch a detached node.
+        //   * The `tabHistoryState.page !== 0 || status` guard drops
+        //     updates that landed on a paginated or filtered view (the
+        //     row doesn't actually belong there anymore — re-rendering
+        //     the whole list would dissolve the user's pagination
+        //     state).
+        //   * We don't auto-close on terminal inside the manager: the
+        //     in-place replace is the contract; the per-row call
+        //     closes its own handle after replacing.
+        //   * `currentLi` is closure-local and gets refreshed inside
+        //     the callback. If we held the original `li` across calls,
+        //     replaceChild would leave us with a stale reference.
+        function RowSubscriptionManager() {
+            var self = this;
+            var handles = new Map();   // submission id → { abort, close }
+
+            self.attach = function (li, id, row) {
+                if (!li || handles.has(id)) return;
+                if (isTerminal(row && row.status)) return;
+
+                var abort = new AbortController();
+                var currentLi = li;
+                var handle = litecode.api.subscribeSubmission(id, function (newRow) {
+                    if (!newRow || newRow.id == null) return;
+
+                    if (!currentLi.isConnected) {
+                        try { handle.close(); } catch (_) {}
+                        handles.delete(id);
+                        return;
+                    }
+
+                    // Filtered/paginated view: don't disturb it.
+                    if (tabHistoryState.page !== 0 ||
+                        (tabHistoryState.status &&
+                         tabHistoryState.status !== newRow.status)) {
+                        return;
+                    }
+
+                    var parent = currentLi.parentNode;
+                    if (!parent) return;
+                    var newLi = tabHistoryRowNode(newRow);
+                    parent.replaceChild(newLi, currentLi);
+                    currentLi = newLi;
+
+                    if (isTerminal(newRow.status)) {
+                        try { handle.close(); } catch (_) {}
+                        handles.delete(id);
+                    }
+                }, { signal: abort.signal });
+
+                handles.set(id, { abort: abort, close: handle.close });
+            };
+
+            // Tear down every open subscription. Idempotent. Called
+            // from pagehide and from tabHistoryLoad's re-render path
+            // (a fresh fetch replaces whatever we were tracking on
+            // the old page).
+            self.destroy = function () {
+                handles.forEach(function (h) {
+                    try { h.close(); } catch (_) {}
+                    try { h.abort.abort(); } catch (_) {}
+                });
+                handles.clear();
+            };
+
+            self.count = function () { return handles.size; };
+
+            return self;
+        }
+
         // tabHistoryLoad — the only place that talks to the server.
         // All other functions above are pure DOM/UI.
         function tabHistoryLoad() {
@@ -1901,6 +2036,35 @@
                     if (countEl) {
                         var total = Number(data.total) || 0;
                         countEl.textContent = total > 0 ? ' ' + total : '';
+                    }
+
+                    // v1.2.56 — wire SSE live-update on every non-terminal
+                    // row in this rendered page. destroy() first so a
+                    // re-fetch (status filter / pagination) tears down
+                    // the previous batch cleanly.
+                    if (window._historyRowMgr) {
+                        window._historyRowMgr.destroy();
+                    } else {
+                        window._historyRowMgr = new RowSubscriptionManager();
+                    }
+                    var items = data.items || [];
+                    if (items.length) {
+                        var listEl = $('history-list');
+                        var liveCount = 0;
+                        [].slice.call(listEl.children).forEach(function (li, idx) {
+                            var row = items[idx];
+                            if (!row) return;
+                            if (isTerminal(row.status)) return;
+                            window._historyRowMgr.attach(li, row.id, row);
+                            liveCount++;
+                        });
+                        var cap = $('history-live-cap');
+                        if (cap) {
+                            cap.hidden = (liveCount === 0);
+                            cap.textContent = liveCount > 0
+                                ? ('正在监听 ' + liveCount + ' 个判题…')
+                                : '';
+                        }
                     }
                 })
                 .catch(function (err) {
@@ -2133,6 +2297,16 @@
                 if (sseAbort) { try { sseAbort.abort(); } catch (_) {} }
                 if (sseHandle) { try { sseHandle.close(); } catch (_) {} }
                 if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+                // v1.2.56: tear down per-row history subscriptions.
+                // TODO(v1.2.57+): sessionStorage-backed cross-page
+                // SSE resume — out of scope for v1.2.56. Currently
+                // each new page on navigation re-fetches fresh; an
+                // in-flight judge that started on a previous page can
+                // stay "pending" in the DB long enough that this
+                // matters for the user.
+                if (window._historyRowMgr) {
+                    window._historyRowMgr.destroy();
+                }
             });
 
             // Tab strip — click + keyboard (Left/Right arrow)
@@ -2209,7 +2383,10 @@
         //  export on `litecode.api`.
         if (typeof __lcTest !== 'undefined') {
             __lcTest.STATUS_LABEL              = STATUS_LABEL;
-            __lcTest.TERMINAL_STATUSES         = TERMINAL_STATUSES;
+            // v1.2.56: TERMINAL_STATUSES now lives on litecode.api
+            // (added by the api.js IIFE). Re-export it for tests that
+            // still want to assert against it directly.
+            __lcTest.TERMINAL_STATUSES         = litecode.api.TERMINAL_STATUSES;
             __lcTest.STATUS_ICON               = STATUS_ICON;
             __lcTest.STATUS_HELP               = STATUS_HELP;
             __lcTest.HISTORY_PAGE_SIZE         = HISTORY_PAGE_SIZE;
@@ -2217,6 +2394,8 @@
             __lcTest.tabHistoryBuildQuery      = tabHistoryBuildQuery;
             __lcTest.tabHistoryFormatTime      = tabHistoryFormatTime;
             __lcTest.tabHistoryParseHash       = tabHistoryParseHash;
+            // v1.2.56: pure merge helper for SSE live-update.
+            __lcTest.mergeSubmissionRows       = mergeSubmissionRows;
         }
     })();
     </script>

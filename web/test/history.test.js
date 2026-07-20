@@ -109,6 +109,16 @@ var sandbox = {
             delete: function () { return Promise.reject(new Error('stub')); },
             rawFetch: function () { return Promise.reject(new Error('stub')); },
             sse:    function () { return { close: function () {} }; },
+            // v1.2.56: TERMINAL_STATUSES + isTerminalStatus live on
+            // litecode.api (api.js IIFE) now; the problem.html
+            // __lcTest re-export reads them from here. Mirror the
+            // 9-key shape so Group 1's "TS has 9 keys" assertion
+            // still passes.
+            TERMINAL_STATUSES: {
+                ac:1, wa:1, tle:1, mle:1, re:1, ole:1, pe:1, ce:1, se:1
+            },
+            isTerminalStatus: function (s) { return !!(this.TERMINAL_STATUSES[s]); },
+            subscribeSubmission: function () { return { close: function () {} }; },
         },
         boot: { shell: function () { return Promise.resolve(); } },
         csp: { SCRIPTS: {}, STYLESHEETS: {} },
@@ -276,6 +286,70 @@ if (!test || !test.tabHistoryBuildQuery) {
     // Garbage page= value is dropped silently.
     eq(parseWith('#history&page=abc'),
        { open: true, status: '', page: 0 }, 'g5.7 page=abc → page 0');
+})();
+
+// ── Group 6: mergeSubmissionRows ───────────────────────────────
+//
+// v1.2.56 — pure helper used by RowSubscriptionManager (both
+// profile.html and problem.html) to splice an SSE-published row
+// into the page's current submission list. The contract:
+//
+//   * Empty list + new row → seed (initialize to [new]).
+//   * Non-empty list + matching id → replace in place.
+//   * Non-empty list + unknown id → no-op (don't append).
+//   * null / missing-id newRow → return input copy unchanged.
+//   * Never mutates input (deep-equal before/after).
+//
+// The function lives on problem.html's `__lcTest` so this test
+// reads it via the same sandbox as the other helpers. profile.html
+// shares the pure contract by reference — it doesn't redefine.
+(function group6() {
+    var m = test.mergeSubmissionRows;
+
+    // g6.1: empty + new → seed with [new].
+    eq(m([], { id: 1, status: 'ac' }),
+       [{ id: 1, status: 'ac' }],
+       'g6.1 empty + new → [new] (initialize)');
+
+    // g6.2: same id → replace, length unchanged.
+    eq(m([{ id: 1, status: 'pending' }], { id: 1, status: 'ac' }),
+       [{ id: 1, status: 'ac' }],
+       'g6.2 same id → replaced, length 1');
+
+    // g6.3: mid-array replace, positions preserved.
+    eq(m([{ id: 1, status: 'pending' }, { id: 2, status: 'wa' }],
+         { id: 2, status: 'ac' }),
+       [{ id: 1, status: 'pending' }, { id: 2, status: 'ac' }],
+       'g6.3 mid-array replace, positions preserved');
+
+    // g6.4: input array is not mutated.
+    var orig = [{ id: 1, status: 'pending' }, { id: 2, status: 'pending' }];
+    var snap = JSON.parse(JSON.stringify(orig));
+    m(orig, { id: 1, status: 'ac' });
+    eq(orig, snap, 'g6.4 input array is not mutated (deep equality)');
+
+    // g6.5: unknown id in non-empty list → no-op (length + ids unchanged).
+    eq(m([{ id: 1, status: 'pending' }], { id: 99, status: 'ac' }),
+       [{ id: 1, status: 'pending' }],
+       'g6.5 unknown id (non-empty) → no-op');
+
+    // g6.6: non-terminal update still replaces so the visible state
+    // can refresh in place (running → running with new fields).
+    eq(m([{ id: 1, status: 'running', time_used: null }],
+         { id: 1, status: 'running', time_used: 42 }),
+       [{ id: 1, status: 'running', time_used: 42 }],
+       'g6.6 non-terminal update replaces');
+
+    // g6.7: null newRow → returns a (copy of) the input unchanged.
+    eq(m([{ id: 1, status: 'pending' }], null),
+       [{ id: 1, status: 'pending' }],
+       'g6.7 null newRow → input copy unchanged');
+
+    // g6.8: newRow missing id → no-op (defensive — SSE frame should
+    // never produce a row without an id, but if it does, don't crash).
+    eq(m([{ id: 1, status: 'pending' }], { status: 'ac' }),
+       [{ id: 1, status: 'pending' }],
+       'g6.8 newRow missing id → input copy unchanged');
 })();
 
 // ── Report ─────────────────────────────────────────────────────
