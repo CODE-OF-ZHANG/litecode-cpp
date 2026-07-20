@@ -1539,6 +1539,44 @@ if need "${SERVER_UP}" "A39 CSRF"; then
 fi
 
 # ═════════════════════════════════════════════════════════════
+#  A40-A43 — 模糊测试 判题输入 (Phase 8 △ v1.2.67)
+#  委托 scripts/fuzz_judge.sh（与 v1.2.65 load_test 同款设计）
+#  末行 `FUZZ_RESULT PASS=N FAIL=N SKIP=N` 反向汇入主计数器
+# ═════════════════════════════════════════════════════════════
+kase "A40-A43" "模糊测试 判题输入（Phase 8 △）"
+if need "${SERVER_UP}" "A40-A43 模糊测试"; then
+    if [ ! -f "${SCRIPT_DIR}/fuzz_judge.sh" ]; then
+        skip "A40-A43 scripts/fuzz_judge.sh 不存在"
+    elif [ -z "${USER_TOK:-}" ] || [ -z "${PID:-}" ]; then
+        skip "A40-A43 provision 未成功（缺 USER_TOK 或 PID）"
+    elif ! command -v python3 >/dev/null 2>&1; then
+        skip "A40-A43 python3 不可用（fuzz mutation 引擎依赖）"
+    else
+        _fuzz_out="${TMPD}/fuzz.out"
+        USER_TOK="${USER_TOK}" \
+        ADMIN_TOK="${ADMIN_TOK:-}" \
+        PID="${PID}" \
+        BASE_URL="${BASE_URL}" \
+        E2E_STRICT="${E2E_STRICT}" \
+        bash "${SCRIPT_DIR}/fuzz_judge.sh" >"${_fuzz_out}" 2>&1 || true
+        # 透传子用例的 ok/fail 行（让 e2e 主体输出可见 A40–A43 的细粒度断言）
+        sed -n '/^── A40/,/^════════════/p' "${_fuzz_out}" | head -80
+        # 反向汇入主计数器：parse 末行 FUZZ_RESULT 行
+        _fuzz_last="$(grep -E '^FUZZ_RESULT ' "${_fuzz_out}" | tail -1)"
+        _fp="$(echo "${_fuzz_last}" | awk '{print $2}' | cut -d= -f2)"
+        _ff="$(echo "${_fuzz_last}" | awk '{print $3}' | cut -d= -f2)"
+        _fs="$(echo "${_fuzz_last}" | awk '{print $4}' | cut -d= -f2)"
+        _fp=${_fp:-0}; _ff=${_ff:-0}; _fs=${_fs:-0}
+        PASS=$((PASS + _fp)); FAIL=$((FAIL + _ff)); SKIP=$((SKIP + _fs))
+        if [ "${_ff}" = "0" ]; then
+            ok "A40-A43 模糊测试整体无 FAIL（PASS=${_fp} SKIP=${_fs}）"
+        else
+            fail "A40-A43 模糊测试 FAIL=${_ff}（PASS=${_fp} SKIP=${_fs}）"
+        fi
+    fi
+fi
+
+# ═════════════════════════════════════════════════════════════
 #  总结
 # ═════════════════════════════════════════════════════════════
 echo
