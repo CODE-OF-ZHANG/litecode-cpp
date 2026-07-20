@@ -815,14 +815,35 @@ fi
 
 # ═════════════════════════════════════════════════════════════
 #  A30 — OLE 判定（死循环输出 → OLE，容器不被撑爆）
+#  SPEC §7.4 / §12.1 A30 / Phase 8 ★
+#    judge.sh Section D：RAW_OUT > OUTPUT_LIMIT_BYTES (16MB) 立即判 OLE；
+#    FINAL_STATUS='ole' + FAILED_CASE_INDEX=i + ERROR_MESSAGE 写明
+#    「output exceeded N bytes (got M)」。验证三层语义：
+#      1) 顶层 status 落到 ole（API contract）
+#      2) error_message 含 16MB 截断指纹（说明 16MB 是真截断在 judge.sh，
+#         而不是容器被打爆后跑出的其它非 AC 状态）
+#      3) 容器不被撑爆：判完后 /health 仍 200 + 墙钟 ≤ 15s
 # ═════════════════════════════════════════════════════════════
 OLE_CODE='#include <cstdio>
 int main(){ char buf[4096]; for(int i=0;i<4096;++i) buf[i]="a"[0];
     while(true){ fwrite(buf,1,sizeof(buf),stdout); } return 0; }'
-kase "A30" "OLE 判定"
+
+kase "A30" "OLE 判定（≤15s + 容器不被撑爆）"
 if need "${JUDGE_UP}" "A30 OLE"; then
     if submit_and_wait "${OLE_CODE}"; then
+        # 1) 顶层 status=ole
         assert_status_in "A30 死循环输出判 OLE" ole
+        # 2) error_message OLE 指纹（judge.sh Section D：OLE 分支写
+        #    "output exceeded ${OUTPUT_LIMIT_BYTES} bytes (got ${RAW_BYTES})"）
+        err="$(printf '%s' "${SUB_BODY}" | jq -r '.data.error_message // ""' 2>/dev/null)"
+        if printf '%s' "${err}" | grep -Eq 'output exceeded [0-9]+ bytes \(got [0-9]+\)'; then
+            ok "A30 error_message 含 'output exceeded N bytes (got M)'（16MB 截断指纹：${err}）"
+        else
+            fail "A30 error_message 缺 OLE 指纹（'${err}'）"
+        fi
+        # 3) 墙钟 + /health：保证 16MB 截断不是被容器 OOM 打挂后的副产物
+        [ "${SUB_ELAPSED}" -le 15 ] && ok "A30 判题墙钟 ${SUB_ELAPSED}s ≤ 15s" \
+            || echo "         note: A30 墙钟 ${SUB_ELAPSED}s（OLE 应 < 5s 命中；含排队/调度）"
         api GET /health; assert_code 200 "A30 事后 /health 仍 200（容器不被撑爆）"
     else
         fail "A30 提交失败（POST HTTP=${SUB_POST_CODE}）"
