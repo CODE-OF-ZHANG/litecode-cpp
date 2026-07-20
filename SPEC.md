@@ -1115,7 +1115,7 @@ litecode-cpp/
 
 ### Phase 8 - 质量保障（v1.2 新增）
 
-- [ ] ★ CI/CD 流水线（GitHub Actions：编译 + 单测 + 集成测试 + lint）
+- [x] ★ CI/CD 流水线（GitHub Actions：编译 + 单测 + 集成测试 + lint）—— v1.2.58（4 jobs: lint shellcheck+hadolint+compose config / build ccache+cmake / integration-test MySQL service+ctest -E flake / docker-build buildx+GHCR）+ v1.2.59（coverage job: lcov + 核心 ≥80% / 全库 ≥40% 硬门禁 + Codecov，commit 1 阶段 warn-only 收集 baseline；`docs/ci.md` 6 节 + `scripts/lint.sh` / `scripts/coverage.sh` 本地复现 + `.github/workflows/release.yml` 多架构+GitHub Release + dependabot 周一 09:00）
 - [ ] ★ 单元测试覆盖率 ≥ 60%（核心模块：auth / judge / repo / rate_limit / audit）
 - [ ] ★ E2E 验收脚本（scripts/e2e_acceptance.sh：覆盖 §12.1 所有 A1–A34 用例）
 - [ ] ★ 编译炸弹防护测试（提交模板元递归 / `#include` 炸弹，验证 10s 超时）
