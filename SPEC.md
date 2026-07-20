@@ -1128,7 +1128,7 @@ litecode-cpp/
 
 ### Phase 9 - 运维与监控（v1.2 新增）
 
-- [ ] ★ Prometheus 指标接入（`/api/v1/metrics`：submissions_total{status}、judge_duration_seconds、queue_size、warm_pool_size、db_pool_active）
+- [x] ★ Prometheus 指标接入（`/api/v1/metrics`：submissions_total{status}、judge_duration_seconds、queue_size、warm_pool_size、db_pool_active）—— v1.2.68（`src/routes/metrics.h` MetricsService：counter 单 label 族（status）+ histogram（Cumulative buckets 5ms→10s 共 11 档）+ gauge provider（scrape 时 live 采样）+ Prometheus 0.0.4 text exposition + `Content-Type: text/plain; version=0.0.4; charset=utf-8`；`src/app_context_metrics.cpp` build_metrics_deps 集中注册 SPEC §16.4 全部 7 个 metric family（counter + histogram + 5 gauge）+ `src/judge/judge_scheduler.h` `set_metrics()` + worker run_one_task 头部 `steady_clock::now()` 闭环 → finish_se / 成功 mark_finished 路径各 `record_task_metrics(started_at, status)` 一次（observe + inc）；`/api/v1/metrics` 取代 Phase 1 占位 501；15 unit tests：empty render / counter 字母序稳定 / histogram bucket 累加 + _sum + _count + 单 +Inf bucket / gauge provider scrape 时采样（不 eager）+ 异常 → NaN / 8 线程 × 1000 inc 原子性 / 4 线程 × 250 observe 原子性 / 路由 Content-Type + 200 body；零 src/main.cpp 改动之外的侵入）
 - [ ] ★ Grafana 面板（系统概览 / 判题 P95 / 错误率 / 队列 / 资源）
 - [ ] ★ 日志聚合（stdout JSON 格式，Docker logs 接管，可选 Loki/ELK）
 - [ ] ★ 日志轮转（logrotate 或 Docker log driver `json-file` + `max-size`）

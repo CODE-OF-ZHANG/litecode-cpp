@@ -162,6 +162,7 @@
 #include "../db/connection_pool.h"      // ConnectionPool
 #include "../db/submission_repo.h"      // mark_running / mark_finished
 #include "../logger.h"                  // LOG_* / RequestIdScope
+#include "../routes/metrics.h"          // MetricsService (Phase 9 ★ v1.2.68)
 #include "../routes/system_routes.h"    // HealthService::Probe / ProbeResult
 #include "docker_client.h"              // docker::Client / CreateOptions
 #include "judge_notifier.h"             // JudgeNotifier (Phase 4 ★ SSE)
@@ -361,6 +362,19 @@ public:
     }
 
     JudgeNotifier* notifier() const noexcept { return notifier_; }
+
+    // Wire a MetricsService (Phase 9 ★ v1.2.68). After this call the
+    // worker observes a `judge_duration_seconds` sample + bumps
+    // `submissions_total{status=...}` on every finished task. Passing
+    // nullptr disables the metrics side (the "metrics not configured"
+    // path — common in unit tests; production main.cpp always wires a
+    // live service so /api/v1/metrics has signal). The pointer must
+    // outlive the scheduler; the scheduler does not take ownership.
+    void set_metrics(MetricsService* metrics) noexcept {
+        metrics_ = metrics;
+    }
+
+    MetricsService* metrics() const noexcept { return metrics_; }
 
     JudgeScheduler(const JudgeScheduler&)            = delete;
     JudgeScheduler& operator=(const JudgeScheduler&) = delete;
@@ -615,6 +629,14 @@ private:
     // Run one task end-to-end. Never throws — every failure path
     // converges on mark_finished(status='se', ...).
     void run_one_task(JudgeTask& task) {
+        // Phase 9 ★ v1.2.68 — capture wall-clock start as early as
+        // possible so the observed `judge_duration_seconds` sample
+        // includes everything the worker did for this submission
+        // (parse → docker run → docker wait → json parse). The
+        // steady_clock is monotonic so clock skew across workers
+        // can't make a sample negative.
+        const auto task_started_at = std::chrono::steady_clock::now();
+
         // Null docker client ⇒ every docker call would crash. Bail
         // out with SE before doing anything; this is the documented
         // "dev box without docker" path.
@@ -623,7 +645,8 @@ private:
                 LOG_ERROR("judge_scheduler: no docker client; task rejected",
                           {{"submission_id", std::to_string(task.submission_id)}});
             } catch (...) {}
-            finish_se(task.submission_id, "no docker client configured");
+            finish_se(task.submission_id, task_started_at,
+                      "no docker client configured");
             return;
         }
 
@@ -669,7 +692,8 @@ private:
             try { LOG_ERROR("judge_scheduler: task.json write failed",
                             {{"submission_id", std::to_string(task.submission_id)},
                              {"error",         e.what()}}); } catch (...) {}
-            finish_se(task.submission_id, std::string("failed to write task.json: ") + e.what());
+            finish_se(task.submission_id, task_started_at,
+                      std::string("failed to write task.json: ") + e.what());
             return;
         }
 
@@ -767,7 +791,8 @@ private:
 
             auto cr = client_->create(opts);
             if (cr.id.empty()) {
-                finish_se(task.submission_id, "docker create returned empty id");
+                finish_se(task.submission_id, task_started_at,
+                          "docker create returned empty id");
                 cleanup_and_release(task_dir, pool_id, pool_gave_one);
                 return;
             }
@@ -776,7 +801,8 @@ private:
             try { LOG_ERROR("judge_scheduler: docker create failed",
                             {{"submission_id", std::to_string(task.submission_id)},
                              {"error",         e.what()}}); } catch (...) {}
-            finish_se(task.submission_id, std::string("docker create failed: ") + e.what());
+            finish_se(task.submission_id, task_started_at,
+                      std::string("docker create failed: ") + e.what());
             cleanup_and_release(task_dir, pool_id, pool_gave_one);
             return;
         }
@@ -786,7 +812,8 @@ private:
             client_->start(cid);
         } catch (const std::exception& e) {
             try_remove(cid, "after start failure");
-            finish_se(task.submission_id, std::string("docker start failed: ") + e.what());
+            finish_se(task.submission_id, task_started_at,
+                      std::string("docker start failed: ") + e.what());
             cleanup_and_release(task_dir, pool_id, pool_gave_one);
             return;
         }
@@ -801,7 +828,7 @@ private:
                           {{"submission_id", std::to_string(task.submission_id)},
                            {"timeout_ms",    std::to_string(timeout_ms)}}); } catch (...) {}
             try_kill_and_remove(cid);
-            finish_se(task.submission_id, "judge exceeded hard timeout (" +
+            finish_se(task.submission_id, task_started_at, "judge exceeded hard timeout (" +
                 std::to_string(cfg_.judge_hard_timeout_seconds) + "s)");
             cleanup_and_release(task_dir, pool_id, pool_gave_one);
             return;
@@ -810,7 +837,8 @@ private:
                             {{"submission_id", std::to_string(task.submission_id)},
                              {"error",         e.what()}}); } catch (...) {}
             try_kill_and_remove(cid);
-            finish_se(task.submission_id, std::string("docker wait failed: ") + e.what());
+            finish_se(task.submission_id, task_started_at,
+                      std::string("docker wait failed: ") + e.what());
             cleanup_and_release(task_dir, pool_id, pool_gave_one);
             return;
         }
@@ -851,6 +879,21 @@ private:
                              {"error",         e.what()}}); } catch (...) {}
             // Don't return — fall through to cleanup. The submission
             // will stay in 'running'; the operator can requeue manually.
+        }
+
+        // 9a. v1.2.68 (Phase 9 ★) — record the histogram sample +
+        // counter increment for the terminal status we just
+        // persisted. Only counted when mark_finished actually
+        // flipped the row (mirrors the notifier_ publish guard below
+        // — we never want to double-count an "already terminal" row
+        // because a sweep or recovery re-ran run_one_task). The
+        // duration histogram is observed at the wall-clock level
+        // (task_started_at → now); status comes from the JudgeResult
+        // we just parsed (ac / wa / tle / mle / ole / pe / ce / re /
+        // se — every kStatus* constant except the transient pending /
+        // running pair).
+        if (persisted) {
+            record_task_metrics(task_started_at, result.status);
         }
 
         // 9b. Phase 4 ★ SSE — publish the result to the notifier.
@@ -921,7 +964,16 @@ private:
     }
 
     // Helper: write the final SE state and exit cleanly.
-    void finish_se(int submission_id, const std::string& err) {
+    //
+    // v1.2.68 (Phase 9 ★): also records the judge-duration histogram
+    // sample + increments `submissions_total{status="se"}` exactly
+    // once per SE exit, via record_task_metrics(). Centralizing the
+    // metric emit here means every failure branch counts toward the
+    // counter (and contributes a sample to judge_duration_seconds)
+    // without each call site duplicating the bookkeeping.
+    void finish_se(int submission_id,
+                   std::chrono::steady_clock::time_point started_at,
+                   const std::string& err) {
         try {
             submission_repo::mark_finished(
                 *db_, submission_id, "se",
@@ -930,6 +982,40 @@ private:
             try { LOG_ERROR("judge_scheduler: SE mark_finished failed",
                             {{"submission_id", std::to_string(submission_id)},
                              {"error",         e.what()}}); } catch (...) {}
+        }
+        record_task_metrics(started_at, kStatusSE);
+    }
+
+    // Helper: emit judge_duration_seconds + submissions_total labels
+    // for the just-finished task. Safe to call when metrics_ is null
+    // (no-op). Always uses status=kStatus* constants; an unexpected
+    // status string lands in the "se" bucket so we never silently
+    // drop a counter increment.
+    //
+    // Why a wall-clock sample (not judge.sh's time_used_ms):
+    //   - judge.sh reports the user-code runtime; the histogram we
+    //     publish is the END-TO-END worker duration — includes docker
+    //     create + start + wait + log pull + parse. P99 alerts over
+    //     this metric track wall-clock latency the operator actually
+    //     cares about.
+    void record_task_metrics(std::chrono::steady_clock::time_point started_at,
+                             std::string_view status) {
+        if (metrics_ == nullptr) return;
+        const auto elapsed_seconds =
+            std::chrono::duration_cast<std::chrono::duration<double>>(
+                std::chrono::steady_clock::now() - started_at).count();
+        try {
+            metrics_->observe_histogram("litecode_judge_duration_seconds",
+                                        elapsed_seconds);
+        } catch (...) {
+            // metric sink must never crash a worker
+        }
+        try {
+            metrics_->inc_counter("litecode_submissions_total", status);
+        } catch (...) {
+            // ditto — the noop-on-unknown path inside the service
+            // is sufficient; this catch is defensive against future
+            // MetricsService API changes that might throw.
         }
     }
 
@@ -1127,6 +1213,7 @@ public:
     WarmPool*             pool_;
     ConnectionPool*       db_;
     JudgeNotifier*        notifier_ = nullptr;   // Phase 4 ★ SSE — non-owning
+    MetricsService*       metrics_ = nullptr;    // Phase 9 ★ v1.2.68 Prometheus — non-owning
     JudgeSchedulerConfig  cfg_;
 
     std::deque<JudgeTask> queue_;

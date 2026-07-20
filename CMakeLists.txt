@@ -163,12 +163,14 @@ add_executable(litecode_server
     src/app_context_auth.cpp
     src/app_context_judge.cpp
     src/app_context_health.cpp
+    src/app_context_metrics.cpp
     src/routes/auth_routes.cpp
     src/routes/problem_routes.cpp
     src/routes/submission_routes.cpp
     src/routes/stats_routes.cpp
     src/routes/tag_routes.cpp
     src/routes/system_routes.cpp
+    src/routes/metrics_routes.cpp
     src/routes/admin_audit_log_routes.cpp
     src/routes/admin_bulk_import_routes.cpp
     src/routes/admin_problem_routes.cpp

@@ -36,6 +36,7 @@ class RateLimiter;
 class LoginFailureTracker;
 class RefreshTokenStore;
 class HealthService;
+class MetricsService;                    // Phase 9 ★ v1.2.68
 
 namespace docker { class Client; }       // src/judge/docker_client.h
 namespace judge {
@@ -83,5 +84,24 @@ struct HealthDeps {
 HealthDeps build_health_deps(const DbDeps&         db,
                              const JudgeDeps&      judge,
                              std::function<ProbeResult()> docker_probe);
+
+// Returns a fully-populated MetricsService with the
+// SPEC §16.4 metric families registered:
+//   - litecode_submissions_total       (counter / status)
+//   - litecode_judge_duration_seconds  (histogram)
+//   - litecode_judge_queue_size        (gauge, sampled from sched)
+//   - litecode_judge_running_count     (gauge, sampled from sched)
+//   - litecode_judge_warm_pool_size    (gauge, sampled from warm_pool)
+//   - litecode_judge_warm_pool_target  (gauge, sampled from warm_pool)
+//   - litecode_db_pool_active          (gauge, sampled from db.stats())
+//
+// All gauge providers are null-safe — when a subsystem is unconfigured
+// (db==null, sched==null, etc.) the gauge renders "0" instead of
+// crashing the scrape.
+struct MetricsDeps {
+    std::unique_ptr<MetricsService> metrics;
+};
+MetricsDeps build_metrics_deps(const DbDeps&    db,
+                                const JudgeDeps& judge);
 
 } // namespace litecode

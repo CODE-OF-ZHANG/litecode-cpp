@@ -100,6 +100,13 @@ int main() {
 
     auto health = litecode::build_health_deps(db, judge, docker_probe);
 
+    // Phase 9 ★ v1.2.68 — Prometheus metrics service. Built AFTER
+    // the judge / db deps so the gauge providers can capture raw
+    // pointers into them. ctx.scheduler / ctx.warm_pool / ctx.db_pool
+    // outlive the MetricsService (the AppContext unique_ptr reset
+    // happens before any provider can be called once main() returns).
+    auto metrics = litecode::build_metrics_deps(db, judge);
+
     litecode::AppContext ctx;
     ctx.config         = const_cast<litecode::AppConfig*>(&cfg);
     ctx.db_pool        = std::move(db.pool);
@@ -112,6 +119,7 @@ int main() {
     ctx.notifier       = std::move(judge.notifier);
     ctx.health         = std::move(health.health);
     ctx.docker_probe   = docker_probe;
+    ctx.metrics        = std::move(metrics.metrics);
 
     // ── 3. Construct HttpServer + mount static assets ─────────────────────
     litecode::HttpServer server(cfg.server, cfg.cors);
@@ -131,6 +139,23 @@ int main() {
     // available even when MySQL is down.
     if (ctx.health) {
         litecode::register_health_routes(server, *ctx.health);
+    }
+
+    // Phase 9 ★ v1.2.68 — Prometheus /metrics route. The
+    // MetricsService holds a long-lived reference; the registry
+    // owner outlives the HttpServer (boot order: built first,
+    // registered after, server.start() last, then shutdown drains
+    // the metrics service when main() returns).
+    if (ctx.metrics) {
+        litecode::register_metric_routes(server, *ctx.metrics);
+
+        // Wire the metrics sink INTO the scheduler so run_one_task
+        // can observe / inc on every finished submission. We do
+        // this after register_metric_routes so even the very first
+        // submission enqueued right after start() lands a metric.
+        if (ctx.scheduler) {
+            ctx.scheduler->set_metrics(ctx.metrics.get());
+        }
     }
 
     if (ctx.db_pool) {

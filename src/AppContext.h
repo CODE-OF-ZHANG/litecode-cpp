@@ -33,6 +33,7 @@ class RateLimiter;                       // src/middleware/rate_limit.h
 class LoginFailureTracker;               // src/routes/auth_routes.h
 class RefreshTokenStore;                 // src/auth/refresh_token.h
 class HealthService;                     // src/routes/system_routes.h
+class MetricsService;                    // src/routes/metrics.h (Phase 9 ★ v1.2.68)
 
 namespace docker { class Client; }       // src/judge/docker_client.h
 namespace judge {
@@ -59,6 +60,9 @@ struct AppContext {
     // ── Health ───────────────────────────────────────────────────────────
     std::unique_ptr<HealthService>                 health;
     std::function<ProbeResult()>                   docker_probe;
+
+    // ── Prometheus metrics (Phase 9 ★ v1.2.68) ──────────────────────────
+    std::unique_ptr<MetricsService>                metrics;
 };
 
 } // namespace litecode

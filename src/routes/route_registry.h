@@ -112,4 +112,10 @@ HttpServer& register_admin_user_routes(
 // system_routes.h: register_health_routes is in namespace litecode.
 HttpServer& register_health_routes(HttpServer&, HealthService&);
 
+// metrics.h (Phase 9 ★ v1.2.68) — Prometheus exposition at
+// /api/v1/metrics. register_metric_routes is in namespace litecode
+// (metrics.h has no sub-namespace of its own; the .cpp mirrors
+// system_routes.cpp's pattern).
+HttpServer& register_metric_routes(HttpServer&, MetricsService&);
+
 } // namespace litecode

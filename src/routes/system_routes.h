@@ -323,10 +323,13 @@ inline HealthService::Probe make_docker_probe_placeholder() {
 //  Route registration.
 //
 //  GET /api/v1/health — public; runs probes; returns 200 or 503.
-//  GET /api/v1/metrics — placeholder 501 for now. Phase 9 (Prometheus)
-//  will swap the handler body; having the route registered in Phase 1
-//  lets the docker-compose / monitoring/ config reference it without
-//  "404 not found" during early smoke tests.
+//  GET /api/v1/metrics — registered by `register_metric_routes()` in
+//  routes/metrics.h (Phase 9 ★ v1.2.68). Kept out of this TU so the
+//  metrics header doesn't drag mysql::* / docker::* / warm_pool.h into
+//  callers that only need /api/v1/health. The docker-compose monitoring
+//  profile expects /api/v1/metrics to start returning the Prometheus
+//  exposition format; register_metric_routes() is therefore called
+//  BEFORE server.start() in main.cpp.
 // ────────────────────────────────────────────────────────────────────────────
 
 inline HttpServer& register_health_routes(HttpServer& server,
@@ -359,16 +362,6 @@ inline HttpServer& register_health_routes(HttpServer& server,
                     // Logging must never flip a 503 into a 500. Swallow.
                 }
             }
-        });
-
-    server.get("/api/v1/metrics",
-        [](const httplib::Request&, httplib::Response& res) {
-            // Phase 9 ★ will replace this with real Prometheus text.
-            // For now we return 501 so the path is "registered but
-            // not implemented", which is more honest than an empty
-            // 200 and matches the SPEC's "Phase 9 (运维与监控)" tag.
-            send_error(res, 501, ErrorCode::SERVICE_UNAVAILABLE,
-                       "Prometheus metrics not yet implemented (phase 9)");
         });
 
     return server;

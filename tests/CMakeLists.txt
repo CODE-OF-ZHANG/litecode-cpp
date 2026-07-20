@@ -51,6 +51,11 @@ add_executable(test_admin_users       unit/test_admin_users.cpp)
 add_executable(test_admin_stats       unit/test_admin_stats.cpp)
 add_executable(test_admin_audit_logs  unit/test_admin_audit_logs.cpp)
 add_executable(test_admin_queue       unit/test_admin_queue.cpp)
+# v1.2.68 Phase 9 ★ Prometheus 指标接入 — MetricsService +
+# /api/v1/metrics 路由的 pure-unit + 进程内 httplib smoke。Header-only
+# + small surface area, link 集合对齐 test_health (nlohmann_json 不需要，
+# 因为 text/plain body 不带 JSON)。
+add_executable(test_metrics           unit/test_metrics.cpp)
 # v1.2.60 Phase 8 ★ 单元测试覆盖率 ≥ 60%：5 个 pure-unit 测试文件覆盖 repo 层
 # validators / filter clamps / build_where_clause — 这些过去没有独立 gtest，
 # 只在 route-level 测试里被间接触达。这层新增测试大幅提升 core 覆盖率（auth
@@ -442,6 +447,19 @@ target_include_directories(test_health PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/db)
 
+# v1.2.68 Phase 9 ★ Prometheus 指标接入 — MetricsService +
+# /api/v1/metrics 路由。metrics.h 是 header-only + inline；测试通过
+# 进程内 httplib 客户端验证 /api/v1/metrics 的 Content-Type 与 body
+# 形态，所以 link 集合与 test_health 一致（httplib + OpenSSL）。
+target_link_libraries(test_metrics PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    OpenSSL::SSL
+    OpenSSL::Crypto)
+target_include_directories(test_metrics PRIVATE
+    ${CMAKE_SOURCE_DIR}/src)
+
 add_test(NAME config            COMMAND test_config)
 add_test(NAME config_singleton  COMMAND test_config_singleton)
 add_test(NAME logger            COMMAND test_logger)
@@ -450,6 +468,7 @@ add_test(NAME server            COMMAND test_server)
 add_test(NAME uuid              COMMAND test_uuid)
 add_test(NAME request_id        COMMAND test_request_id)
 add_test(NAME health            COMMAND test_health)
+add_test(NAME metrics           COMMAND test_metrics)
 add_test(NAME error_handler     COMMAND test_error_handler)
 add_test(NAME jwt_utils         COMMAND test_jwt_utils)
 add_test(NAME password_hash     COMMAND test_password_hash)

@@ -331,9 +331,9 @@ mkdir -p logs && chmod 777 logs
 
 ### 9.3 Prometheus 抓不到 web 容器指标
 
-**原因**：web 容器没启 `/api/v1/metrics` 端点（Phase 9 ★ 之前）。
+**原因**：web 容器没启 `/api/v1/metrics` 端点（Phase 9 ★ v1.2.68 之前）。
 
-**解决**：等 web 升级到 v1.2.59+（含 metrics.cpp）；或暂时禁用该 job。
+**解决**：升级 web 到 v1.2.68+（`src/routes/metrics.h` MetricsService 实装 counter / histogram / gauge 全部 §16.4 metric family）；端点返回 `Content-Type: text/plain; version=0.0.4; charset=utf-8`，Prometheus 直接吃。Probed metrics：`litecode_submissions_total{status="..."}` (counter, 9 个 ac/wa/tle/.../se label) + `litecode_judge_duration_seconds_*` (histogram, 11 档 bucket 5ms→10s) + `litecode_judge_queue_size` / `litecode_judge_running_count` / `litecode_judge_warm_pool_size` / `litecode_judge_warm_pool_target` / `litecode_db_pool_active` (5 个 scrape 时 live 采样 gauge)。或 v1.2.68 之前临时把 `monitoring/prometheus.yml` 里 `litecode-web` job 注释掉。
 
 ### 9.4 backup 容器退出 `crond: can't open crontab`
 
