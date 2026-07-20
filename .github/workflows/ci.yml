@@ -151,7 +151,7 @@ jobs:
         run: ccache --show-stats --verbose
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-${{ github.sha }}
           path: |
@@ -253,7 +253,7 @@ jobs:
 
       - name: Upload ctest log (on failure)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ctest-failure-${{ github.sha }}
           path: |
@@ -415,7 +415,7 @@ jobs:
           name: litecode-coverage
       - name: Upload lcov artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-${{ github.sha }}
           path: |
