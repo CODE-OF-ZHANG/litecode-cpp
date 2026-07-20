@@ -39,6 +39,7 @@ third_party/
 docs/*
 !docs/deployment.md
 !docs/ci.md
+!docs/load-test-report.md
 !docs/superpowers/
 # Local secrets (SPEC §15.7)
 .env
