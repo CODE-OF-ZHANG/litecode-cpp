@@ -321,8 +321,100 @@ jobs:
           cache-to: type=gha,mode=max
           # 不挂载 socket（CI runner 无 docker.sock）
 
-  # ───── 可选 Job 5: codecov (覆盖率报告) ──────────────────────
-  # v1.2.59+ 引入 lcov 跑覆盖率后启用。当前 jobs 不强依赖。
-  # coverage:
-  #   runs-on: ubuntu-22.04
-  #   ...
+  # ───── Job 5: coverage (lcov 硬门禁 + Codecov 上传) ──────────────────
+  # v1.2.59: 实装 lcov 覆盖率。CI 重编带 --coverage 的 Debug build → 跑
+  # MySQL 服务 + init_db + ctest (-E flake) → lcov capture → 抽 core/whole 百分比 →
+  # bash 阈值门禁（核心 ≥80% / 全库 ≥40%，SPEC.md:1119 + v1.2.58 决策） →
+  # 上传 Codecov.io 公开 SaaS（informational, 权威 gate 在 scripts/coverage.sh）。
+  # commit 1 阶段 gate 用 `|| true`（warn-only），先跑一轮收集真实 %；
+  # commit 2 阶段去掉 `|| true` 真正硬卡。
+  coverage:
+    name: Coverage (lcov + gate)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    needs: build
+    services:
+      mysql:
+        image: mysql:${{ env.MYSQL_VERSION }}
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass_change_me
+          MYSQL_DATABASE: litecode_test
+          TZ: Asia/Shanghai
+        ports:
+          - 33060:33060
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpass_change_me"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+          --health-start-period=30s
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: "33060"
+      DB_USER: root
+      DB_PASSWORD: rootpass_change_me
+      DB_NAME: litecode_test
+      JWT_SECRET: ci_jwt_secret_placeholder_at_least_32_bytes_long_xx
+      JWT_ISSUER: litecode-ci
+      LITECODE_ALLOW_INSECURE_DEFAULTS: "1"
+      LOG_LEVEL: WARNING
+      TZ: Asia/Shanghai
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build + coverage deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            lcov \
+            mysql-client \
+            netcat-openbsd \
+            libmysqlcppconn-dev libmysqlcppconn10 libmysqlcppconnx2
+          # 头文件软链（Oracle APT 装在 mysql-cppconn/ 命名空间下）
+          sudo ln -sf /usr/include/mysql-cppconn/mysqlx /usr/include/mysqlx
+          sudo ln -sf /usr/include/mysql-cppconn/mysql  /usr/include/mysql
+          sudo ln -sf /usr/include/mysql-cppconn/jdbc  /usr/include/jdbc
+      - name: Configure (coverage instrumentation, Debug)
+        run: |
+          cmake -S . -B build \
+            -DUSE_LOCAL_DEPS=ON \
+            -DLITECODE_BUILD_TESTS=ON \
+            -DLITECODE_ENABLE_COVERAGE=ON \
+            -DCMAKE_BUILD_TYPE=Debug
+      - name: Build (coverage)
+        run: cmake --build build -j"$(nproc)"
+      - name: Wait for MySQL + init DB
+        run: |
+          timeout 120 bash -c 'until echo "SELECT 1" | mysql -h127.0.0.1 -P33060 -uroot -prootpass_change_me litecode_test >/dev/null 2>&1; do sleep 2; done'
+          chmod +x scripts/init_db.sh
+          ./scripts/init_db.sh root rootpass_change_me 127.0.0.1 33060 litecode_test
+      - name: Run ctest (instrumented, exclude 3 pre-existing flakes)
+        run: |
+          cd build
+          ctest --output-on-failure -j ${{ env.CTEST_PARALLEL }} \
+            -E 'auth_refresh|auth_cookie_storage|warm_pool' \
+            --no-tests=error --timeout 120
+      - name: lcov capture + filter (scripts/coverage.sh)
+        run: ./scripts/coverage.sh capture
+      - name: Coverage report (HTML + summary)
+        run: ./scripts/coverage.sh report
+      - name: Threshold gate (核心 ≥ 80% / 全库 ≥ 40%)
+        # commit 1: || true warn-only（收集 baseline %）；commit 2: 去掉。
+        run: ./scripts/coverage.sh gate || true
+      - name: Upload to Codecov (PR + main, fail-soft)
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false                      # token 缺失 = 跳过上传，gate 仍强制
+          flags: core,whole
+          name: litecode-coverage
+      - name: Upload lcov artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.sha }}
+          path: |
+            coverage.info
+            coverage-core.info
+            build/coverage-html/**
+          retention-days: 14

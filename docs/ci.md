@@ -294,26 +294,114 @@ e2e:
     - run: docker compose down -v
 ```
 
-### 5.4 加 coverage（Phase 8 ★ 第 2 项）
+### 5.4 覆盖率 job（Phase 8 ★ 第 2 项，v1.2.59 已实装）
 
-```yaml
-coverage:
-  runs-on: ubuntu-22.04
-  needs: build
-  steps:
-    - uses: actions/checkout@v4
-    - run: sudo apt-get install -y lcov
-    - run: |
-        cmake -B build -DCMAKE_CXX_FLAGS=--coverage -DCMAKE_EXE_LINKER_FLAGS=--coverage \
-              -DLITECODE_BUILD_TESTS=ON
-        cmake --build build -j$(nproc)
-        cd build && ctest -j4
-        lcov --capture --directory . --output-file coverage.info
-        lcov --remove coverage.info '/usr/*' 'third_party/*' --output-file coverage.info
-        lcov --list coverage.info
+job **已实装**于 `.github/workflows/ci.yml`（覆盖 draft snippet 的 6 个缺口）：
+
+| 缺口 | draft snippet（旧） | 实装后 |
+|---|---|---|
+| ① `USE_LOCAL_DEPS=ON` | ❌ | ✅ cmake 显式传 |
+| ② 保留 `-Wl,--allow-multiple-definition` | ❌（覆盖 linker flag 风险） | ✅ 走 `LITECODE_ENABLE_COVERAGE` CMake option，内部用 `add_link_options(--coverage)` append，**不覆盖** `:209` / `:270` 的 ODR flag |
+| ③ ctest `-E` flake | ❌ | ✅ `-E 'auth_refresh\|auth_cookie_storage\|warm_pool'` |
+| ④ MySQL service | ❌ | ✅ 复用 `integration-test` 的 `mysql:8.0.40` service block |
+| ⑤ build deps (mysql-cppconn) | ❌ | ✅ apt 装 `libmysqlcppconn-dev/10/x2` + 头文件软链 |
+| ⑥ 阈值门禁 | ❌（仅 `lcov --list`） | ✅ `scripts/coverage.sh gate` 硬卡 80/40 |
+
+阈值目标：**核心模块 ≥ 80% + 全代码库 ≥ 40%**（v1.2.58 决策，严格按 SPEC.md:1119 写定的 5 块：`auth / judge / repo / rate_limit / audit`）。
+
+### 5.5 本地覆盖率跑法
+
+完全照 CI 在本地 reproduce：
+
+```bash
+# 1. configure（带 coverage instrumentation + Debug build）
+cmake -S . -B build \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DUSE_LOCAL_DEPS=ON \
+  -DLITECODE_BUILD_TESTS=ON \
+  -DLITECODE_ENABLE_COVERAGE=ON
+
+# 2. build
+cmake --build build -j"$(nproc)"
+
+# 3. MySQL（任选 docker / native / dev box）
+docker run -d --rm --name litecode-coverage-mysql \
+  -e MYSQL_ROOT_PASSWORD=rootpass_change_me \
+  -e MYSQL_DATABASE=litecode_test \
+  -p 33060:33060 \
+  mysql:8.0.40
+
+# 4. 初始化
+until mysql -h127.0.0.1 -P33060 -uroot -prootpass_change_me \
+  -e 'SELECT 1' >/dev/null 2>&1; do sleep 2; done
+./scripts/init_db.sh root rootpass_change_me 127.0.0.1 33060 litecode_test
+
+# 5. 跑 ctest（生成 .gcda 数据文件）
+cd build && ctest -j4 --output-on-failure \
+  -E 'auth_refresh|auth_cookie_storage|warm_pool' \
+  --no-tests=error --timeout 120
+cd ..
+
+# 6. lcov + 门禁（一行搞定，可拆 capture / report / gate）
+sudo apt-get install -y lcov   # 一次性
+./scripts/coverage.sh all      # → coverage-raw.info + coverage.info + coverage-core.info + HTML
+
+# 7. 看 HTML（可选）
+xdg-open build/coverage-html/index.html
 ```
 
-当前覆盖率目标：**核心模块 ≥ 80% + 全代码库 ≥ 40%**（见 v1.2.58 决策）。
+`scripts/coverage.sh` 的 sub-command：
+
+| sub-command | 作用 |
+|---|---|
+| `capture` | `lcov --capture --directory build` → 过滤 → `coverage.info`（全库）+ `coverage-core.info`（核心 5 块） |
+| `report` | `lcov --list` + `genhtml` → HTML 在 `build/coverage-html/index.html` |
+| `gate` | 解析 `--summary` → awk 浮点比较 → 核心 ≥ 80% & 全库 ≥ 40% 才 exit 0 |
+| `all` | capture + report + gate（默认） |
+
+env 覆盖：`BUILD_DIR=foo CORE_MIN=85 REPO_MIN=45 ./scripts/coverage.sh all`
+
+### 5.6 门禁 + Codecov 解释
+
+#### 5.6.1 路径映射（5 核心模块）
+
+| SPEC 模块 | lcov `--extract` pattern | 代码位置 |
+|---|---|---|
+| `auth` | `*/src/auth/*` | jwt_utils.h, refresh_token.h, password_hash.h, bcrypt/{blf,litecode_bcrypt}.h |
+| `judge` | `*/src/judge/*` | warm_pool.h, docker_client.h, judge_scheduler.h, judge_notifier.h |
+| `repo` | `*/src/db/*_repo.h` | user/problem/submission/tag/test_case/special_judge/problem_revisions_repo.h |
+| `rate_limit` | `*/src/middleware/rate_limit.h` | rate_limit.h（单文件） |
+| `audit` | `*/src/db/audit_log_repo.h` + `*/src/routes/admin_audit_log_routes.*` | audit_log_repo.h + admin_audit_log_routes.{h,cpp} |
+
+`repo` ∩ `audit` 在 `audit_log_repo.h` 重叠 → lcov 自动 dedup，无害。
+
+#### 5.6.2 3 个 flake 的处理
+
+`integration-test` job 的 `-E 'auth_refresh|auth_cookie_storage|warm_pool'` 在 `coverage` job **同样应用**（见 [[pre-existing test flakes]]）。这些 case 排除后：
+
+- 它们对应的代码行算**未覆盖**（保守计数 → gate 更严）
+- 修掉这 3 个 flake 后可放开 `-E` 兜底，得分可能涨 1-3%
+
+#### 5.6.3 权威 gate vs Codecov
+
+| 项 | scripts/coverage.sh gate | Codecov status check |
+|---|---|---|
+| 是否 fail PR | ✅ 必须过 | ❌ 仅 informational |
+| 跑测位置 | 本地 / CI 都跑 | CI 跑 |
+| 离线和 token 依赖 | 否 | 是（要 `CODECOV_TOKEN`） |
+| 阈值源 | `CORE_MIN` / `REPO_MIN` env（默认 80 / 40） | `codecov.yml` 同步写 |
+
+**PR 不能合并的唯一依据 = `coverage` job 的 `gate` step 退出码**。Codecov 是 secondary dashboard。
+
+#### 5.6.4 CODECOV_TOKEN 前置
+
+`coverage` job 用 `codecov/codecov-action@v4`，需要：
+
+1. 在 https://codecov.io 注册 GitHub 账号 → Add repository → 拿到 `CODECOV_TOKEN`
+2. 到本仓库 Settings → Secrets and variables → Actions → **New repository secret** → Name: `CODECOV_TOKEN` / Value: 上一步的 token
+3. 下次 PR 即可看到 Codecov bot comment
+
+**token 缺失时**：`fail_ci_if_error: false` 让上传 step 跳过（PR 不因此 fail），但 **`gate` step 仍硬卡**（PR 因 gate fail 不能合）。
 
 ---
 

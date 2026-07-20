@@ -11,6 +11,22 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 # ─── Tests (off by default; flip on with -DLITECODE_BUILD_TESTS=ON) ───
 option(LITECODE_BUILD_TESTS "Build unit / integration tests (gtest)" OFF)
 
+# ─── Coverage instrumentation (gcov/lcov, Phase 8 ★ 第 2 项, v1.2.59) ─────
+# OFF by default → 零影响 Release / docker-build。CI 端 -DLITECODE_ENABLE_COVERAGE=ON,
+# 本地 ./scripts/coverage.sh 也走这个开关。
+# 重要:add_link_options(--coverage) 是 append 语义,不会覆盖
+#   CMAKE_EXE_LINKER_FLAGS 里 :209 / :270 的 -Wl,--allow-multiple-definition
+#   (v1.2.48 ODR 教训:v1.2.55 MSVC link 复查)。
+# -O0 -g = honest line coverage(-O2 会把 inline 行折叠掉,数字虚高)。
+option(LITECODE_ENABLE_COVERAGE
+       "Instrument build with gcov --coverage (lcov + Codecov)" OFF)
+
+if(LITECODE_ENABLE_COVERAGE)
+    add_compile_options(--coverage -O0 -g)
+    add_link_options(--coverage)
+    message(STATUS "litecode: coverage instrumentation ENABLED (-O0 -g --coverage)")
+endif()
+
 # ─── Local dependency paths (Windows) ───
 # Override with -DMYSQL_CONNECTOR_DIR=... -DOPENSSL_ROOT_DIR=...
 set(MYSQL_CONNECTOR_DIR "D:/GitHub_CODE/mysql-connector-c++-9.7.0-winx64"

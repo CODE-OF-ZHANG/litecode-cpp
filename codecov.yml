@@ -1,0 +1,47 @@
+# ============================================================
+# Codecov.io 配置（v1.2.59, Phase 8 ★ 第 2 项）
+# 权威门禁在 scripts/coverage.sh gate，Codecov 状态仅 informational。
+# ============================================================
+
+coverage:
+  status:
+    project:                                          # 全代码库 ≥ 40%
+      default:
+        target: 40%
+        threshold: 1%                                 # 退步 > 1% 才标 fail
+        if_ci_failed: error                            # CI 自身出错则报错（不计入 fail）
+      core:                                           # 核心模块 ≥ 80%（mirror gate）
+        target: 80%
+        threshold: 1%
+        if_ci_failed: error
+        flags:
+          - core
+    patch:                                            # PR diff 覆盖率
+      default:
+        target: 70%                                   # 新代码 ≥ 70%
+        threshold: 5%
+
+comment:
+  layout: "reach, diff, flags, files"                 # PR 报告 layout
+  require_changes: true                               # 没 diff 就不发 comment
+  behavior: default                                  # 不自动 re-trigger
+
+flags:
+  core:
+    paths:
+      - src/auth/
+      - src/judge/
+      - src/db/                                       # repo + audit 重叠无妨
+      - src/middleware/rate_limit.h
+      - src/routes/admin_audit_log_routes.h
+      - src/routes/admin_audit_log_routes.cpp
+  whole:
+    paths:
+      - src/
+
+ignore:                                              # 与 lcov --remove 对齐
+  - third_party
+  - tests
+  - build
+  - "**/*.gcno"
+  - "**/*.gcda"
