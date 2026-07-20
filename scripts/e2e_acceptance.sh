@@ -1180,6 +1180,365 @@ if need "${SERVER_UP}" "A36 审计日志"; then
 fi
 
 # ═════════════════════════════════════════════════════════════
+#  A37 — SQL 注入扫描（Phase 8 ☆ v1.2.66）
+# ──────────────────────────────────────────────────────────────
+#  8 条 SQLi 探针扫三类反射面：登录用户名 / 列表筛选 / 审计日志筛
+#  选。每条探针的硬约束：
+#    (1) HTTP ≠ 500（500 = 数据库层异常逃出 → 错误处理统一契约 §5.7 违例）
+#    (2) 响应体不含 SQL 错误指纹（语法错误 / SQLSTATE / ORA / unterminated
+#        quoted string 等）—— 即便服务返回 400/401/422，也不该把底层错误
+#        字符串回传
+#    (3) 数据库完整性：探针扫完后用合法凭证登录仍 200，证明 DROP TABLE /
+#        DELETE 副作用未生效（即不是「500 但 DB 没坏」的更糟情况）
+#
+#  探针挑选偏重"未净化参数 + 落到 SQL 层"——username 走的是 alphanum 验证
+#  即便换成 OR 1=1 也无效，所以 login 用例主要考验错误信封不漏 SQL 错误；
+#  /problems difficulty / tag 是 length-only 校验（src/routes/problem_routes.h），
+#  探针真落到 SELECT WHERE —— 这一组是 SQL 参数化的真验证。
+# ═════════════════════════════════════════════════════════════
+SQLI_PAYLOADS=(
+    "' OR '1'='1' --"
+    "'; DROP TABLE users; --"
+    "' UNION SELECT password FROM users--"
+    "admin'--"
+    "1' OR '1'='1"
+    "'; SELECT pg_sleep(0); --"
+    "' AND 1=CAST((SELECT COUNT(*) FROM users) AS INT)--"
+    "\" OR \"\"=\""
+)
+SQLI_FINGERPRINT_RE='syntax error at or near|unrecognized token|SQLSTATE|ORA-[0-9]+|You have an error in your SQL|unterminated quoted string|unclosed quotation mark|Incorrect syntax near|Fatal error: Uncaught|mysqli?_sql_exception|pg_query\(\)'
+
+# 单探针 helper：断言 HTTP != 500 + body 无 SQL 错误指纹
+# 用法：run_sqli_probe LABEL HTTP_CODE_OR_FAIL BODY_FILE
+run_sqli_probe() {
+    local label="$1" code="$2" body_file="$3"
+    if [ "${code}" = "500" ]; then
+        fail "${label}: 触发 HTTP 500（数据库层异常未捕获）"
+        return 1
+    fi
+    if [ -s "${body_file}" ] \
+       && grep -qiE "${SQLI_FINGERPRINT_RE}" "${body_file}" 2>/dev/null; then
+        fail "${label}: 响应体泄露 SQL 错误指纹（敏感信息泄露）"
+        return 1
+    fi
+    return 0
+}
+
+kase "A37" "SQL 注入扫描（Phase 8 ☆）"
+if need "${SERVER_UP}" "A37 SQL 注入"; then
+    # ── A37a: /auth/login 用户名 SQLi 探针（验证错误信封不漏）──
+    # 此端点 username 先经 validate_username_shape 拒绝大部分 special chars，
+    # 所以多数会 400 INVALID_INPUT；少数如 `\" OR \"\"=\"` 含 "
+    # 也会被拒。要点是：绝不该 500，绝不该漏 SQL 错误，绝不该绕过密码校验。
+    fail_a37a=0
+    for p in "${SQLI_PAYLOADS[@]}"; do
+        body="$(jq -n --arg u "${p}" --arg p 'wrong_pw' \
+            '{username:$u,password:$p}')"
+        api POST /auth/login -d "${body}"
+        # 防绕过：SQLi payload 应该 401（密码错）或 400（用户名非法），绝不是 200
+        if [ "${HTTP_CODE}" = "200" ]; then
+            fail "A37a /auth/login SQLi payload='${p}' 竟 200（认证绕过！）"
+            fail_a37a=1
+            continue
+        fi
+        if ! run_sqli_probe "A37a /auth/login SQLi='${p}'" "${HTTP_CODE}" "${RESP_BODY}"; then
+            fail_a37a=1
+        fi
+    done
+    [ "${fail_a37a}" = "0" ] && ok "A37a /auth/login 8 SQLi 探针均非 500 + 非 200 + 无 SQL 错误泄露"
+
+    # ── A37a: register 用户名探针（验证 validator 拦在最前端）──
+    # 注册的 username 是写库路径，所以这里「validator 拒绝 ≠ 注入未发生」——
+    # 真正要看的是：validator 是否 400 拦下。如果 validator 漏过 SQLi chars，
+    # 用户名写库时仍然走参数化（mysqlx prepared statement），但 201 即「写入
+    # 数据库了奇怪字符串」对用户也不友好。先确保至少 400 拦下 special chars。
+    body="$(jq -n --arg u "' OR '1'='1' --" --arg p 'Passw0rd_xx' \
+        '{username:$u,password:$p}')"
+    api POST /auth/register -d "${body}"
+    if [ "${HTTP_CODE}" = "400" ]; then
+        ok "A37a /auth/register SQLi 用户名被 validator 400 拦下"
+    elif [ "${HTTP_CODE}" = "201" ]; then
+        # 检查如果 201，username 是否真写了 SQLi 字符串；如果是，validator 漏
+        # 但参数化让 SQL 仍然安全 —— 至少 500 应不可见
+        fail "A37a /auth/register 容许 SQLi 用户名（HTTP 201）"
+    else
+        fail "A37a /auth/register SQLi HTTP=${HTTP_CODE}（既非 400 也非 201）"
+    fi
+
+    # ── A37b: /problems difficulty / tag 筛选 SQLi 探针 ──
+    # 这两个 query param 只走 validate_query_param_len（仅长度），不剔除特殊
+    # 字符，所以是真落到 SQL WHERE 里去的；参数化与否这里才能证伪。
+    fail_a37b=0
+    for p in "${SQLI_PAYLOADS[@]}"; do
+        HTTP_CODE="$(curl -sS -o "${RESP_BODY}" -D "${RESP_HDR}" -w '%{http_code}' --max-time 30 \
+            -G --data-urlencode "difficulty=${p}" "${API}/problems" 2>/dev/null)" || HTTP_CODE="000"
+        if [ "${HTTP_CODE}" = "000" ]; then
+            fail "A37b /problems?difficulty SQLi='${p}' 连接失败"
+            fail_a37b=1
+            continue
+        fi
+        if ! run_sqli_probe "A37b /problems?difficulty SQLi='${p}'" "${HTTP_CODE}" "${RESP_BODY}"; then
+            fail_a37b=1
+        fi
+    done
+    for p in "${SQLI_PAYLOADS[@]}"; do
+        HTTP_CODE="$(curl -sS -o "${RESP_BODY}" -D "${RESP_HDR}" -w '%{http_code}' --max-time 30 \
+            -G --data-urlencode "tag=${p}" "${API}/problems" 2>/dev/null)" || HTTP_CODE="000"
+        if [ "${HTTP_CODE}" = "000" ]; then
+            fail "A37b /problems?tag SQLi='${p}' 连接失败"
+            fail_a37b=1
+            continue
+        fi
+        if ! run_sqli_probe "A37b /problems?tag SQLi='${p}'" "${HTTP_CODE}" "${RESP_BODY}"; then
+            fail_a37b=1
+        fi
+    done
+    [ "${fail_a37b}" = "0" ] && ok "A37b /problems difficulty + tag 各 8 探针均非 500 + 无 SQL 错误泄露"
+
+    # ── A37c: /admin/audit-logs 筛选 SQLi 探针（需 admin token）──
+    if [ -n "${ADMIN_TOK}" ]; then
+        fail_a37c=0
+        for p in "${SQLI_PAYLOADS[@]}"; do
+            HTTP_CODE="$(curl -sS -o "${RESP_BODY}" -D "${RESP_HDR}" -w '%{http_code}' --max-time 30 \
+                -G --data-urlencode "action=${p}" \
+                -H "Authorization: Bearer ${ADMIN_TOK}" \
+                "${API}/admin/audit-logs" 2>/dev/null)" || HTTP_CODE="000"
+            if [ "${HTTP_CODE}" = "000" ]; then
+                fail "A37c /admin/audit-logs?action SQLi='${p}' 连接失败"
+                fail_a37c=1; continue
+            fi
+            if ! run_sqli_probe "A37c /admin/audit-logs?action SQLi='${p}'" "${HTTP_CODE}" "${RESP_BODY}"; then
+                fail_a37c=1
+            fi
+        done
+        [ "${fail_a37c}" = "0" ] && ok "A37c /admin/audit-logs action 8 探针均非 500 + 无 SQL 错误泄露"
+    else
+        skip "A37c 无 admin token，跳过 /admin/audit-logs SQLi 探针"
+    fi
+
+    # ── A37d: 数据库完整性收尾（关键反证）──
+    # 如果 8 × 3 = 24 条探针里有真注入，整库 users 应该已经被 DROP；
+    # 合法管理员凭证登录成功 = 数据层完好。如果这里 HTTP ≠ 200，说明探针触发了真 SQLi 副作用。
+    body="$(jq -n --arg u "${ADMIN_USER}" --arg p "${ADMIN_PASS}" \
+        '{username:$u,password:$p}')"
+    api POST /auth/login -d "${body}"
+    if [ "${HTTP_CODE}" = "200" ]; then
+        ok "A37d 24 探针后合法 admin 登录仍 200（users 表未被破坏）"
+    else
+        fail "A37d 24 探针后合法 admin 登录 HTTP=${HTTP_CODE}（数据层疑似被破坏，SQLi 副作用生效！）"
+    fi
+fi
+
+# ═════════════════════════════════════════════════════════════
+#  A38 — XSS 注入扫描（Phase 8 ☆ v1.2.66）
+# ──────────────────────────────────────────────────────────────
+#  三类反射面：注册用户名 / 登录错误信封 / 列表筛选参数。
+#  本项目 API 全部返 JSON，前端靠 DOMPurify 净化 Markdown —— 所以这里的
+#  XSS 探针本质上是：API 错误信封必须结构化为 application/json，
+#  不允许原始 HTML 字节被当 HTML 解释（Content-Type 必须 application/json）。
+#
+#  探针目标：
+#    A38a: 注册 username 携带 HTML 特殊字符 — validator 拒绝在 400
+#    A38b: /auth/login 收到 XSS username 时 401/400 信封是合法 JSON,
+#          Content-Type=application/json（哪怕 body 字节含 '<' 也不
+#          会被浏览器当 HTML 渲染 —— 这是 JSON Content-Type 的副作用保证）
+#    A38c: 列表筛选参数携带 XSS — 不 500，且响应 Content-Type=application/json
+#  详细 Markdown XSS 净化由 web/js/markdown.js + web/test/markdown-xss.html
+#  覆盖（A32），本节专注后端 API 表面的反射控制。
+# ═════════════════════════════════════════════════════════════
+XSS_PAYLOADS=(
+    '<script>alert(1)</script>'
+    '<img src=x onerror=alert(1)>'
+    'javascript:alert(1)'
+    '<svg/onload=alert(1)>'
+    '"><script>alert(1)</script>'
+)
+
+kase "A38" "XSS 注入扫描（Phase 8 ☆）"
+if need "${SERVER_UP}" "A38 XSS"; then
+    # ── A38a: 注册用户名携带 HTML 特殊字符 — validator 必须 400 ──
+    fail_a38a=0
+    for p in "${XSS_PAYLOADS[@]}"; do
+        body="$(jq -n --arg u "${p}" --arg p 'Passw0rd_xx' \
+            '{username:$u,password:$p}')"
+        api POST /auth/register -d "${body}"
+        if [ "${HTTP_CODE}" = "400" ]; then
+            : # validator 拒了，最理想
+        elif [ "${HTTP_CODE}" = "201" ]; then
+            fail "A38a register 容许 XSS 用户名（HTTP 201）payload='${p}'"
+            fail_a38a=1
+        else
+            fail "A38a register HTTP=${HTTP_CODE}（既非 400 也非 201）payload='${p}'"
+            fail_a38a=1
+        fi
+    done
+    [ "${fail_a38a}" = "0" ] && ok "A38a /auth/register 5 XSS 用户名被 validator 400 拦下"
+
+    # ── A38b: /auth/login 错误信封 Content-Type 契约 + 结构化 JSON ──
+    # XSS payload 走 validator 会被 400 拦下，否则走认证分支 401。两种都是 JSON 信封，
+    # 关键是：即便 payload 字节落到 body，浏览器也不会当 HTML 渲染，
+    # 因为 Content-Type=application/json —— 这是 Content-Type security boundary。
+    fail_a38b=0
+    for p in "${XSS_PAYLOADS[@]}"; do
+        body="$(jq -n --arg u "${p}" --arg p 'whatever' \
+            '{username:$u,password:$p}')"
+        api POST /auth/login -d "${body}"
+        ct="$(hdr_val 'Content-Type')"
+        case "${ct}" in
+            application/json*) : ;;  # OK — application/json 边界保住
+            *)
+                # 某些代理可能加 charset
+                case "${ct}" in
+                    *application/json*) : ;;
+                    *) fail "A38b login Content-Type='${ct}'（应为 application/json，否则浏览器可能渲染 HTML）payload='${p}'"
+                       fail_a38b=1; continue ;;
+                esac
+                ;;
+        esac
+        # 响应体必须是合法 JSON 信封（jq 可解析）
+        if ! jq -e . >/dev/null 2>&1 < "${RESP_BODY}"; then
+            fail "A38b login 响应体非合法 JSON payload='${p}'"
+            fail_a38b=1; continue
+        fi
+        # .code 字段必须存在且为已知错误码（防「带外异常返回 text/html + SQL 异常体」）
+        code="$(jqb '.code')"
+        case "${code}" in
+            INVALID_INPUT|UNAUTHORIZED|RATE_LIMITED|FORBIDDEN|"")
+                # 空 code 允许出现在 204 旁路但不可能在 /auth/login；接受以上常见
+                if [ -z "${code}" ]; then
+                    fail "A38b login 错误信封缺 .code 字段 payload='${p}'"
+                    fail_a38b=1
+                fi
+                ;;
+            *) fail "A38b login 错误 .code='${code}' 不在已知枚举 payload='${p}'"
+               fail_a38b=1 ;;
+        esac
+    done
+    [ "${fail_a38b}" = "0" ] && ok "A38b /auth/login 5 XSS 探针全部 Content-Type=application/json + 合法 JSON 信封"
+
+    # ── A38c: 列表筛选参数携带 XSS — 不 500，且响应 JSON envelope ──
+    fail_a38c=0
+    for p in "${XSS_PAYLOADS[@]}"; do
+        HTTP_CODE="$(curl -sS -o "${RESP_BODY}" -D "${RESP_HDR}" -w '%{http_code}' --max-time 30 \
+            -G --data-urlencode "tag=${p}" "${API}/problems" 2>/dev/null)" || HTTP_CODE="000"
+        if [ "${HTTP_CODE}" = "500" ]; then
+            fail "A38c /problems?tag=XSS 触发 500 payload='${p}'"; fail_a38c=1; continue
+        fi
+        ct="$(hdr_val 'Content-Type')"
+        case "${ct}" in
+            *application/json*) : ;;
+            *) fail "A38c /problems?tag=XSS Content-Type='${ct}' payload='${p}'"
+               fail_a38c=1 ;;
+        esac
+    done
+    [ "${fail_a38c}" = "0" ] && ok "A38c /problems?tag=XSS 5 探针均非 500 + JSON envelope"
+fi
+
+# ═════════════════════════════════════════════════════════════
+#  A39 — CSRF 防护扫描（Phase 8 ☆ v1.2.66）
+# ──────────────────────────────────────────────────────────────
+#  SPEC §6.3 + §15.4 协议栈：
+#    - access token 存内存（不存 cookie）→ CSRF 攻击者读不到 access
+#    - refresh token 走 HttpOnly + SameSite=Strict cookie → 跨源请求
+#      浏览器拒带 cookie，/auth/refresh 因缺 cookie 401
+#    - 服务器侧再做 Origin allowlist（CorsPolicy），不受信 Origin 不进
+#      Access-Control-Allow-Origin（防 DNS rebinding + 浏览器侧旁路）
+#
+#  三组断言：
+#    A39a: 跨源 OPTIONS preflight — Origin 不在 allowlist → 403 + 不回声 evil；
+#          同源 preflight → 204 + 精确回声 ACAO='http://localhost:8080'（不是 '*'）
+#    A39b: refresh cookie 实际下发必须同时含 HttpOnly + SameSite=Strict
+#    A39c: 跨源 POST /auth/refresh 不带 cookie — 因 SameSite=Strict 而 401，
+#          证明攻击者无法靠 CSRF 触发 refresh 来拿新 access（即便 DNS rebinding
+#          把恶意页解析到 localhost 也无 cookie 可用）
+# ═════════════════════════════════════════════════════════════
+kase "A39" "CSRF 防护扫描（Phase 8 ☆）"
+if need "${SERVER_UP}" "A39 CSRF"; then
+    # ── A39a: 跨源 preflight 必须拒绝 + 不回声不受信 Origin ──
+    HTTP_CODE="$(curl -sS -o "${RESP_BODY}" -D "${RESP_HDR}" -w '%{http_code}' --max-time 30 \
+        -X OPTIONS \
+        -H 'Origin: http://evil.example.com' \
+        -H 'Access-Control-Request-Method: POST' \
+        -H 'Access-Control-Request-Headers: Content-Type' \
+        "${API}/auth/login" 2>/dev/null)" || HTTP_CODE="000"
+    # 三种可接受：403 / 不带 ACAO / ACAO 不等于 evil origin
+    acao_bad="$(hdr_val 'Access-Control-Allow-Origin')"
+    if [ "${HTTP_CODE}" = "403" ] && [ "${acao_bad}" != "http://evil.example.com" ]; then
+        ok "A39a 跨源 preflight Origin=evil.example → 403 + 不回声 evil（allowlist 生效）"
+    elif [ "${HTTP_CODE}" != "403" ] && [ "${acao_bad}" != "http://evil.example.com" ] && [ "${acao_bad}" != "*" ]; then
+        ok "A39a 跨源 preflight Origin=evil.example HTTP=${HTTP_CODE} + ACAO='${acao_bad}'（未回声不受信 Origin）"
+    else
+        fail "A39a 跨源 preflight 反射 Origin evil.example ACAO='${acao_bad}' HTTP=${HTTP_CODE}（CSRF 风险！）"
+    fi
+
+    # ── A39a: 同源 preflight 必须 204 + 精确回声 ACAO ──
+    HTTP_CODE="$(curl -sS -o "${RESP_BODY}" -D "${RESP_HDR}" -w '%{http_code}' --max-time 30 \
+        -X OPTIONS \
+        -H 'Origin: http://localhost:8080' \
+        -H 'Access-Control-Request-Method: POST' \
+        -H 'Access-Control-Request-Headers: Content-Type' \
+        "${API}/auth/login" 2>/dev/null)" || HTTP_CODE="000"
+    if [ "${HTTP_CODE}" = "204" ]; then
+        ok "A39a 同源 preflight Origin=localhost:8080 → 204"
+    else
+        fail "A39a 同源 preflight HTTP=${HTTP_CODE}（应为 204）"
+    fi
+    acao_good="$(hdr_val 'Access-Control-Allow-Origin')"
+    if [ "${acao_good}" = "http://localhost:8080" ]; then
+        ok "A39a 同源 preflight ACAO=精确回声 '${acao_good}'（兼容 credentials，非 '*'）"
+    elif [ "${acao_good}" = "*" ]; then
+        fail "A39a 同源 preflight ACAO='*'（应精确回声以兼容 credentials=include）"
+    else
+        fail "A39a 同源 preflight ACAO='${acao_good}'（应为 'http://localhost:8080'）"
+    fi
+
+    # ── A39b: refresh cookie HttpOnly + SameSite=Strict ──
+    # 重新登录拿到最新 Set-Cookie（其他 case 可能已 streak 命中）
+    body="$(jq -n --arg u "${ADMIN_USER}" --arg p "${ADMIN_PASS}" \
+        '{username:$u,password:$p}')"
+    api POST /auth/login -d "${body}"
+    if grep -qi '^set-cookie:.*lc_refresh' "${RESP_HDR}"; then
+        # 取 lc_refresh 那一行（多 Set-Cookie 时取首条）
+        cookie_line="$(grep -i '^set-cookie:.*lc_refresh' "${RESP_HDR}" | tr -d '\r' | head -1)"
+        # 大小写无关检查
+        cookie_lc="$(printf '%s' "${cookie_line}" | tr '[:upper:]' '[:lower:]')"
+        case "${cookie_lc}" in
+            *httponly*) ok "A39b refresh cookie 含 HttpOnly 属性（防 XSS 盗取 token）" ;;
+            *)          fail "A39b refresh cookie 缺 HttpOnly 属性（XSS 盗取风险）" ;;
+        esac
+        # SameSite=Strict（大小写写宽松匹配）
+        if printf '%s' "${cookie_line}" | grep -qiE 'samesite[[:space:]]*=[[:space:]]*strict'; then
+            ok "A39b refresh cookie SameSite=Strict（跨源请求不带 cookie → 防 CSRF）"
+        else
+            fail "A39b refresh cookie SameSite 非 Strict（CSRF 风险），原始属性：${cookie_line#*:}"
+        fi
+    elif [ -n "$(jqb '.data.refresh_token')" ] && [ "$(jqb '.data.refresh_token')" != "null" ]; then
+        # 配置走 response body 返 refresh_token（不走 cookie 模式）— 视配置而异
+        ok "A39b 当前配置走 .refresh_token 字段（非 cookie 模式），无 CSRF cookie surface"
+    else
+        fail "A39b 既无 Set-Cookie: lc_refresh 也无 .refresh_token — refresh token 投递失败"
+    fi
+
+    # ── A39c: 跨源 POST /auth/refresh 不带 cookie 必须 401 ──
+    # 这是 SameSite=Strict 的反证：跨源请求浏览器不会带 lc_refresh cookie，
+    # 所以即便 DNS rebinding / 跨源表单 POST 进 /auth/refresh，路由拿到
+    # 请求时也没有 cookie → 401。与 A39b 共同构成 CSRF 防护证据链。
+    HTTP_CODE="$(curl -sS -o "${RESP_BODY}" -D "${RESP_HDR}" -w '%{http_code}' --max-time 30 \
+        -X POST \
+        -H 'Origin: http://evil.example.com' \
+        -H 'Content-Type: application/json' \
+        --data '{}' \
+        "${API}/auth/refresh" 2>/dev/null)" || HTTP_CODE="000"
+    if [ "${HTTP_CODE}" = "401" ]; then
+        ok "A39c 跨源 POST /auth/refresh（无 cookie）→ 401（SameSite=Strict 阻断生效）"
+    elif [ "${HTTP_CODE}" = "400" ]; then
+        ok "A39c 跨源 POST /auth/refresh → 400（亦可接受：refresh 输入校验先 400 拦下）"
+    else
+        fail "A39c 跨源 POST /auth/refresh HTTP=${HTTP_CODE}（预期 401/400）"
+    fi
+fi
+
+# ═════════════════════════════════════════════════════════════
 #  总结
 # ═════════════════════════════════════════════════════════════
 echo
