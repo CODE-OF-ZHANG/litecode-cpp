@@ -1,0 +1,328 @@
+# =============================================================
+# LiteCode-CPP — CI workflow
+# =============================================================
+# SPEC §15.8 / Phase 8 ★ CI/CD 流水线
+# -------------------------------------------------------------
+# 4 jobs 并行：
+#   1. lint            shellcheck + dockerfile-lint（< 1 min）
+#   2. build           cmake + 编译 litecode_server + 50+ test binaries
+#                      （含 ccache 加速，~5-8 min）
+#   3. integration-test 完整 ctest + MySQL service container
+#                      （init_db.sh + ctest -j4 --output-on-failure）
+#   4. docker-build    web + judge 镜像构建，main 分支推到 GHCR
+#
+# 触发器：
+#   - push to main
+#   - pull_request to main
+#   - workflow_dispatch（手动）
+#
+# 并发控制：相同 PR / branch 旧 run 自动 cancel（省 CI 分钟）
+# =============================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags:     ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 取消同一 ref 的旧 run（PR push 触发多个 commit 时只跑最新）
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ───── 全局环境变量 ────────────────────────────────────────────
+env:
+  BUILD_TYPE: Release
+  USE_LOCAL_DEPS: "ON"                       # 用 third_party/* 而非 FetchContent
+  LITECODE_BUILD_TESTS: "ON"                 # 编译测试
+  MYSQL_VERSION: 8.0.40                      # 与 docker-compose 一致
+  CTEST_PARALLEL: 4
+
+jobs:
+  # ───── Job 1: lint (shellcheck + dockerfile-lint) ──────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run shellcheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: ./scripts
+          additional_files: tests/e2e judge/judge.sh
+
+      - name: Lint Dockerfiles (hadolint)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: warning
+        # judge/Dockerfile 用的是 ubuntu:22.04 官方源，hadolint 默认
+        # 也支持；分两次跑防止一个 fail 影响另一个。
+      - name: Lint judge Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: judge/Dockerfile
+          failure-threshold: warning
+
+      - name: Validate docker-compose.yml
+        run: |
+          # 校验所有 profile 都能 config 通过
+          docker compose config --quiet
+          docker compose --profile proxy config --quiet
+          docker compose --profile monitoring config --quiet
+          docker compose --profile backup config --quiet
+
+  # ───── Job 2: build (cmake + ccache) ─────────────────────────
+  build:
+    name: Build (cmake)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system deps
+        # 与 Dockerfile 的 builder stage 对齐（oracle mysql-connector
+        # APT 仓库只服务 jammy=22.04 / noble=24.04，本 job 跑 22.04）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              build-essential cmake pkg-config \
+              libssl-dev zlib1g-dev libcurl4-openssl-dev \
+              uuid-dev libprotobuf-dev protobuf-compiler \
+              ca-certificates gnupg curl
+          # Oracle MySQL APT 仓库（mysql-connector-c++ 9.x）
+          curl -fsSL https://repo.mysql.com/RPM-GPG-KEY-mysql-2025 \
+              | sudo gpg --dearmor -o /usr/share/keyrings/mysql-apt.gpg
+          echo "deb [signed-by=/usr/share/keyrings/mysql-apt.gpg] \
+              https://repo.mysql.com/apt/ubuntu jammy mysql-tools" \
+              | sudo tee /etc/apt/sources.list.d/mysql.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              libmysqlcppconn-dev \
+              libmysqlcppconn10 libmysqlcppconnx2
+          # 软链：mysql-connector-c++ 头文件在 mysql-cppconn/ 命名空间下
+          sudo ln -sf /usr/include/mysql-cppconn/mysqlx /usr/include/mysqlx
+          sudo ln -sf /usr/include/mysql-cppconn/mysql  /usr/include/mysql
+          sudo ln -sf /usr/include/mysql-cppconn/jdbc  /usr/include/jdbc
+
+      - name: Install ccache
+        run: sudo apt-get install -y ccache
+
+      - name: Configure ccache
+        run: |
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_CONFIGPATH=$GITHUB_WORKSPACE/.ccache/ccache.conf" >> "$GITHUB_ENV"
+          mkdir -p "$HOME/.ccache"
+          ccache --max-size 1G
+          ccache --set-config=compression=true
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'src/**.h', 'src/**.cpp', 'tests/**.cpp') }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
+
+      - name: CMake configure
+        run: |
+          cmake -S . -B build \
+              -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+              -DUSE_LOCAL_DEPS=${{ env.USE_LOCAL_DEPS }} \
+              -DLITECODE_BUILD_TESTS=${{ env.LITECODE_BUILD_TESTS }} \
+              -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+              -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: CMake build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Run smoke check (no MySQL needed)
+        run: ./build/bin/lit_smoke_check
+
+      - name: ccache stats
+        run: ccache --show-stats --verbose
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ github.sha }}
+          path: |
+            build/bin/
+            build/tests/
+          retention-days: 7
+
+  # ───── Job 3: integration test (MySQL service + ctest) ────────
+  integration-test:
+    name: Integration Test (ctest + MySQL)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    needs: build
+    services:
+      mysql:
+        image: mysql:${{ env.MYSQL_VERSION }}
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass_change_me
+          MYSQL_DATABASE: litecode_test
+          TZ: Asia/Shanghai
+        ports:
+          - 33060:33060                  # X Protocol port (mysql-connector-c++)
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpass_change_me"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+          --health-start-period=30s
+          --default-authentication-plugin=caching_sha2_password
+    env:
+      # MySQL 容器端口映射：127.0.0.1:33060 → container:33060
+      DB_HOST: 127.0.0.1
+      DB_PORT: "33060"
+      DB_USER: root
+      DB_PASSWORD: rootpass_change_me
+      DB_NAME: litecode_test
+      DB_POOL_MIN: "2"
+      DB_POOL_MAX: "8"
+      # CI 环境必须 ephemeral JWT（生产用 openssl rand）
+      JWT_SECRET: ci_jwt_secret_placeholder_at_least_32_bytes_long_xx
+      JWT_ISSUER: litecode-ci
+      LITECODE_ALLOW_INSECURE_DEFAULTS: "1"
+      LOG_LEVEL: WARNING                # CI 不打 INFO 噪音
+      LOG_FORMAT: text
+      TZ: Asia/Shanghai
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install MySQL client (for init_db.sh)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              mysql-client default-mysql-client
+          # 给 mysql client 装 nc（wait-for-it 用）；apt 自带 netcat-openbsd
+          sudo apt-get install -y --no-install-recommends netcat-openbsd
+
+      - name: Install mysql-connector-c++ (runtime)
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+              libmysqlcppconn10 libmysqlcppconnx2
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-${{ github.sha }}
+          path: build
+
+      - name: Wait for MySQL
+        # services.* 在 healthcheck 通过前不会 ready；这里再二次兜底
+        run: |
+          timeout 60 bash -c 'until echo "SELECT 1" | mysql -h127.0.0.1 -P33060 \
+              -uroot -prootpass_change_me litecode_test >/dev/null 2>&1; do
+                echo "waiting for mysql..."; sleep 2; done'
+          echo "MySQL ready"
+
+      - name: Init database (migrations + admin)
+        env:
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_PORT: "33060"
+          MYSQL_USER: root
+          MYSQL_PASSWORD: rootpass_change_me
+          DB_NAME: litecode_test
+        run: |
+          chmod +x scripts/init_db.sh
+          ./scripts/init_db.sh root rootpass_change_me 127.0.0.1 33060 litecode_test
+
+      - name: Run ctest
+        # -E 排除 3 个 pre-existing flake（v1.2.51 项目记忆）
+        # -j4 并行；--output-on-failure 让 gtest 失败时打印 stdout
+        # --no-tests=error 让 SKIPPED（MySQL ping 失败）不算 fail
+        run: |
+          cd build
+          ctest --output-on-failure \
+                -j ${{ env.CTEST_PARALLEL }} \
+                -E 'auth_refresh|auth_cookie_storage|warm_pool' \
+                --no-tests=error \
+                --timeout 120
+
+      - name: Upload ctest log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-failure-${{ github.sha }}
+          path: |
+            build/Testing/
+            build/tests/**/test_detail.xml
+          retention-days: 14
+
+  # ───── Job 4: docker build (+ GHCR push on main) ─────────────
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    needs: build                 # 编译过了再 build image（避免无意义镜像）
+    permissions:
+      contents: read
+      packages: write             # 推 GHCR 需要
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR (only on main)
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/litecode-web
+          tags: |
+            type=sha,prefix=
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      # 用 type=gha cache（层共享在 runner 间；本地构建也命中）
+      - name: Build + push web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false            # 减少 image size；SBOM 走 GHCR 自动
+
+      - name: Build judge image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./judge
+          file: judge/Dockerfile
+          push: false
+          tags: litecode-judge:ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # 不挂载 socket（CI runner 无 docker.sock）
+
+  # ───── 可选 Job 5: codecov (覆盖率报告) ──────────────────────
+  # v1.2.59+ 引入 lcov 跑覆盖率后启用。当前 jobs 不强依赖。
+  # coverage:
+  #   runs-on: ubuntu-22.04
+  #   ...

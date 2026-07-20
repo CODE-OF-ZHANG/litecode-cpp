@@ -1,0 +1,103 @@
+# =============================================================
+# LiteCode-CPP — ClangFormat style baseline
+# =============================================================
+# SPEC §15.8 / Phase 8 CI/CD 流水线
+# -------------------------------------------------------------
+# 基于 nlohmann/json 的 LLVM-derived 风格。v1.2.58 引入 .clang-format
+# 作为 lint 基线文件，**当前 CI 不强制** src/ 扫（避免一波 100+ 警告刷
+# 红 PR），而是作为 `clang-format --dry-run -Werror src/` 的参考基线。
+# 后续 Phase 8 单独立项再加 lint 强制检查 + 单文件 apply 阶段。
+#
+# 与 third_party/* / build/* 隔离（CI 用 `clang-format --files` 只传
+# src/ 列表；不扫依赖）。
+# =============================================================
+
+---
+Language:        Cpp
+Standard:        c++17
+
+# ───── 缩进 / 行宽 ───────────────────────────────────────────
+IndentWidth:     4
+TabWidth:        4
+UseTab:          Never
+ColumnLimit:     120                              # SPEC §15.8: 120 列上限
+ContinuationIndentWidth: 4
+
+# ───── 大括号风格（Allman-ish，但 namespace 内不强制）──────────
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass:      true
+  AfterControlStatement: Always                  # if/while/for 换行后大括号
+  AfterEnum:       true
+  AfterFunction:   true
+  AfterNamespace:  false                          # namespace { 不换行
+  AfterObjCDeclaration: true
+  AfterStruct:     true
+  AfterUnion:      true
+  BeforeCatch:     true
+  BeforeElse:      true
+  IndentBraces:    false
+
+# ───── 指针 / 引用对齐 ─────────────────────────────────────────
+PointerAlignment: Left                            # `int* p` 不 `int *p`
+ReferenceAlignment: Left                          # `int& r`
+
+# ───── 缩进 / 对齐 ─────────────────────────────────────────────
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments:  false
+AlignConsecutiveDeclarations: false
+AlignEscapedNewlines:         Right
+AlignTrailingComments:        true
+AlignOperands:                AlignAfterOperator
+
+# ───── Include 排序 ─────────────────────────────────────────────
+IncludeBlocks:   Preserve                        # 保留用户 include 块结构
+SortIncludes:    true                            # 同 block 内按字母排序
+SortUsingDeclarations: true
+
+# ───── 空行 / 注释 ─────────────────────────────────────────────
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1
+ReflowComments:  false
+
+# ───── C++ 11+ 风格 ─────────────────────────────────────────────
+Cpp11BracedListStyle: true                        # `vector<int>{1,2,3}` 无空格
+AllowShortFunctionsOnASingleLine: Inline         # `int f() { return 1; }` inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine:     false
+AllowShortBlocksOnASingleLine:    Empty
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortLambdasOnASingleLine:   Empty
+
+# ───── 模板 / 函数 ──────────────────────────────────────────────
+AlwaysBreakAfterReturnType: None
+AlwaysBreakTemplateDeclarations: Yes
+BinPackArguments: false
+BinPackParameters: false
+
+# ───── 空括号 / 空格 ────────────────────────────────────────────
+SpaceAfterCStyleCast:        false
+SpaceAfterLogicalNot:        false
+SpaceAfterTemplateKeyword:   false
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeParens:           ControlStatements
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceBeforeCpp11BracedList:  false
+SpacesBeforeTrailingComments: 2
+SpacesInAngles:              false
+SpacesInCStyleCastParentheses: false
+SpacesInConditionalStatement: false
+SpacesInContainerLiterals:   false
+SpacesInParentheses:         false
+SpacesInSquareBrackets:      false
+SpacesInEmptyBlock:          false
+SpacesInEmptyParentheses:    false
+
+# ───── 杂项 ─────────────────────────────────────────────────────
+FixNamespaceComments: true
+IndentCaseLabels:    true
+IndentPPDirectives:  BeforeHash                  # #include 前 # 不顶格
+NamespaceIndentation: None
+ConstructorInitializerIndentWidth: 4
+BreakConstructorInitializers: BeforeComma
+BreakStringLiterals: false

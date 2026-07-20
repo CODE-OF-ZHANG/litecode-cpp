@@ -1,0 +1,63 @@
+# =============================================================
+# LiteCode-CPP — Feature request issue template
+# =============================================================
+# SPEC §15.8 / Phase 8 ★ CI/CD 流水线
+# -------------------------------------------------------------
+name: ✨ Feature Request
+description: 提议一个新功能 / 改进
+labels: ["enhancement", "needs-triage"]
+assignees: []
+---
+
+## 1. 一句话描述
+
+<!-- 例: 给 admin 加多题批量删除 -->
+
+## 2. 用户故事
+
+**作为** [用户角色：admin / 普通用户 / 匿名访客]
+**我想** [做什么]
+**以便** [达成什么价值]
+
+## 3. 当前痛点
+
+<!-- 现在如何解决？为什么不好？ -->
+
+## 4. 提议方案
+
+<!-- 详细描述 API / UI / 数据模型变更 -->
+
+### API 示例（如涉及）
+
+```http
+POST /api/v1/admin/problems/batch-delete
+Content-Type: application/json
+
+{
+  "ids": [1, 2, 3]
+}
+```
+
+### DB schema 变更（如涉及）
+
+```sql
+ALTER TABLE problems ADD COLUMN archived_at DATETIME NULL;
+```
+
+## 5. 备选方案（可选）
+
+<!-- 别的实现思路 + 优劣 -->
+
+## 6. SPEC 章节引用
+
+<!-- 对应 SPEC §x.y.z；如果超出当前 SPEC 范围请明确 -->
+
+## 7. 工作量与优先级
+
+- **工作量**: S (1d) / M (3d) / L (1w) / XL (2w+)
+- **优先级**: P0 (blocker) / P1 (this sprint) / P2 (next) / P3 (backlog)
+- **依赖**: <!-- 依赖哪些现有功能 / 其他 PR -->
+
+## 8. 替代品调研
+
+<!-- 业内类似产品如何处理？ -->

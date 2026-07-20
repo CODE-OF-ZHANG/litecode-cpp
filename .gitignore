@@ -35,9 +35,10 @@ Thumbs.db
 logs/
 .superpowers/
 third_party/
-# docs/ 整体被忽略（仅 superpowers 内部），但 deployment.md 是 SPEC §15 部署文档
+# docs/ 整体被忽略（仅 superpowers 内部），但 deployment.md / ci.md 是 SPEC §15 入仓文档
 docs/*
 !docs/deployment.md
+!docs/ci.md
 !docs/superpowers/
 # Local secrets (SPEC §15.7)
 .env

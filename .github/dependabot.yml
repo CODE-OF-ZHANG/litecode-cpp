@@ -1,0 +1,92 @@
+# =============================================================
+# LiteCode-CPP — Dependabot 配置
+# =============================================================
+# SPEC §15.8 / Phase 8 ★ CI/CD 流水线
+# -------------------------------------------------------------
+# 监控：
+#   - docker-compose 引用的镜像版本（mysql / prometheus / grafana 等）
+#   - Docker base image（Dockerfile + judge/Dockerfile）
+#   - GitHub Actions 版本（actions/checkout / setup-buildx 等）
+# -------------------------------------------------------------
+# 策略：
+#   - 周一早上开新 PR（避免周末 spam）
+#   - 镜像 major.minor 升级；patch 自动 squash
+#   - GA 版本：minor + patch
+#   - 自动 rebase 启用
+# =============================================================
+
+version: 2
+
+updates:
+  # ───── Docker compose 镜像 ─────────────────────────────────
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      docker-compose-minor:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+      docker-compose-major:
+        applies-to: version-updates
+        update-types:
+          - "major"
+
+  # ───── Web Dockerfile ──────────────────────────────────────
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "chore(deps)"
+
+  # ───── Judge Dockerfile ────────────────────────────────────
+  - package-ecosystem: "docker"
+    directory: "/judge"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    labels:
+      - "dependencies"
+      - "docker"
+      - "judge"
+    commit-message:
+      prefix: "chore(deps)"
+
+  # ───── GitHub Actions ──────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      actions-minor:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"

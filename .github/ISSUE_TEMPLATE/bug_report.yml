@@ -1,0 +1,54 @@
+# =============================================================
+# LiteCode-CPP — Bug report issue template
+# =============================================================
+# SPEC §15.8 / Phase 8 ★ CI/CD 流水线
+# -------------------------------------------------------------
+name: 🐛 Bug Report
+description: 报告一个 bug（崩溃 / 数据丢失 / 文档不一致 / 编译失败 / 测试失败）
+labels: ["bug", "needs-triage"]
+assignees: []
+---
+
+## 1. 一句话描述
+
+<!-- 例: 提交代码后 admin/stats 路由 500 -->
+
+## 2. 复现步骤
+
+1.
+2.
+3.
+
+## 3. 期望行为
+
+<!-- 应该发生什么 -->
+
+## 4. 实际行为
+
+<!-- 实际发生什么 + 报错原文 -->
+
+## 5. 环境
+
+- **LiteCode 版本**: <!-- `git describe --tags` 或 commit SHA -->
+- **运行环境**:
+  - [ ] 本地 dev（ubuntu / macOS / WSL）
+  - [ ] Docker compose (`docker compose up -d`)
+  - [ ] Kubernetes / 其他
+- **OS**: <!-- Windows 11 / Ubuntu 22.04 / macOS 14 / ... -->
+- **编译器**: <!-- g++ 11.4 / clang 17 / MSVC 19.38 -->
+
+## 6. 日志 / 截图
+
+<!-- docker logs litecode-web --tail 200 或 gtest 输出 -->
+
+## 7. SPEC 引用（可选）
+
+<!-- 如果 bug 违反 SPEC §x.y.z 行为契约，引用章节号 -->
+
+## 8. 工作量评估
+
+<!-- 你愿意自己修这个 bug 吗？标 [ ] / [x] -->
+
+- [ ] 愿意提交 PR 修复
+- [ ] 只需要报告，等他人修
+- [ ] 阻塞生产（紧急）
