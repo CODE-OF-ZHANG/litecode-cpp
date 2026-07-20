@@ -1023,6 +1023,163 @@ if need "${SERVER_UP}" "A35 登录锁定"; then
 fi
 
 # ═════════════════════════════════════════════════════════════
+#  A36 — 审计日志系统化测试（Phase 8 ★ 审计日志测试）
+#
+#  SPEC §11 Phase 8「审计日志测试（删题/改角色后查 audit-logs 验证写入）」
+#  在 A17/A18/A20/A27/A35 各自孤立验证「有这么条记录」的基础上，
+#  系统化覆盖 audit-logs API 本身的契约：
+#    - 权限：401 无 token / 403 非 admin
+#    - 字段契约：id / action / admin_id / target_type / target_id /
+#                payload / created_at 全部命中
+#    - 组合筛选：action + target_type 同时生效；不存在的 action → 空数组
+#    - 分页：limit=1 vs limit=20 total 一致
+#    - 排序：默认 created_at DESC（items[0] ≥ items[1]）
+#    - 业务写入全链路：独立 fixture 跑一次 改角色 + 创题 + 删题，
+#      每个动作后查 target_id 命中，证明 audit_logs 不是占位空写
+# ═════════════════════════════════════════════════════════════
+kase "A36" "审计日志系统化测试（Phase 8 ★）"
+if need "${SERVER_UP}" "A36 审计日志"; then
+    if [ -z "${ADMIN_TOK}" ]; then
+        fail "A36 无 admin token（无法进行审计日志断言）"
+    else
+        # ── A36a: 权限契约（401 无 token / 403 非 admin）──
+        api GET /admin/audit-logs
+        assert_code 401 "A36a 无 token → 401"
+        assert_jq '.code' 'UNAUTHORIZED' "A36a 错误码=UNAUTHORIZED"
+        api GET /admin/audit-logs -t "${USER_TOK}"
+        assert_code 403 "A36a 非 admin → 403"
+        assert_jq '.code' 'FORBIDDEN' "A36a 错误码=FORBIDDEN"
+
+        # ── A36b: 字段契约 ──
+        # 筛 user.role_change：A27/A36f 都会写该 action，命中概率高，
+        # 且写者必为 admin，admin_id 必非空——以此验证「actor 落地」。
+        api GET "/admin/audit-logs?action=user.role_change&limit=1" -t "${ADMIN_TOK}"
+        assert_code 200 "A36b audit-logs 200"
+        n="$(jqb '.data.items | length')"
+        if [ "${n:-0}" -ge 1 ]; then
+            ok "A36b audit_logs 命中 user.role_change ≥ 1 条"
+            assert_nonempty '.data.items[0].id'          "A36b items[0].id 非空"
+            assert_nonempty '.data.items[0].action'      "A36b items[0].action 非空"
+            assert_nonempty '.data.items[0].created_at'  "A36b items[0].created_at 非空"
+            assert_nonempty '.data.items[0].admin_id'    "A36b items[0].admin_id 非空（actor 已落地）"
+            assert_nonempty '.data.items[0].target_type' "A36b items[0].target_type 非空"
+            assert_nonempty '.data.items[0].target_id'   "A36b items[0].target_id 非空"
+            # created_at 形如 "YYYY-MM-DD HH:MM:SS"
+            ts="$(jqb '.data.items[0].created_at')"
+            if printf '%s' "${ts}" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$'; then
+                ok "A36b created_at='${ts}' 形如 YYYY-MM-DD HH:MM:SS"
+            else
+                fail "A36b created_at='${ts}' 非标准时间格式"
+            fi
+        else
+            fail "A36b 查 user.role_change 0 条（A27 或 A36f 应至少写 2 条）"
+        fi
+
+        # ── A36c: 组合筛选 ──
+        api GET "/admin/audit-logs?action=user.role_change&target_type=user&limit=10" -t "${ADMIN_TOK}"
+        assert_code 200 "A36c 组合筛选 200"
+        bad="$(jq -r '[.data.items[]?|select((.action!="user.role_change") or (.target_type!="user"))]|length' "${RESP_BODY}" 2>/dev/null)"
+        [ "${bad:-0}" = "0" ] && ok "A36c 组合筛选下所有行均同时满足 action+target_type" \
+            || fail "A36c 组合筛选混入 ${bad} 条不满足的行"
+        # 不存在的 action → 空数组 + total=0，但 HTTP 仍 200
+        api GET "/admin/audit-logs?action=nonexistent_xyz_abc&limit=5" -t "${ADMIN_TOK}"
+        assert_code 200 "A36c 不存在的 action 仍 200（非法 action 由 validator 拦在 400 前）"
+        n_zero="$(jqb '.data.items | length')"
+        t_zero="$(jqb '.data.total')"
+        [ "${n_zero:-0}" = "0" ] && [ "${t_zero:-0}" = "0" ] && ok "A36c 不存在的 action items=0 total=0" \
+            || fail "A36c 不存在的 action items=${n_zero} total=${t_zero}"
+
+        # ── A36d: 分页 + total 一致 ──
+        api GET "/admin/audit-logs?limit=1" -t "${ADMIN_TOK}"
+        t_lim1="$(jqb '.data.total')"
+        n_lim1="$(jqb '.data.items | length')"
+        api GET "/admin/audit-logs?limit=20" -t "${ADMIN_TOK}"
+        t_lim20="$(jqb '.data.total')"
+        [ "${n_lim1:-0}" = "1" ] && ok "A36d limit=1 返回 1 条" \
+            || fail "A36d limit=1 返回 ${n_lim1} 条"
+        [ "${t_lim1}" = "${t_lim20}" ] && ok "A36d limit=1 vs limit=20 total 一致(${t_lim1})" \
+            || fail "A36d total 不一致: limit=1 时 ${t_lim1} vs limit=20 时 ${t_lim20}"
+
+        # ── A36e: 排序（默认 created_at DESC，YYYY-MM-DD HH:MM:SS 字典序 = 时间序）──
+        api GET "/admin/audit-logs?limit=10" -t "${ADMIN_TOK}"
+        prev="$(jqb '.data.items[0].created_at')"
+        all_desc=1
+        for i in 1 2 3 4 5 6 7 8 9; do
+            cur="$(jq -r --arg i "$i" '.data.items[($i|tonumber)].created_at // empty' "${RESP_BODY}" 2>/dev/null)"
+            [ -z "${cur}" ] && break
+            # prev >= cur（"YYYY-MM-DD HH:MM:SS" 同长度字典序即时间倒序）
+            if [ "${prev}" \< "${cur}" ]; then all_desc=0; break; fi
+            prev="${cur}"
+        done
+        [ "${all_desc}" = "1" ] && ok "A36e 默认按 created_at DESC 排序（最新在前）" \
+            || fail "A36e created_at 排序异常（items[0]='${prev}' 之后出现更晚时间戳）"
+
+        # ── A36f: 业务写入全链路（独立 fixture，独立 target_id）──
+        # 注册独立 audit 用户，跑 user→admin→user 两次切换
+        AUDIT_USER="e2e_audit_$(rnd)"
+        b="$(jq -n --arg u "${AUDIT_USER}" --arg p "Passw0rd_e2e" \
+            '{username:$u,password:$p}')"
+        api POST /auth/register -d "${b}"
+        if [ "${HTTP_CODE}" != "201" ]; then
+            fail "A36f 注册 AUDIT_USER=${AUDIT_USER} 失败（HTTP=${HTTP_CODE}）"
+        else
+            AUDIT_USER_ID="$(jqb '.data.user.id')"
+            ok "A36f 注册独立 audit 用户 AUDIT_USER_ID=${AUDIT_USER_ID}"
+
+            # user → admin → user 触发 2 条 user.role_change
+            api PUT "/admin/users/${AUDIT_USER_ID}/role" -t "${ADMIN_TOK}" \
+                -d '{"role":"admin"}' >/dev/null
+            api PUT "/admin/users/${AUDIT_USER_ID}/role" -t "${ADMIN_TOK}" \
+                -d '{"role":"user"}' >/dev/null
+
+            # 创建独立 audit 题目（创建后立即删除，不污染题目表）
+            AUDIT_SLUG="e2e-audit-$(rnd)"
+            b="$(jq -n --arg slug "${AUDIT_SLUG}" '{
+                slug:$slug, title:"A36 audit fixture", difficulty:"easy",
+                description:"# audit fixture（创建后立即删除）",
+                time_limit_ms:1000, memory_limit_mb:128,
+                samples:[{input:"1\n",output:"1\n",judge_type:"exact"}]
+            }')"
+            api POST /admin/problems -t "${ADMIN_TOK}" -d "${b}"
+            AUDIT_PROBLEM_ID="$(jqb '.data.id')"
+            [ "${HTTP_CODE}" = "201" ] && ok "A36f 创建 audit 题目(AUDIT_PROBLEM_ID=${AUDIT_PROBLEM_ID})" \
+                || fail "A36f 创建 audit 题目 HTTP=${HTTP_CODE}"
+            api DELETE "/admin/problems/${AUDIT_SLUG}" -t "${ADMIN_TOK}" >/dev/null
+            [ "${HTTP_CODE}" = "204" ] && ok "A36f 删除 audit 题目（不残留）" \
+                || fail "A36f 删除 audit 题目 HTTP=${HTTP_CODE}"
+
+            sleep 1
+
+            # 查 user.role_change + target_id=AUDIT_USER_ID 至少 2 条
+            api GET "/admin/audit-logs?action=user.role_change&target_type=user&target_id=${AUDIT_USER_ID}&limit=10" -t "${ADMIN_TOK}"
+            n_role="$(jqb '.data.items | length')"
+            [ "${n_role:-0}" -ge 2 ] && ok "A36f audit_logs 有 ≥2 条 user.role_change 指向 AUDIT_USER_ID=${AUDIT_USER_ID}（user→admin→user）" \
+                || fail "A36f user.role_change 命中 ${n_role} 条（预期 ≥2）"
+
+            # 查 problem.create + target_id=AUDIT_PROBLEM_ID 至少 1 条
+            api GET "/admin/audit-logs?action=problem.create&target_type=problem&target_id=${AUDIT_PROBLEM_ID}&limit=5" -t "${ADMIN_TOK}"
+            n_create="$(jqb '.data.items | length')"
+            [ "${n_create:-0}" -ge 1 ] && ok "A36f audit_logs 有 problem.create 指向 AUDIT_PROBLEM_ID=${AUDIT_PROBLEM_ID}" \
+                || fail "A36f problem.create 命中 ${n_create} 条（预期 ≥1）"
+
+            # 查 problem.delete + target_id=AUDIT_PROBLEM_ID 至少 1 条
+            api GET "/admin/audit-logs?action=problem.delete&target_type=problem&target_id=${AUDIT_PROBLEM_ID}&limit=5" -t "${ADMIN_TOK}"
+            n_del="$(jqb '.data.items | length')"
+            [ "${n_del:-0}" -ge 1 ] && ok "A36f audit_logs 有 problem.delete 指向 AUDIT_PROBLEM_ID=${AUDIT_PROBLEM_ID}" \
+                || fail "A36f problem.delete 命中 ${n_del} 条（预期 ≥1）"
+
+            # 任一最近行的 actor admin_id 非空（写者落地证明）
+            if [ "${n_role:-0}" -ge 1 ]; then
+                aid="$(jqb '.data.items[0].admin_id')"
+                [ -n "${aid}" ] && [ "${aid}" != "null" ] \
+                    && ok "A36f user.role_change 行 actor admin_id=${aid} 非空（写者已落地）" \
+                    || fail "A36f actor admin_id 空（写者未落地）"
+            fi
+        fi
+    fi
+fi
+
+# ═════════════════════════════════════════════════════════════
 #  总结
 # ═════════════════════════════════════════════════════════════
 echo
