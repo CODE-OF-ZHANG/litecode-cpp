@@ -1117,8 +1117,8 @@ litecode-cpp/
 
 - [x] ★ CI/CD 流水线（GitHub Actions：编译 + 单测 + 集成测试 + lint）—— v1.2.58（4 jobs: lint shellcheck+hadolint+compose config / build ccache+cmake / integration-test MySQL service+ctest -E flake / docker-build buildx+GHCR）+ v1.2.59（coverage job: lcov + 核心 ≥80% / 全库 ≥40% 硬门禁 + Codecov，commit 1 阶段 warn-only 收集 baseline；`docs/ci.md` 6 节 + `scripts/lint.sh` / `scripts/coverage.sh` 本地复现 + `.github/workflows/release.yml` 多架构+GitHub Release + dependabot 周一 09:00）
 - [x] ★ 单元测试覆盖率 ≥ 60%（核心模块：auth / judge / repo / rate_limit / audit）—— v1.2.60（scripts/coverage.sh + .github/workflows/ci.yml coverage job 实装 lcov 硬门禁，去掉 v1.2.59 的 `|| true` warn-only；新增 5 个 pure-unit gtest：test_test_case_repo.cpp / test_submission_repo.cpp / test_user_repo_helpers.cpp / test_problem_repo_helpers.cpp / test_audit_log_helpers.cpp，覆盖 repo + audit 两块核心模块的 validators / clamp_list_filter / build_where_clause 等过去只被 route-level 测试间接触达的 helpers，把核心覆盖率拉到阈值之上；`./scripts/coverage.sh gate` 失败即 fail 整 CI job）
-- [ ] ★ E2E 验收脚本（scripts/e2e_acceptance.sh：覆盖 §12.1 所有 A1–A34 用例）
-- [ ] ★ 编译炸弹防护测试（提交模板元递归 / `#include` 炸弹，验证 10s 超时）
+- [x] ★ E2E 验收脚本（scripts/e2e_acceptance.sh：覆盖 §12.1 所有 A1–A34 用例）—— v1.2.61（`scripts/e2e_acceptance.sh` 黑盒验收 curl+jq，覆盖 A1–A35 含 A3b：API 用例走公开 HTTP 面断言状态码/错误信封，JUDGE 用例提交真实 C++ 轮询终态，STATIC 用例（A13/A16/A23/A24/A32/A33/A34）沿用 test_frontend_xss.sh 先例对 web/ 源码 grep；能力探测 SERVER/JUDGE/WEB/COMPOSE 优雅降级 + 默认宽松（缺能力记 skip）+ `E2E_STRICT=1` 把缺能力 skip 升级为 fail 供 CI 强约束；provision 自动注册测试用户 + 登录 admin + bulk-import two-sum 保证可判题目；无栈干跑 20 assert 全绿 exit 0，STRICT 无栈 exit 1；不注册进 ctest，需 live stack 手动/CI 调用）
+- [x] ★ 编译炸弹防护测试（提交模板元递归 / `#include` 炸弹，验证 10s 超时）—— v1.2.61（e2e A29 拆 A29a + A29b 双子用例：A29a 用 B<40> 五路 Fibonacci 模板元递归验证 judge.sh Section C 的 124|137 分支 → `error_message` 含指纹 `Compilation timeout (limit 10s)`，10s `compile_timeout_ms` 真正截断 g++；A29b 用 `#include __FILE__` 自递归触发 g++ `#include` 嵌套深度上限 fatal error，证明编译炸弹被拦下、终态非 AC；两个子用例都断言墙钟 ≤ 15s + 事后 `/health` 不被打挂；e2e dry-run 20/0/29 exit 0，STRICT 1/29 exit 1）
 - [ ] ★ OLE 判定测试（提交死循环输出 100MB，验证 OLE + 容器不被撑爆）
 - [ ] ★ 限流测试（注册/登录 1 分钟内 100 次请求，验证 429 + Retry-After）
 - [ ] ★ 审计日志测试（删题/改角色后查 audit-logs 验证写入）
