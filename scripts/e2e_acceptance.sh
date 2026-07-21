@@ -1951,6 +1951,139 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════
+#  A47 — Caddy 双模式端到端 (Phase 7 ★ v1.2.76)
+#  - A47a  静态配置：caddy/Caddyfile.{local,prod} 关键环节点 + 行数 sanity
+#  - A47b  静态配置：docs/runbooks/caddy.md 存在 + on_demand TLS / HTTP :80 引用
+#  - A47c  委托运行 `caddy validate --config <file>`（docker 一行起 caddy:2.8-alpine
+#           做静态校验，不启 docker-proxy / mysql 全栈）+ 反向汇入
+# ═════════════════════════════════════════════════════════════
+CADDY_LOCAL="${ROOT}/caddy/Caddyfile.local"
+CADDY_PROD="${ROOT}/caddy/Caddyfile.prod"
+CADDY_RUNBOOK="${ROOT}/docs/runbooks/caddy.md"
+
+kase "A47" "Caddy 双模式端到端（Phase 7 ★ v1.2.76）"
+
+# ── A47a: 双 Caddyfile 关键环节点 + 行数 sanity ──
+if [ ! -f "${CADDY_LOCAL}" ] || [ ! -f "${CADDY_PROD}" ]; then
+    skip "A47a 缺少 caddy/Caddyfile.local 或 Caddyfile.prod"
+    skip "A47b 缺少 caddy/Caddyfile.*，runbook 引用未覆盖"
+    skip "A47c 缺少 caddy/Caddyfile.*，无法委托 validate"
+else
+    # local 模式关键环节点
+    _ca_missing=()
+    grep -qF ':80 {'                       "${CADDY_LOCAL}" \
+        || _ca_missing+=('Caddyfile.local :80 site block')
+    grep -qF 'auto_https off'              "${CADDY_LOCAL}" \
+        || _ca_missing+=('Caddyfile.local auto_https off')
+    grep -qF 'reverse_proxy litecode-web:8080' "${CADDY_LOCAL}" \
+        || _ca_missing+=('Caddyfile.local reverse_proxy')
+    grep -qF 'health_uri /api/v1/health'   "${CADDY_LOCAL}" \
+        || _ca_missing+=('Caddyfile.local health_uri')
+    grep -qF 'Content-Security-Policy'     "${CADDY_LOCAL}" \
+        || _ca_missing+=('Caddyfile.local CSP header')
+    grep -qF 'X-Frame-Options "DENY"'      "${CADDY_LOCAL}" \
+        || _ca_missing+=('Caddyfile.local X-Frame-Options DENY')
+    grep -qF 'encode gzip zstd'            "${CADDY_LOCAL}" \
+        || _ca_missing+=('Caddyfile.local gzip+zstd')
+    # prod 模式关键环节点
+    grep -qF '{$LITECODE_DOMAIN:example.com}' "${CADDY_PROD}" \
+        || _ca_missing+=('Caddyfile.prod LITECODE_DOMAIN 占位符')
+    grep -qF 'on_demand'                   "${CADDY_PROD}" \
+        || _ca_missing+=('Caddyfile.prod on_demand TLS')
+    grep -qF 'tls {'                       "${CADDY_PROD}" \
+        || _ca_missing+=('Caddyfile.prod tls block')
+    grep -qF 'redir https://{host}{uri}'   "${CADDY_PROD}" \
+        || _ca_missing+=('Caddyfile.prod HTTP→HTTPS redir')
+    grep -qF 'reverse_proxy litecode-web:8080' "${CADDY_PROD}" \
+        || _ca_missing+=('Caddyfile.prod reverse_proxy')
+    grep -qF 'Strict-Transport-Security "max-age=31536000; includeSubDomains"' \
+        "${CADDY_PROD}" || _ca_missing+=('Caddyfile.prod HSTS')
+    # 模式互斥（防止重构把 prod/on_demand 误植到 local 或反之）
+    if grep -qF 'on_demand' "${CADDY_LOCAL}"; then
+        _ca_missing+=('Caddyfile.local 误含 on_demand')
+    fi
+    if grep -qF 'auto_https off' "${CADDY_PROD}"; then
+        _ca_missing+=('Caddyfile.prod 误关 auto_https')
+    fi
+    if [ "${#_ca_missing[@]}" -eq 0 ]; then
+        ok "A47a caddy/Caddyfile.{local,prod} 关键环节点齐（11 项 + 模式互斥 2 项）"
+    else
+        fail "A47a caddy/Caddyfile.{local,prod} 缺失：${_ca_missing[*]}"
+    fi
+
+    # 行数 sanity（防退化）
+    _ca_local_lines="$(wc -l < "${CADDY_LOCAL}")"
+    _ca_prod_lines="$(wc -l < "${CADDY_PROD}")"
+    if [ "${_ca_local_lines}" -ge 50 ] && [ "${_ca_prod_lines}" -ge 50 ]; then
+        ok "A47a Caddyfile.local=${_ca_local_lines}行 / Caddyfile.prod=${_ca_prod_lines}行（均 ≥ 50）"
+    else
+        fail "A47a 行数不足：local=${_ca_local_lines} / prod=${_ca_prod_lines}（预期均 ≥ 50）"
+    fi
+
+    # ── A47b: runbook 存在 + 关键引用 ──
+    if [ -f "${CADDY_RUNBOOK}" ]; then
+        ok "A47b docs/runbooks/caddy.md 存在（runbook 入仓）"
+        if grep -qE 'HTTP\s*:80|HTTP[: ：]80' "${CADDY_RUNBOOK}"; then
+            ok "A47b runbook 含 HTTP :80 引用（local 模式）"
+        else
+            fail "A47b runbook 缺 HTTP :80 引用"
+        fi
+        if grep -qE 'on_demand|on.demand.TLS|on demand' "${CADDY_RUNBOOK}"; then
+            ok "A47b runbook 含 on_demand TLS 引用（prod 模式）"
+        else
+            fail "A47b runbook 缺 on_demand TLS 引用"
+        fi
+        if grep -qE 'LITECODE_DOMAIN|公网可达|HTTP-01' "${CADDY_RUNBOOK}"; then
+            ok "A47b runbook 含 LITECODE_DOMAIN / HTTP-01 challenge 引用"
+        else
+            fail "A47b runbook 缺 LITECODE_DOMAIN / HTTP-01 challenge 引用"
+        fi
+    else
+        fail "A47b docs/runbooks/caddy.md 缺失"
+    fi
+
+    # ── A47c: 委托运行 `caddy validate` 静态校验（不依赖完整 stack）──
+    # caddy 命令在 PATH 上不一定有（CI runner 是 ubuntu 镜像默认没装），
+    # 但 docker 命令一定有——用 `docker run --rm caddy:2.8-alpine caddy
+    # validate --config <bind-mounted file>` 跑静态校验。
+    if ! command -v docker >/dev/null 2>&1; then
+        skip "A47c docker 命令不可用，跳过 caddy validate"
+    else
+        _ca_validate_out="${TMPD}/caddy_validate.out"
+        _ca_validate_rc=0
+        # 把本地 default 占位符 {$LITECODE_DOMAIN:example.com} 留为 example.com
+        # （避免 validate 时真的去查 DNS 解析 example.com，那是 SNI 阶段，
+        # validate 不查 DNS，所以保留 placeholder 也行）。此处直接传 file。
+        docker run --rm \
+            -v "${CADDY_LOCAL}:/etc/caddy/Caddyfile:ro" \
+            caddy:2.8-alpine \
+            caddy validate --config /etc/caddy/Caddyfile --adapter '' \
+            >"${_ca_validate_out}" 2>&1 || _ca_validate_rc=$?
+        if [ "${_ca_validate_rc}" = "0" ]; then
+            ok "A47c caddy validate Caddyfile.local 通过（docker run caddy:2.8-alpine）"
+            # 反向汇入：caddy validate 是 0/1 二值
+            PASS=$((PASS + 1))
+        else
+            # caddy 镜像未拉（首次会触发 pull），pull 失败判 skip 而非 fail。
+            # 同时覆盖 docker daemon 本身不可达（开发机 / CI runner 没起 docker
+            # daemon）的场景——这种场景下 docker 命令能找到，但 docker run 立刻
+            # 报 "failed to connect to the docker API" / "cannot find the file
+            # specified"（Windows: pipe/dockerDesktopLinuxEngine；Linux:
+            # /var/run/docker.sock 缺失）。
+            if grep -qiE 'pull access denied|manifest unknown|not found|cannot connect|failed to connect|cannot find the file|cannot find the specified|daemon' \
+                "${_ca_validate_out}"; then
+                skip "A47c docker daemon 不可用或 caddy 镜像拉不到，跳过 validate（详见 ${_ca_validate_out}）"
+                SKIP=$((SKIP + 1))
+            else
+                fail "A47c caddy validate Caddyfile.local 失败（rc=${_ca_validate_rc}）"
+                sed -n '1,20p' "${_ca_validate_out}" | sed 's/^/      /'
+                FAIL=$((FAIL + 1))
+            fi
+        fi
+    fi
+fi
+
+# ═════════════════════════════════════════════════════════════
 #  总结
 # ═════════════════════════════════════════════════════════════
 echo

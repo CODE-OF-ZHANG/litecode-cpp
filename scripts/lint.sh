@@ -14,6 +14,9 @@
 #   6. alerting 配置自检（prometheus-alerts.yml + alertmanager.yml 关键环节点）
 #   7. perf_profile.sh 自检（bash -n + 关键环节点 grep，Phase 9 △ v1.2.74）
 #   8. backup.sh 自检（bash -n + 关键环节点 grep，Phase 7 ☆ v1.2.75）
+#   9. caddy 双模式自检（Phase 7 ★ v1.2.76：caddy/Caddyfile.{local,prod}
+#      关键环节点 + docker-compose.yml caddy service entrypoint 切换逻辑
+#      + .env.example CADDY_MODE/LITECODE_DOMAIN 文档化）
 #
 # 用法：
 #   ./scripts/lint.sh                # 全跑
@@ -25,6 +28,7 @@
 #   ./scripts/lint.sh alerting       # 只告警配置自检（v1.2.73）
 #   ./scripts/lint.sh perf_profile   # 只 perf_profile.sh 自检（v1.2.74）
 #   ./scripts/lint.sh backup         # 只 backup.sh 自检（v1.2.75）
+#   ./scripts/lint.sh caddy          # 只 caddy 双模式自检（v1.2.76）
 #
 # 退出码：首个失败步骤的退出码（0 = 全过）
 # =============================================================
@@ -471,6 +475,109 @@ do_backup() {
     ok "backup.sh bash -n + 关键环节点 + 行数=${lines} 通过"
 }
 
+do_caddy() {
+    info "[caddy] caddy/Caddyfile.{local,prod} + docker-compose entrypoint + .env.example"
+    local local_f="${PROJECT_ROOT}/caddy/Caddyfile.local"
+    local prod_f="${PROJECT_ROOT}/caddy/Caddyfile.prod"
+    local compose_f="${PROJECT_ROOT}/docker-compose.yml"
+    local env_f="${PROJECT_ROOT}/.env.example"
+    local runbook_f="${PROJECT_ROOT}/docs/runbooks/caddy.md"
+
+    # 1. 双 Caddyfile 必须存在
+    local missing=()
+    [ -f "${local_f}" ] || missing+=('caddy/Caddyfile.local')
+    [ -f "${prod_f}" ]  || missing+=('caddy/Caddyfile.prod')
+    if [ "${#missing[@]}" -gt 0 ]; then
+        err "缺少 caddy 双模式文件：${missing[*]}（v1.2.76 SPEC line 107）"
+        return 1
+    fi
+
+    # 2. Caddyfile.local 关键环节点（本地 HTTP :80）
+    local missing_local=()
+    grep -qF ':80 {'                       "${local_f}" || missing_local+=(':80 site block')
+    grep -qF 'auto_https off'              "${local_f}" || missing_local+=('auto_https off')
+    grep -qF 'reverse_proxy litecode-web:8080' "${local_f}" || missing_local+=('reverse_proxy litecode-web:8080')
+    grep -qF 'health_uri /api/v1/health'   "${local_f}" || missing_local+=('health_uri')
+    grep -qF 'header_up X-Forwarded-For'   "${local_f}" || missing_local+=('X-Forwarded-For 透传')
+    grep -qF 'Content-Security-Policy'     "${local_f}" || missing_local+=('CSP header')
+    grep -qF 'X-Frame-Options "DENY"'      "${local_f}" || missing_local+=('X-Frame-Options DENY')
+    grep -qF 'encode gzip zstd'            "${local_f}" || missing_local+=('gzip+zstd 编码')
+    grep -qF '# HSTS 仅在 HTTPS 启用'      "${local_f}" || missing_local+=('HSTS 注释（本地不应启用）')
+    if [ "${#missing_local[@]}" -gt 0 ]; then
+        err "Caddyfile.local 缺失关键环节点：${missing_local[*]}"
+        return 1
+    fi
+
+    # 3. Caddyfile.prod 关键环节点（生产 HTTPS + on_demand TLS）
+    local missing_prod=()
+    grep -qF '{$LITECODE_DOMAIN:example.com}' "${prod_f}" || missing_prod+=('LITECODE_DOMAIN 占位符')
+    grep -qF 'on_demand'                    "${prod_f}" || missing_prod+=('on_demand TLS')
+    grep -qF 'tls {'                        "${prod_f}" || missing_prod+=('tls block')
+    grep -qF 'redir https://{host}{uri}'    "${prod_f}" || missing_prod+=('HTTP→HTTPS 301 redir')
+    grep -qF 'reverse_proxy litecode-web:8080' "${prod_f}" || missing_prod+=('reverse_proxy litecode-web:8080')
+    grep -qF 'X-Forwarded-Proto https'     "${prod_f}" || missing_prod+=('XFP=https')
+    grep -qF 'Strict-Transport-Security "max-age=31536000; includeSubDomains"' \
+        "${prod_f}" || missing_prod+=('HSTS 启用')
+    grep -qF 'Content-Security-Policy'      "${prod_f}" || missing_prod+=('CSP header')
+    grep -qF 'encode gzip zstd'             "${prod_f}" || missing_prod+=('gzip+zstd 编码')
+    if [ "${#missing_prod[@]}" -gt 0 ]; then
+        err "Caddyfile.prod 缺失关键环节点：${missing_prod[*]}"
+        return 1
+    fi
+
+    # 4. 模式互斥：local 必须 auto_https off，prod 必须有 on_demand（不能两套都用）
+    # （grep 已隐含覆盖；这里补一行明确文档化）
+    if grep -qF 'on_demand' "${local_f}"; then
+        err "Caddyfile.local 含 on_demand——本地模式不应启用 on_demand TLS"
+        return 1
+    fi
+    if grep -qF 'auto_https off' "${prod_f}"; then
+        err "Caddyfile.prod 关掉 auto_https——会破坏 on_demand TLS 的 ACME 流程"
+        return 1
+    fi
+
+    # 5. docker-compose.yml caddy service 切换逻辑
+    local missing_compose=()
+    grep -qF 'CADDY_MODE'                   "${compose_f}" || missing_compose+=('CADDY_MODE env')
+    grep -qF 'LITECODE_DOMAIN'              "${compose_f}" || missing_compose+=('LITECODE_DOMAIN env')
+    grep -qF './caddy:/etc/caddy/conf:ro'   "${compose_f}" || missing_compose+=('挂 caddy/ 目录到 /etc/caddy/conf')
+    grep -qF 'Caddyfile.local'              "${compose_f}" || missing_compose+=('Caddyfile.local 切换分支')
+    grep -qF 'Caddyfile.prod'               "${compose_f}" || missing_compose+=('Caddyfile.prod 切换分支')
+    grep -qF 'caddy validate'               "${compose_f}" || missing_compose+=('caddy validate 校验')
+    grep -qF 'case "$${CADDY_MODE'         "${compose_f}" || missing_compose+=('CADDY_MODE case 分支')
+    if [ "${#missing_compose[@]}" -gt 0 ]; then
+        err "docker-compose.yml caddy service 缺失切换逻辑：${missing_compose[*]}"
+        return 1
+    fi
+
+    # 6. .env.example CADDY_MODE / LITECODE_DOMAIN 文档化
+    if ! grep -qF 'CADDY_MODE=local' "${env_f}"; then
+        err ".env.example 缺少 CADDY_MODE=local 默认值"
+        return 1
+    fi
+    if ! grep -qF 'LITECODE_DOMAIN' "${env_f}"; then
+        err ".env.example 缺少 LITECODE_DOMAIN 说明"
+        return 1
+    fi
+
+    # 7. runbook 存在（v1.2.76 同步建）
+    if [ ! -f "${runbook_f}" ]; then
+        err "缺少 docs/runbooks/caddy.md（与 A47b 一致）"
+        return 1
+    fi
+
+    # 8. 行数 sanity（防退化）
+    local local_lines prod_lines
+    local_lines="$(wc -l < "${local_f}")"
+    prod_lines="$(wc -l < "${prod_f}")"
+    if [ "${local_lines}" -lt 50 ] || [ "${prod_lines}" -lt 50 ]; then
+        err "Caddyfile.local=${local_lines} 行 / Caddyfile.prod=${prod_lines} 行（预期 ≥ 50/50），疑似退化"
+        return 1
+    fi
+
+    ok "caddy 双模式：local=${local_lines}行 / prod=${prod_lines}行 + compose 切换 + runbook 通过"
+}
+
 # ───── 入口 ────────────────────────────────────────────
 SUBCMD="${1:-all}"
 case "$SUBCMD" in
@@ -483,6 +590,7 @@ case "$SUBCMD" in
         do_restore_drill
         do_perf_profile
         do_backup
+        do_caddy
         echo ""
         ok "全部 lint 通过"
         ;;
@@ -495,8 +603,9 @@ case "$SUBCMD" in
     restore_drill) do_restore_drill ;;
     perf_profile)  do_perf_profile ;;
     backup)        do_backup ;;
+    caddy)         do_caddy ;;
     *)
-        echo "用法: $0 {all|shellcheck|hadolint|compose|logrotate|alerting|restore_drill|perf_profile|backup}" >&2
+        echo "用法: $0 {all|shellcheck|hadolint|compose|logrotate|alerting|restore_drill|perf_profile|backup|caddy}" >&2
         exit 64
         ;;
 esac

@@ -1,0 +1,99 @@
+# =============================================================
+# LiteCode-CPP — Caddy 反向代理（生产模式，HTTPS + on_demand TLS）
+# =============================================================
+# SPEC §11 Phase 1 / Phase 7 / v1.2.76 ★ Caddyfile 双模式
+# -------------------------------------------------------------
+# 生产部署：HTTPS + on_demand TLS，监听 :80（HTTP→HTTPS 重定向）
+# + :443（HTTPS），由 Caddy 自动向 Let's Encrypt 申请证书。
+#
+# 启用方式（v1.2.76 起）：
+#   LITECODE_DOMAIN=oj.example.com \
+#   CADDY_EMAIL=ops@example.com \
+#   docker compose --profile proxy up -d
+#
+# on_demand TLS 说明：
+#   - 首次任意客户端访问 LITECODE_DOMAIN 时，Caddy 后台向 LE 申请证书
+#   - 证书自动续期（≤ 90 天）
+#   - 要求 :80 端口对公网可达（LE 验证用 HTTP-01 challenge）
+#   - 多域名 / 子域：在 LITECODE_DOMAIN 处用逗号分隔或在下方 site
+#     block 里复制多份
+#
+# DNS-01 验证（证书签发不依赖 :80 公网可达）：
+#   如需 cloudflare / alidns 等 DNS-01 验证，构建自定义 Caddy 镜像
+#   集成 xcaddy + caddy-dns/cloudflare 插件；本仓库默认镜像不内置。
+#   参考：https://github.com/caddy-dns/cloudflare
+#         https://github.com/caddy-dns/alidns
+# =============================================================
+# 安全响应头（与 Caddyfile.local 保持一致，避免 HSTS 等策略漂移）
+# =============================================================
+
+# ───── 全局选项 ──────────────────────────────────────────────
+{
+    admin off                       # 禁用 admin API（容器内无需）
+    # 注意：不要显式关 auto_https —— on_demand TLS 依赖它来按需触发 HTTPS
+    on_demand_tls {
+        # 询问 "该不该为这个 SNI 签证书" 时回调的内省端点。本仓库未
+        # 部署 introspection endpoint，留空 = Caddy 默认接受所有请求
+        # 触发签发。如要收紧到「只对白名单 SNI 签证书」，部署一个
+        # POST /tls/introspect 端点鉴权后返回 200，本处填
+        # https://your-introspect.example.com。
+        ask []
+    }
+    log default {
+        format json
+        level INFO
+    }
+}
+
+# ───── HTTP :80 → HTTPS 301 重定向 + ACME challenge 端点 ────
+:80 {
+    # HTTP-01 ACME challenge 必须保持可达，不能重定向到 HTTPS
+    # Caddy 的 automatic_https / on_demand_tls 已自动处理：
+    # /.well-known/acme-challenge/* 不会被强制重定向，可走 HTTP。
+    redir https://{host}{uri} permanent
+}
+
+# ───── HTTPS 主站 ────────────────────────────────────────────
+# 域名通过 env LITECODE_DOMAIN 注入（docker-compose.yml 渲染）。
+# 默认占位 example.com 是占位符，避免本地调试时 Caddy 真去 LE 申请
+# 一个废证书。
+{$LITECODE_DOMAIN:example.com} {
+    # on_demand TLS —— 首次任意客户端访问触发 ACME 申请
+    tls {
+        on_demand
+    }
+
+    reverse_proxy litecode-web:8080 {
+        health_uri /api/v1/health
+        health_interval 10s
+        health_timeout 5s
+
+        # HTTPS 模式下 X-Forwarded-Proto 必须传 https，否则后端
+        # 误判客户端是 HTTP 会触发 CORS 误报 / cookie Secure flag 误设
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto https
+
+        # Cookie 透传
+        header_up Cookie {http.request.header.Cookie}
+
+        # CSP 与 local 模式一致
+        header_down Content-Security-Policy "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+
+        header_down -Server
+        header_down -X-Powered-By
+    }
+
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        # 生产 HTTPS 启用 HSTS（含子域，预加载列表友好）
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        Permissions-Policy "geolocation=(), microphone=(), camera=()"
+        -Server
+    }
+
+    encode gzip zstd
+}

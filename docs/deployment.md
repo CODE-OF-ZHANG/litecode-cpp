@@ -79,6 +79,23 @@ docker compose --profile proxy --profile monitoring --profile logging --profile 
 docker compose down -v                 # -v 会删所有 named volumes（含 mysql-data / 备份）
 ```
 
+### 2.4 Caddy 反向代理双模式（v1.2.76 起）
+
+```bash
+# 模式 A：本地开发（默认）—— HTTP :80，挂 caddy/Caddyfile.local
+docker compose --profile proxy up -d
+
+# 模式 B：生产 —— HTTPS + on_demand TLS，挂 caddy/Caddyfile.prod
+# LITECODE_DOMAIN 必须设为公网可达域名（Let's Encrypt HTTP-01 验证）
+LITECODE_DOMAIN=oj.example.com \
+CADDY_MODE=prod \
+docker compose --profile proxy up -d
+```
+
+切换机制：`docker-compose.yml` caddy service 的 entrypoint 按 `CADDY_MODE`
+env 拷贝对应 Caddyfile 到 `/etc/caddy/Caddyfile`，再 `caddy validate` 校
+验语法后 `caddy run`。详见 [`docs/runbooks/caddy.md`](runbooks/caddy.md)。
+
 ---
 
 ## 3. 环境变量
@@ -107,7 +124,7 @@ docker compose down -v                 # -v 会删所有 named volumes（含 mys
 | CORS | `CORS_ALLOWED_ORIGINS` |
 | Rate limit | `RATE_LIMIT_REGISTER_PER_MIN=5` 等 |
 | Admin bootstrap | `ADMIN_USERNAME/PASSWORD/EMAIL` |
-| **Compose**（Phase 7）| `WEB_BIND`、`CADDY_*`、`PROMETHEUS_*`、`GRAFANA_*`、`ALERTMANAGER_*`、`CADVISOR_*`、`NODE_EXPORTER_*`、`LOKI_*`、`BACKUP_*` |
+| **Compose**（Phase 7）| `WEB_BIND`、`CADDY_MODE`、`CADDY_HTTP/HTTPS_PORT`、`LITECODE_DOMAIN`、`PROMETHEUS_*`、`GRAFANA_*`、`ALERTMANAGER_*`、`CADVISOR_*`、`NODE_EXPORTER_*`、`LOKI_*`、`BACKUP_*` |
 
 > 12-factor 约定：真实环境变量优先于 `.env` 文件。所以生产环境用
 > `docker compose --env-file prod.env up` 或 k8s ConfigMap 注入。
@@ -225,6 +242,31 @@ RESTORE_STRICT=1 bash scripts/restore_drill.sh
 ```
 
 默认 schedule：`0 9 1-7 * 1`（每月第一个周一上午 09:00，与 CI 周一周期对齐）。
+
+### 5.5 反向代理（Caddy 双模式，v1.2.76）
+
+Caddy 配置已拆分为两个独立文件，docker-compose entrypoint 按 `CADDY_MODE`
+env 选择挂载：
+
+| 模式 | 触发 | 配置文件 | 端口 | TLS |
+|------|------|---------|------|-----|
+| **local**（默认）| `CADDY_MODE=local` 或不设 | `caddy/Caddyfile.local` | :80 | 关 |
+| **prod** | `CADDY_MODE=prod` + `LITECODE_DOMAIN` | `caddy/Caddyfile.prod` | :80 (:80→:443 重定向) + :443 | on_demand（自动 LE 申请） |
+
+启用方式：
+
+```bash
+# 本地开发：HTTP :80，直接反代 web:8080
+docker compose --profile proxy up -d
+
+# 生产：HTTPS + on_demand TLS
+LITECODE_DOMAIN=oj.example.com \
+CADDY_MODE=prod \
+docker compose --profile proxy up -d
+```
+
+切换细节 / 故障排查 / on_demand TLS 限制 / DNS-01 自定义镜像 详见
+[`docs/runbooks/caddy.md`](runbooks/caddy.md)。
 
 ---
 

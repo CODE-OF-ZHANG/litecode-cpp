@@ -248,7 +248,11 @@ services:
     logging: *default-logging
 
   # ───── 5. Caddy 反向代理（可选，profile=proxy 启用）───────
-  # SPEC §11 Phase 1 / Phase 7：本地 HTTP-only；生产可改 HTTPS
+  # SPEC §11 Phase 1 / Phase 7 / v1.2.76 ★ Caddyfile 双模式：
+  #   - CADDY_MODE=local（默认）：挂 caddy/Caddyfile.local（HTTP :80）
+  #   - CADDY_MODE=prod：         挂 caddy/Caddyfile.prod（HTTPS + on_demand TLS）
+  # 双模式由 entrypoint 脚本按 CADDY_MODE 拷贝对应文件到
+  # /etc/caddy/Caddyfile，Caddy 自身只读一个文件，配置语法保持简单。
   caddy:
     image: caddy:2.8-alpine
     container_name: litecode-caddy
@@ -260,12 +264,54 @@ services:
     ports:
       - "${CADDY_HTTP_PORT:-80}:80"
       - "${CADDY_HTTPS_PORT:-443}:443"
+    environment:
+      # v1.2.76：双模式开关
+      CADDY_MODE: ${CADDY_MODE:-local}    # local | prod
+      # prod 模式必填，注入到 Caddyfile.prod 的 site address
+      LITECODE_DOMAIN: ${LITECODE_DOMAIN:-example.com}
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # 挂整个 caddy/ 目录；entrypoint 按 CADDY_MODE 选 Caddyfile.local
+      # 或 Caddyfile.prod 拷到 /etc/caddy/Caddyfile。
+      - ./caddy:/etc/caddy/conf:ro
       - caddy-data:/data
       - caddy-config:/config
+    # v1.2.76：entrypoint 切换 + Caddy 验证配置后启动
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        case "$${CADDY_MODE:-local}" in
+          prod)  SRC=/etc/caddy/conf/Caddyfile.prod  ;;
+          *)     SRC=/etc/caddy/conf/Caddyfile.local ;;
+        esac
+        echo "[caddy] CADDY_MODE=$${CADDY_MODE:-local} → $$SRC"
+        cp "$$SRC" /etc/caddy/Caddyfile
+        # Caddyfile.prod 顶层用 {$LITECODE_DOMAIN:example.com} 占位
+        # （Caddy env 引用语法），此处用 sed 替换避免依赖 busybox
+        # envsubst（不同镜像版本行为差异）。local 模式不引用此变量，
+        # sed 替换是 no-op。
+        sed -i "s/\\$${LITECODE_DOMAIN:example.com}/$${LITECODE_DOMAIN:-example.com}/g" /etc/caddy/Caddyfile
+        echo "[caddy] rendered Caddyfile (first 40 lines):"
+        sed -n '1,40p' /etc/caddy/Caddyfile
+        # Caddy 自带 `caddy validate` 子命令，失败会非 0 退出
+        caddy validate --config /etc/caddy/Caddyfile --adapter ''
+        exec caddy run --config /etc/caddy/Caddyfile --adapter ''
     networks:
       - litecode-net
+    # 资源硬上限（caddy 内存占用通常 < 50M，给 128M 足够）
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+    # v1.2.76：healthcheck 通过 caddy 自带的 admin API（已关掉）
+    # 改用 HTTP 探活 —— 200 即视为健康。
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --tries=1 http://127.0.0.1:80/ >/dev/null 2>&1 || wget -qO- --tries=1 https://127.0.0.1:443/ >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     logging: *default-logging
 
   # ───── 6. Prometheus（可选，profile=monitoring 启用）───────

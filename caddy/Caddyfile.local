@@ -1,0 +1,120 @@
+# =============================================================
+# LiteCode-CPP — Caddy 反向代理（本地开发模式，HTTP only）
+# =============================================================
+# SPEC §11 Phase 1 / Phase 7 / v1.2.76 ★ Caddyfile 双模式
+# -------------------------------------------------------------
+# 本地开发 / 调试 / 集成测试：HTTP :80，转发到 web 容器 :8080。
+# 生产 HTTPS 模式见 `Caddyfile.prod`（独立文件，按 CADDY_MODE
+# 在 entrypoint 阶段切换，不依赖注释开关）。
+#
+# 启用方式（v1.2.76 起）：
+#   docker compose --profile proxy up -d
+#   # 默认 CADDY_MODE=local → 挂这个文件
+#
+# 切到 HTTPS：
+#   CADDY_MODE=prod LITECODE_DOMAIN=oj.example.com \
+#     docker compose --profile proxy up -d
+# =============================================================
+# SRI (Subresource-Integrity) 说明
+# -------------------------------------------------------------
+# SRI 是 per-resource 属性（写在 <script> 标签的 integrity= 上），不是
+# HTTP 头，所以本文件不直接配置。完整 SRI 注册表见 `web/js/csp.js`：
+#   - marked@12.0.2      https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js
+#   - dompurify@3.1.6    https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js
+# 两份 bundle 的 sha384 digest 写在 csp.js 的 SCRIPTS 表里，由 app.js 的
+# `litecode.markdown.prewarm()` 在首次渲染 Markdown 时通过
+# `csp.makeScript(spec)` 注入到 <head>。浏览器会在执行前校验 hash；任
+# 何字节变化都会让脚本被拒绝并抛 `Failed to find a valid digest in the
+# 'integrity' attribute` 错误，UI 走 escaped-text fallback。
+# 升级 marked/dompurify 时：
+#   1. 从 cdn.jsdelivr.net 重新拉新版本
+#   2. openssl dgst -sha384 -binary marked.min.js | openssl base64 -A
+#   3. 把 digest + url 同步更新到 web/js/csp.js 的 SCRIPTS 表
+# =============================================================
+# Cookie / 鉴权代理说明 (Phase 5 ★ — SPEC §6.3 / §15.1 / §15.3)
+# -------------------------------------------------------------
+# refresh token 通过 Set-Cookie (HttpOnly; Secure; SameSite=Strict;
+# Path=/api/v1/auth) 在登录/刷新时下发，注销时通过同名的 Max-Age=0
+# 删除。Caddy 默认透传 Set-Cookie 与 Cookie 头（不透明处理），所以
+# 无需显式 header_up Cookie / header_down Set-Cookie —— 下面两行
+# 仅作防御性 hint：万一将来某个中间件/插件想"优化"头转发，可以反向
+# 取消注释即可。
+#
+# 注意：`cookie_path /api/v1/auth` 是后端 CookieConfig 的硬编码（默认
+# 值，可用 env COOKIE_PATH 覆盖）。本地调试时如果你改了 path，别忘
+# 了同步更新前端 `credentials: 'same-origin'` 的 fetch 配置 —— 跨
+# path 的 SameSite=Strict cookie 在 SameSite=Strict + samesite=Strict
+# 下仍然会被同站 fetch 携带，所以默认配置下前端无需任何 Cookie
+# 处理代码：浏览器自动带 cookie 即可。
+# =============================================================
+
+# ───── 全局选项 ──────────────────────────────────────────────
+{
+    admin off                       # 禁用 admin API（容器内无需）
+    auto_https off                  # 本地不自动 HTTPS（强制 HTTP :80）
+    # log 格式：JSON，便于 Loki/ELK 聚合
+    log default {
+        format json
+        level INFO
+    }
+}
+
+# ───── HTTP :80 入口，转发到 web 容器 ──────────────────────────
+:80 {
+    # 把真实客户端 IP 透传给后端（X-Forwarded-For）
+    reverse_proxy litecode-web:8080 {
+        # 健康检查（被代理端）
+        health_uri /api/v1/health
+        health_interval 10s
+        health_timeout 5s
+
+        # 透明传输 Header
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        # Phase 5 ★：Cookie 头透传（默认就透传；显式列出来以防某个
+        # 上游插件将来要 strip 头）。refresh token 走 HttpOnly cookie，
+        # 浏览器在每次同源 fetch 时自动带上 Cookie，后端通过
+        # req.get_header_value("Cookie") 取出。
+        header_up Cookie {http.request.header.Cookie}
+
+        # 响应头：CSP（与前端 <meta http-equiv="Content-Security-Policy">
+        # 配套，防御纵深；两个策略取交集生效，所以保持字面完全一致——
+        # 见 web/js/csp.js 的 CSP_VALUE 单点定义）。新增指令：
+        #   - object-src 'none'    — 禁止 <object>/<embed>，杜绝 Flash 风格攻击
+        #   - base-uri 'self'      — 防止 <base href> 注入劫持相对 URL
+        #   - form-action 'self'   — 防止表单外发到恶意 origin
+        #   - font-src 'self'      — 当前没有 web font，但显式声明便于审计
+        # 不在 script-src 加 'unsafe-inline'：所有页面脚本均走外部文件 +
+        # 加载顺序为 csp.js → api.js → app.js。
+        header_down Content-Security-Policy "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+
+        # Phase 5 ★：透传 Set-Cookie（默认就透传）。登录 / 注册 / 刷新
+        # 三个端点会通过 Set-Cookie 下发 lc_refresh；登出端点会用同名
+        # Max-Age=0 覆盖删除。**不要**在 header_down 里 strip Set-Cookie。
+        # 上面这行是注释说明，下面这一行是真正的 Caddy 配置：什么都不
+        # 做 = 透传。
+        # header_down Set-Cookie {http.response.header.Set-Cookie}
+
+        # 隐藏后端服务器信息
+        header_down -Server
+        header_down -X-Powered-By
+    }
+
+    # 安全响应头
+    header {
+        # 防 XSS / MIME sniffing / clickjacking
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        # HSTS 仅在 HTTPS 启用（避免本地 HTTP 下浏览器拒绝）
+        # Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        Permissions-Policy "geolocation=(), microphone=(), camera=()"
+        # 移除泄露信息的头
+        -Server
+    }
+
+    # 编码：交给 Caddy 自动 gzip
+    encode gzip zstd
+}

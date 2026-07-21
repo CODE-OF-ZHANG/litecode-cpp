@@ -104,7 +104,7 @@
 
 - [x] ★ 完善 Docker Compose（Web + MySQL + Judge + Socket Proxy + Caddy）—— v1.2.57（11 个服务 / 4 个 profile：default / proxy / monitoring / backup；详见 [[v1.2.57 Phase 7 docker-compose|project-v1-2-57-phase7-docker-compose]]）
 - [x] ★ README + 部署文档（环境变量表 + 初始管理员创建 `scripts/create_admin.sql` + 灾备恢复 + 故障排查）—— v1.2.57 `docs/deployment.md` 11 节（环境变量 / 灾备 / 故障排查 / 监控 / 备份 / 反代 / 安全加固 / 性能 / 灰度 / FAQ + 版本演进）；`scripts/create_admin.sql` 早落地；`.gitignore docs/*` 例外让 deployment.md 入仓
-- [ ] ★ Caddyfile 双模式（`Caddyfile.local` HTTP / `Caddyfile.prod` HTTPS + on_demand TLS）
+- [x] ★ Caddyfile 双模式（`Caddyfile.local` HTTP / `Caddyfile.prod` HTTPS + on_demand TLS）—— v1.2.76（拆分为 `caddy/Caddyfile.local`（HTTP :80，120 行）+ `caddy/Caddyfile.prod`（HTTPS + on_demand TLS + HSTS，99 行）+ docker-compose.yml caddy service entrypoint 按 `CADDY_MODE` env 切换 + `caddy validate` 静态校验 + 根目录 `Caddyfile` 改 deprecated 入口保留向后兼容 + `scripts/lint.sh caddy` 11+2 关键环节点（模式互斥检查：`on_demand` 不可出现在 local / `auto_https off` 不可出现在 prod）+ `scripts/e2e_acceptance.sh A47`（静态配置 + runbook 引用 + `docker run caddy:2.8-alpine caddy validate` 反向汇入）+ `docs/runbooks/caddy.md` 9 节 + `.env.example` 加 `CADDY_MODE` / `LITECODE_DOMAIN` + `docs/deployment.md §2.4` + §5.5；零 src/* 改动）
 
 ### Tier 3 — v1.2.45：前端美化（用户已确认推迟到此）
 
@@ -117,7 +117,7 @@
 - [ ] ☆ 替换 emoji 为 SVG icons（lucide / heroicons，加 SRI）
 - [ ] ☆ 完善空数据 / 错误 / 加载三态视觉
 - [ ] ☆ 引入渐变 / 阴影 / 动效的 design system polish
-- [ ] ☆ 浏览器端 XSS 用例回归（`web/test/markdown-xss.html`）
+- [x] ☆ 浏览器端 XSS 用例回归（`web/test/markdown-xss.html`）—— v1.2.66 渗透测试 A38 + Phase 5 ★ Markdown XSS 净化已落地（`web/test/markdown-xss.html` 存在，20+ 攻击向量覆盖；v1.2.76 SPEC 同步翻 `[x]`，无新增代码）
 
 ### Tier 4 — v1.2.46+ ：Phase 7 完整 + Phase 8 + Phase 9
 
