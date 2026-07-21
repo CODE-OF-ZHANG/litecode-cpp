@@ -13,6 +13,7 @@
 #   5. restore_drill.sh 自检（bash -n + 关键环节点 grep）
 #   6. alerting 配置自检（prometheus-alerts.yml + alertmanager.yml 关键环节点）
 #   7. perf_profile.sh 自检（bash -n + 关键环节点 grep，Phase 9 △ v1.2.74）
+#   8. backup.sh 自检（bash -n + 关键环节点 grep，Phase 7 ☆ v1.2.75）
 #
 # 用法：
 #   ./scripts/lint.sh                # 全跑
@@ -23,6 +24,7 @@
 #   ./scripts/lint.sh restore_drill  # 只恢复演练脚本自检
 #   ./scripts/lint.sh alerting       # 只告警配置自检（v1.2.73）
 #   ./scripts/lint.sh perf_profile   # 只 perf_profile.sh 自检（v1.2.74）
+#   ./scripts/lint.sh backup         # 只 backup.sh 自检（v1.2.75）
 #
 # 退出码：首个失败步骤的退出码（0 = 全过）
 # =============================================================
@@ -401,6 +403,74 @@ do_restore_drill() {
     ok "restore_drill.sh bash -n + 关键环节点 + 行数=${lines} 通过"
 }
 
+do_backup() {
+    info "[backup] scripts/backup.sh bash -n + 关键环节点（Phase 7 ☆ v1.2.75）"
+    local f="${PROJECT_ROOT}/scripts/backup.sh"
+    if [ ! -f "${f}" ]; then
+        err "缺少 ${f}（SPEC §16.5 备份脚本依赖）"
+        return 1
+    fi
+
+    # 1. 语法
+    if ! bash -n "${f}"; then
+        err "bash -n backup.sh 失败"
+        return 1
+    fi
+
+    # 2. 关键环节点 grep（防止某次重构把核心骨架改掉）
+    # 每条都可独立 grep -F 匹配；缺一即 fail。
+    local missing=()
+    # BACKUP_RESULT 反向汇入行（与 v1.2.67/72/74 PROFILE_RESULT 风格一致）
+    grep -qF 'BACKUP_RESULT PASS=' "${f}" || missing+=('BACKUP_RESULT 汇总行')
+    # BACKUP_STRICT 强约束开关
+    grep -qF 'BACKUP_STRICT'         "${f}" || missing+=('BACKUP_STRICT 开关')
+    # BACKUP_DRY_RUN 探测模式（让 e2e 静态探测能跑）
+    grep -qF 'BACKUP_DRY_RUN'        "${f}" || missing+=('BACKUP_DRY_RUN 探测开关')
+    # 能力探测行（让 e2e / runbook 能 grep）
+    grep -qF 'capabilities:'         "${f}" || missing+=('capabilities 探测行')
+    # 收尾 emit_result + EXIT trap
+    grep -qF 'emit_result()'         "${f}" || missing+=('emit_result 收尾函数')
+    grep -qF "trap 'emit_result' EXIT" "${f}" || missing+=('emit_result EXIT trap')
+    # 工具检查（mysqldump 必须有；mysql client 必有）
+    grep -qF 'mysqldump'             "${f}" || missing+=('mysqldump 调用')
+    grep -qF 'HAVE_MYSQLDUMP'        "${f}" || missing+=('HAVE_MYSQLDUMP 探测')
+    grep -qF 'HAVE_MYSQL'            "${f}" || missing+=('HAVE_MYSQL 探测')
+    # 备份核心参数：单事务 + quick + routines + triggers + utf8mb4 + hex-blob
+    grep -qF 'single-transaction'    "${f}" || missing+=('single-transaction 一致性快照')
+    grep -qF 'routines'              "${f}" || missing+=('routines / triggers 包含 SP/event')
+    grep -qF 'hex-blob'              "${f}" || missing+=('hex-blob BLOB 列保护')
+    grep -qF 'utf8mb4'               "${f}" || missing+=('utf8mb4 字符集')
+    # 三种压缩模式
+    grep -qF 'gzip -9'               "${f}" || missing+=('gzip -9 压缩')
+    grep -qF 'zstd -q -19'           "${f}" || missing+=('zstd -19 压缩')
+    grep -qF 'BACKUP_COMPRESS'       "${f}" || missing+=('BACKUP_COMPRESS 三模式开关')
+    # 校验：size sanity + gunzip -t
+    grep -qF 'stat -c%s'             "${f}" || missing+=('备份文件 size 校验')
+    grep -qF 'gunzip -t'             "${f}" || missing+=('gunzip -t 完整性校验')
+    grep -qF 'BACKUP_RETENTION_DAYS' "${f}" || missing+=('保留天数配置')
+    # 异地同步 rclone（可选）
+    grep -qF 'rclone copyto'         "${f}" || missing+=('rclone copyto 异地同步')
+    grep -qF 'RCLONE_REMOTE'         "${f}" || missing+=('RCLONE_REMOTE 远端配置')
+    # 保留清理
+    grep -qF 'mtime'                 "${f}" || missing+=('find -mtime 过期清理')
+    # SPEC §16.5 mysqldump 默认值
+    grep -qF 'DB_NAME'               "${f}" || missing+=('DB_NAME 默认值')
+    if [ "${#missing[@]}" -gt 0 ]; then
+        err "scripts/backup.sh 缺失关键环节点：${missing[*]}"
+        return 1
+    fi
+
+    # 3. 行数 sanity
+    local lines
+    lines="$(wc -l < "${f}")"
+    if [ "${lines}" -lt 130 ]; then
+        err "scripts/backup.sh 仅 ${lines} 行（预期 ≥ 130 行），疑似退化"
+        return 1
+    fi
+
+    ok "backup.sh bash -n + 关键环节点 + 行数=${lines} 通过"
+}
+
 # ───── 入口 ────────────────────────────────────────────
 SUBCMD="${1:-all}"
 case "$SUBCMD" in
@@ -412,6 +482,7 @@ case "$SUBCMD" in
         do_alerting
         do_restore_drill
         do_perf_profile
+        do_backup
         echo ""
         ok "全部 lint 通过"
         ;;
@@ -423,8 +494,9 @@ case "$SUBCMD" in
     alerting)      do_alerting ;;
     restore_drill) do_restore_drill ;;
     perf_profile)  do_perf_profile ;;
+    backup)        do_backup ;;
     *)
-        echo "用法: $0 {all|shellcheck|hadolint|compose|logrotate|alerting|restore_drill|perf_profile}" >&2
+        echo "用法: $0 {all|shellcheck|hadolint|compose|logrotate|alerting|restore_drill|perf_profile|backup}" >&2
         exit 64
         ;;
 esac

@@ -96,14 +96,14 @@
 
 - [x] ★ 审计日志 API（`GET /api/v1/admin/audit-logs`，§5.5/§15.6/A17-A18/A20/A27，v1.2.43）—— 已交付：22 纯单测 + 21 MySQL 集成测 (env-dependent)；新增 `src/routes/admin_audit_log_routes.h` + `tests/unit/test_admin_audit_logs.cpp`；前端 `web/admin/audit-logs.html` (v1.2.35) 已就绪仅需端点
 - [x] ★ 判题队列状态 API（`GET /api/v1/admin/queue`，§5.5/§16.1，v1.2.44）—— 已交付：17 纯单测 + 9 MySQL 集成测（env-dependent，含 live-scheduler/pool 访问器穿透）；新增 `src/routes/admin_queue_routes.h` + `tests/unit/test_admin_queue.cpp`；复用 `JudgeScheduler` 公开访问器（v1.2.15，`max_queue_size()` 本次新增）；wire shape: `queue.{size,running,max_concurrent,max_queue_size,scheduler_running,utilization}` + `warm_pool.{size,target,running}` + `docker.{ok,detail}` + `db.{ok,pending_submissions}` + `updated_at`
-- [ ] ☆ 失败登录锁定（连续 N 次失败 15 分钟内禁止该用户名登录，§15.1/Phase 6 ☆）—— `user_repo.h` 新增 `is_locked_out` / `record_failed_attempt` / `clear_failed_attempts`（in-process map + 时间窗清理，无 Redis 依赖）+ `login_handler` 第 6 次起返 423 LOCKED；6+ 集成用例
-- [ ] ★ 安全加固（输入校验 + SQL 参数化 + XSS 防护 + CSP + SRI，§15）—— 已分散落地，**仅勾选 + 留指针，不新增代码**
+- [x] ☆ 失败登录锁定（连续 N 次失败 15 分钟内禁止该用户名登录，§15.1/Phase 6 ☆）—— v1.2.46（`LoginFailureTracker` 内存状态机：defaults 5/900/900 阈值；sliding window + 自动恢复；`login_handler` 第 6 次起返 423 Locked + Retry-After + `auth.login_locked` 审计行；`LoginLockoutConfig` env 注入；tests/unit/test_login_lockout.cpp 9 用例 + tests/integration/test_login_lockout_live.cpp 6 用例；test_config 62/63 pass 含 1 已知 flake；详见 [[v1.2.46 login-lockout route|project-login-lockout-v1-2-46]]）
+- [x] ★ 安全加固（输入校验 + SQL 参数化 + XSS 防护 + CSP + SRI，§15）—— 已分散落地（validator `validate_*` 全局 400 信封 + `mysql-connector` 全部预编译参数 + DOMPurify marked SRI 锁 + CSP 头 + helmet 等价中间件），**仅勾选 + 留指针，不新增代码**
 - [x] ★ 错误处理统一（§5.7 错误码 + 响应格式）—— `error_handler.h` 已实现 `make_error_envelope`，**仅勾选 + 留指针，不新增代码**
 
 ### Tier 2 — v1.2.44：Phase 7 最小骨架（3 项最小集，让 `docker compose up` 真的能跑）
 
-- [ ] ★ 完善 Docker Compose（Web + MySQL + Judge + Socket Proxy + Caddy）—— Web `--cpus=2 --memory=512m` 非 root / MySQL 持久卷 + healthcheck / Judge `build: ./judge`（v1.2.13）/ Socket Proxy (`tecnativa/docker-socket-proxy` 白名单 5 子命令) / Caddy 反代
-- [ ] ★ README + 部署文档（环境变量表 + 初始管理员创建 `scripts/create_admin.sql` + 灾备恢复 + 故障排查）
+- [x] ★ 完善 Docker Compose（Web + MySQL + Judge + Socket Proxy + Caddy）—— v1.2.57（11 个服务 / 4 个 profile：default / proxy / monitoring / backup；详见 [[v1.2.57 Phase 7 docker-compose|project-v1-2-57-phase7-docker-compose]]）
+- [x] ★ README + 部署文档（环境变量表 + 初始管理员创建 `scripts/create_admin.sql` + 灾备恢复 + 故障排查）—— v1.2.57 `docs/deployment.md` 11 节（环境变量 / 灾备 / 故障排查 / 监控 / 备份 / 反代 / 安全加固 / 性能 / 灰度 / FAQ + 版本演进）；`scripts/create_admin.sql` 早落地；`.gitignore docs/*` 例外让 deployment.md 入仓
 - [ ] ★ Caddyfile 双模式（`Caddyfile.local` HTTP / `Caddyfile.prod` HTTPS + on_demand TLS）
 
 ### Tier 3 — v1.2.45：前端美化（用户已确认推迟到此）
@@ -123,16 +123,16 @@
 
 **Phase 7 剩余**
 
-- [ ] ☆ 备份脚本 `scripts/backup.sh`（mysqldump 每日 + 异地）
+- [x] ☆ 备份脚本 `scripts/backup.sh`（mysqldump 每日 + 异地）—— v1.2.57 容器侧（alpine + dcron 03:00 + gzip/zstd + 14 天保留 + rclone 异地钩子）+ v1.2.75 自检/e2e/runbook（宿主机侧强化：`BACKUP_RESULT` 反向汇入 + `BACKUP_STRICT` 强约束 + `scripts/lint.sh backup` 5 段关键环节点 + e2e A46 三层 + `docs/runbooks/backup.md` 8 节；详见 [[v1.2.75 backup & SPEC sync|project-v1-2-75-backup-and-spec-sync]]）
 - [x] ☆ 监控告警（Grafana 面板：判题 P99 延迟 > 5s / 队列积压 > 50）—— v1.2.57（dashboard + alertmanager + 10 条告警规则）+ v1.2.73（补 `WebContainerMemoryHigh` + 端到端 lint/e2e + runbook）
 
 **Phase 8 质量保障**
 
-- [ ] ★ CI/CD 流水线（GitHub Actions：编译 + 单测 + 集成测试 + lint）
-- [ ] ★ 单元测试覆盖率 ≥ 60%（核心模块：auth / judge / repo / rate_limit / audit）
-- [ ] ★ E2E 验收脚本 `scripts/e2e_acceptance.sh`（覆盖 §12.1 A1–A34）
-- [ ] ★ 编译炸弹防护测试（提交模板元递归 / `#include` 炸弹，验证 10s 超时）
-- [ ] ★ OLE 判定测试（提交死循环输出 100MB，验证 OLE + 容器不被撑爆）
+- [x] ★ CI/CD 流水线（GitHub Actions：编译 + 单测 + 集成测试 + lint）—— v1.2.58（`.github/workflows/ci.yml` 4 jobs：lint shellcheck+hadolint+compose / build ccache+cmake / integration-test MySQL service+ctest / docker-build buildx+GHCR + release.yml 多架构 + dependabot 周一 09:00 + `scripts/lint.sh` 本地复现 + `docs/ci.md` 6 节；详见 [[v1.2.58 CI/CD 流水线|project-v1-2-58-cicd-pipeline]]）
+- [x] ★ 单元测试覆盖率 ≥ 60%（核心模块：auth / judge / repo / rate_limit / audit）—— v1.2.59 coverage job scaffolding（CMake `lc_coverage` option + `scripts/coverage.sh` + codecov.yml）+ v1.2.60 5 个新 pure-unit gtest 补强核心模块覆盖率 + coverage gate 硬门禁
+- [x] ★ E2E 验收脚本 `scripts/e2e_acceptance.sh`（覆盖 §12.1 A1–A34）—— v1.2.61（A1–A35 三类断言 API/JUDGE/STATIC + 能力探测降级 + `E2E_STRICT=1` CI 强约束；详见 [[v1.2.61 E2E + 编译炸弹防护|project-v1-2-61-e2e-acceptance]]）
+- [x] ★ 编译炸弹防护测试（提交模板元递归 / `#include` 炸弹，验证 10s 超时）—— v1.2.61（e2e A29 拆 A29a `B<40>` 模板元递归 → `Compilation timeout (limit 10s)` 指纹验 10s 编译超时 + A29b `#include __FILE__` 自递归炸弹 → g++ 深度上限拦下；详见 [[v1.2.61 E2E + 编译炸弹防护|project-v1-2-61-e2e-acceptance]]）
+- [x] ★ OLE 判定测试（提交死循环输出 100MB，验证 OLE + 容器不被撑爆）—— v1.2.62（e2e A30 三层强约束：API contract status=ole + error_message 指纹 `output exceeded [0-9]+ bytes \(got [0-9]+\)` 验 judge.sh Section D OLE 分支 + 墙钟 ≤ 15s + /health 200 容器不被撑爆；详见 [[v1.2.62 OLE 判定测试补强|project-v1-2-62-ole-test]]）
 - [x] ★ 限流测试（注册/登录 1 分钟内 100 次请求，验证 429 + Retry-After）—— v1.2.63（e2e A26 拆 A26a 注册 quota 5/min/IP + A26b 登录 quota 10/min/IP：用独立 X-Forwarded-For IP 把两个 bucket 隔离，不污染 default IP 的 register/login quota 状态——避免 A27/A35 误 hit429；每个子用例五重断言：HTTP 429 + Retry-After ∈ [1,60] 整数秒 + X-RateLimit-Limit==该 quota capacity + X-RateLimit-Remaining==0 + .code==RATE_LIMITED + .error.details.quota 命中预期 name；登录子用例用错误密码「先 401 再 429」的方式不依赖前置 register 配额。SPEC「1 分钟 100 次」措辞沿用 Phase 2 ★ 旧版描述，实际按 SPEC §5.1 默认值 register=5/min、login=10/min 打到第 N+1 次即触发，quota 阈值由 `RATE_LIMIT_REGISTER_PER_MIN` / `RATE_LIMIT_LOGIN_PER_MIN` 注入；单测覆盖在 `tests/unit/test_rate_limit.cpp`）
 - [x] ★ 审计日志测试（删题/改角色后查 audit-logs 验证写入）—— v1.2.64（e2e A36 系统化覆盖 audit-logs API 契约：权限 401/403 + 字段 id/action/admin_id/target_type/target_id/payload/created_at 齐全 + created_at 标准时间格式 + 组合筛选 action+target_type 同时生效 + 不存在的 action → items=0/total=0 + 分页 limit=1 vs limit=20 total 一致 + 默认 created_at DESC 排序 + 独立 fixture 全链路 改角色+创题+删题 后查 target_id 命中 ≥1 条；在 A17/A18/A20/A27/A35 各自孤立「有这条记录」之上做契约层覆盖。dry-run 20/0/30 exit 0，STRICT 20/30/0 exit 1）
 - [x] ☆ 压测报告（5/10/20 人并发判题，验证 P95 < 5s）—— v1.2.65（`scripts/load_test.sh` 黑盒并发压测：复用 e2e 的 provision/submit/poll，提交 two-sum AC 解，每并发级起 N 个后台 worker 同时提交并轮询终态；采样 `submit_api_ms`(curl `%{time_total}`) + `e2e_ms`(提交→终态墙钟 `date +%s.%N`)，`sort -n` 取序位法算 p50/p95/p99；每级三断言 e2e P95 < 5000ms（§12.2）+ 提交 API p95 < 200ms + 错误数=0；`CONCURRENCY_LEVELS`/`P95_THRESHOLD_MS`/`LOAD_STRICT` 注入，缺栈宽松 skip / STRICT fail；跑完把环境快照 + 每级分位数表再生进 `docs/load-test-report.md`。本机 Docker down 未实测，报告结果段为 pending 占位，真实跑一次即覆盖）

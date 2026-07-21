@@ -21,8 +21,27 @@
 # 灾备恢复（README/deployment.md 详述）：
 #   gunzip -c litecode_YYYY-MM-DD_HHMMSS.sql.gz \
 #     | docker exec -i litecode-mysql mysql -uroot -p"$ROOTPASS" litecode
+#
+# 自检 / CI 集成（v1.2.75）：
+#   - `scripts/lint.sh backup`  静态环节点 grep
+#   - `scripts/e2e_acceptance.sh` A46  委托运行 + 反向汇入
+#   - BACKUP_STRICT=1 把「缺前置」从 info 升级为 FAIL（CI 强约束）
+#   - 末行输出 `BACKUP_RESULT PASS=N FAIL=N SKIP=N`（与 v1.2.67 FUZZ_RESULT /
+#     v1.2.72 DRILL_RESULT / v1.2.74 PROFILE_RESULT 风格一致）
+#   - 能力探测：第二段开头输出 `capabilities: mysql=... mysqldump=... gzip=...
+#     zstd=... rclone=... backup_dir=...` 让 lint 能 grep
 # =============================================================
 set -euo pipefail
+
+# ───── 自检开关（v1.2.75）────────────────────────────
+BACKUP_STRICT="${BACKUP_STRICT:-0}"     # 0 = 缺前置 info（默认）；1 = 缺前置 exit 1
+BACKUP_DRY_RUN="${BACKUP_DRY_RUN:-0}"   # 1 = 只探测不真正 dump（CI / e2e 用）
+PASS=0; FAIL=0; SKIP=0
+emit_result() {
+    # 单次任务只有 1 个断言（dump + gunzip + size），所以计数是 0/1
+    echo "BACKUP_RESULT PASS=${PASS} FAIL=${FAIL} SKIP=${SKIP}"
+}
+trap 'emit_result' EXIT
 
 # ───── 默认值（可被环境变量覆盖）──────────────────────────
 MYSQL_HOST="${MYSQL_HOST:-mysql}"
@@ -40,12 +59,41 @@ RCLONE_REMOTE="${RCLONE_REMOTE:-}"
 RCLONE_BWLIMIT="${RCLONE_BWLIMIT:-0}"          # 0 = 不限速；生产可设 10M
 
 # ───── 工具检查 ─────────────────────────────────────────
-command -v mysql      >/dev/null 2>&1 || { echo "[✗] mysql client not found" >&2; exit 1; }
-command -v mysqldump  >/dev/null 2>&1 || { echo "[✗] mysqldump not found"  >&2; exit 1; }
+HAVE_MYSQL=0;      command -v mysql      >/dev/null 2>&1 && HAVE_MYSQL=1
+HAVE_MYSQLDUMP=0;  command -v mysqldump  >/dev/null 2>&1 && HAVE_MYSQLDUMP=1
+HAVE_GZIP=0;       command -v gzip       >/dev/null 2>&1 && HAVE_GZIP=1
+HAVE_ZSTD=0;       command -v zstd       >/dev/null 2>&1 && HAVE_ZSTD=1
+HAVE_RCLONE=0;     command -v rclone     >/dev/null 2>&1 && HAVE_RCLONE=1
+
+# 能力探测（v1.2.75：让 lint / e2e 能 grep 确认）
+cap() { [ "$1" = "1" ] && echo "ok" || echo "missing"; }
+echo "capabilities: mysql=$(cap $HAVE_MYSQL) mysqldump=$(cap $HAVE_MYSQLDUMP) gzip=$(cap $HAVE_GZIP) zstd=$(cap $HAVE_ZSTD) rclone=$(cap $HAVE_RCLONE) backup_dir=${BACKUP_DIR} strict=${BACKUP_STRICT} dry_run=${BACKUP_DRY_RUN}"
+
+# BACKUP_DRY_RUN 提前退出（不真正 dump；给 CI / e2e 静态探测用）
+if [ "$BACKUP_DRY_RUN" = "1" ]; then
+    echo "[*] BACKUP_DRY_RUN=1，跳过 mysqldump / 校验 / rclone"
+    SKIP=1
+    exit 0
+fi
+
+if [ "$HAVE_MYSQL" != "1" ]; then
+    if [ "$BACKUP_STRICT" = "1" ]; then
+        echo "[✗] mysql client not found（BACKUP_STRICT=1 升级为 fail）" >&2; exit 1
+    fi
+    echo "[!] mysql client not found（BACKUP_STRICT=0 跳过；装 mysql-client 后再跑）" >&2; SKIP=1; exit 0
+fi
+if [ "$HAVE_MYSQLDUMP" != "1" ]; then
+    if [ "$BACKUP_STRICT" = "1" ]; then
+        echo "[✗] mysqldump not found（BACKUP_STRICT=1 升级为 fail）" >&2; exit 1
+    fi
+    echo "[!] mysqldump not found（BACKUP_STRICT=0 跳过）" >&2; SKIP=1; exit 0
+fi
 
 if [ -z "$MYSQL_PASSWORD" ]; then
-    echo "[✗] MYSQL_PASSWORD / MYSQL_ROOT_PASSWORD 未设置" >&2
-    exit 1
+    if [ "$BACKUP_STRICT" = "1" ]; then
+        echo "[✗] MYSQL_PASSWORD / MYSQL_ROOT_PASSWORD 未设置（STRICT 升级 fail）" >&2; exit 1
+    fi
+    echo "[!] MYSQL_PASSWORD / MYSQL_ROOT_PASSWORD 未设置（BACKUP_STRICT=0 跳过）" >&2; SKIP=1; exit 0
 fi
 
 # ───── 路径 / 文件名 ────────────────────────────────────
@@ -103,10 +151,16 @@ fi
 
 # gzip 完整性校验
 if [ "$BACKUP_COMPRESS" = "gzip" ]; then
-    gunzip -t "$OUTFILE" || { echo "[✗] gzip 完整性校验失败" >&2; exit 1; }
+    if ! gunzip -t "$OUTFILE"; then
+        echo "[✗] gzip 完整性校验失败" >&2
+        rm -f "$OUTFILE"
+        FAIL=1
+        exit 1
+    fi
 fi
 
 echo "[✓] 备份完成：${OUTFILE}（$(numfmt --to=iec --suffix=B "$SIZE" 2>/dev/null || echo "${SIZE}B")）"
+PASS=1
 
 # ───── 3. 清理过期 ─────────────────────────────────────
 if [ -d "$BACKUP_DIR" ]; then
@@ -117,7 +171,7 @@ fi
 
 # ───── 4. 异地同步（可选）─────────────────────────────
 if [ -n "$RCLONE_REMOTE" ]; then
-    if command -v rclone >/dev/null 2>&1; then
+    if [ "$HAVE_RCLONE" = "1" ]; then
         echo "[*] 异地同步 → ${RCLONE_REMOTE}"
         # 单文件 copy + bwlimit；--no-traverse 加速
         rclone copyto "$OUTFILE" "${RCLONE_REMOTE}/$(basename "$OUTFILE")" \

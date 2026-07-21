@@ -4,7 +4,8 @@
 # -------------------------------------------------------------
 # Phase 8 ★ E2E 验收脚本 —— 覆盖 SPEC §12.1 全部验收用例 A1–A35（含 A3b）
 #                              + Phase 8 A36–A43（v1.2.64–v1.2.67）
-#                              + Phase 9 A44–A45（v1.2.73–v1.2.74）。
+#                              + Phase 9 A44–A45（v1.2.73–v1.2.74）
+#                              + Phase 7 ☆ A46（v1.2.75 backup）。
 #
 # 定位：在单测 / 集成测 / judge-e2e 之上再压一层「黑盒验收」。
 #       只走公开 HTTP 面（curl + jq）+ 对 web/ 源文件做静态断言，
@@ -1848,6 +1849,104 @@ else
         else
             fail "A45c docs/performance-profile.md 未再生（write_report 失败？）"
         fi
+    fi
+fi
+
+# ═════════════════════════════════════════════════════════════
+#  A46 — 备份脚本端到端 (Phase 7 ☆ v1.2.75)
+#  - A46a  静态配置：scripts/backup.sh bash -n + 关键 6 项 + 行数 sanity
+#  - A46b  静态配置：docs/runbooks/backup.md 存在 + 含 SPEC §16.5 阈值引用
+#  - A46c  委托运行 backup.sh DRY_RUN（live stack 时）+ BACKUP_RESULT 反向汇入
+# ═════════════════════════════════════════════════════════════
+BACKUP_SH="${ROOT}/scripts/backup.sh"
+BACKUP_RUNBOOK="${ROOT}/docs/runbooks/backup.md"
+
+kase "A46" "备份脚本端到端（Phase 7 ☆ v1.2.75）"
+
+# ── A46a: scripts/backup.sh 静态配置 ──
+if [ ! -f "${BACKUP_SH}" ]; then
+    skip "A46a 缺少 scripts/backup.sh"
+    skip "A46b 缺少 scripts/backup.sh"
+    skip "A46c 缺少 scripts/backup.sh，无法委托运行"
+else
+    if bash -n "${BACKUP_SH}" 2>/dev/null; then
+        ok "A46a scripts/backup.sh bash -n 通过"
+    else
+        fail "A46a scripts/backup.sh bash -n 失败（语法错）"
+    fi
+
+    # 关键环节点 grep（与 lint.sh backup 同款的硬约束集合，
+    # 这里只 grep 关键 6 项作轻量校验；完整 22+ 项在 lint.sh 里）
+    _bk_missing=()
+    grep -qF 'BACKUP_RESULT PASS=' "${BACKUP_SH}" \
+        || _bk_missing+=('BACKUP_RESULT 汇总行')
+    grep -qF 'BACKUP_STRICT'         "${BACKUP_SH}" \
+        || _bk_missing+=('BACKUP_STRICT 开关')
+    grep -qF 'BACKUP_DRY_RUN'        "${BACKUP_SH}" \
+        || _bk_missing+=('BACKUP_DRY_RUN 探测开关')
+    grep -qF 'capabilities:'         "${BACKUP_SH}" \
+        || _bk_missing+=('capabilities 探测行')
+    grep -qF 'rclone copyto'         "${BACKUP_SH}" \
+        || _bk_missing+=('rclone copyto 异地同步')
+    grep -qF 'gunzip -t'             "${BACKUP_SH}" \
+        || _bk_missing+=('gunzip -t 完整性校验')
+    if [ "${#_bk_missing[@]}" -eq 0 ]; then
+        ok "A46a scripts/backup.sh 关键环节点齐（6/6：RESULT + STRICT + DRY_RUN + capabilities + rclone + gunzip -t）"
+    else
+        fail "A46a scripts/backup.sh 缺失关键环节点：${_bk_missing[*]}"
+    fi
+
+    _bk_lines="$(wc -l < "${BACKUP_SH}")"
+    if [ "${_bk_lines}" -ge 130 ]; then
+        ok "A46a scripts/backup.sh 行数=${_bk_lines}（≥ 130）"
+    else
+        fail "A46a scripts/backup.sh 行数=${_bk_lines}（< 130，疑似退化）"
+    fi
+
+    # ── A46b: runbook 存在 + SPEC §16.5 阈值引用 ──
+    if [ -f "${BACKUP_RUNBOOK}" ]; then
+        ok "A46b docs/runbooks/backup.md 存在（runbook 入仓）"
+        if grep -qE 'mysqldump\s+每日|mysqldump 每日' "${BACKUP_RUNBOOK}"; then
+            ok "A46b runbook 含 SPEC §16.5 mysqldump 每日备份引用"
+        else
+            fail "A46b runbook 缺 SPEC §16.5 mysqldump 每日备份引用"
+        fi
+        if grep -qE '异地|OSS|S3|rclone' "${BACKUP_RUNBOOK}"; then
+            ok "A46b runbook 含异地备份策略引用"
+        else
+            fail "A46b runbook 缺异地备份策略引用"
+        fi
+        if grep -qE '3-2-1|异地 + 冷备|异地 + 多副本' "${BACKUP_RUNBOOK}"; then
+            ok "A46b runbook 含 3-2-1 备份原则引用"
+        else
+            fail "A46b runbook 缺 3-2-1 备份原则引用"
+        fi
+    else
+        fail "A46b docs/runbooks/backup.md 缺失"
+    fi
+
+    # ── A46c: 委托运行 backup.sh DRY_RUN ──
+    # 备份任务需要真实 MySQL；DRY_RUN 模式只跑能力探测不真 dump，
+    # CI 默认走 DRY_RUN 验证脚本骨架即可。
+    _bk_out="${TMPD}/backup.out"
+    BACKUP_DRY_RUN=1 \
+    BASE_URL="${BASE_URL}" \
+    bash "${BACKUP_SH}" >"${_bk_out}" 2>&1 || true
+    sed -n '/^capabilities:/,/^BACKUP_RESULT /p' "${_bk_out}" | head -10
+    _bk_last="$(grep -E '^BACKUP_RESULT ' "${_bk_out}" | tail -1)"
+    if [ -n "${_bk_last}" ]; then
+        _bk_pass="$(echo "${_bk_last}" | awk '{print $2}' | cut -d= -f2)"
+        _bk_fail="$(echo "${_bk_last}" | awk '{print $3}' | cut -d= -f2)"
+        _bk_skip="$(echo "${_bk_last}" | awk '{print $4}' | cut -d= -f2)"
+        _bk_pass=${_bk_pass:-0}; _bk_fail=${_bk_fail:-0}; _bk_skip=${_bk_skip:-0}
+        PASS=$((PASS + _bk_pass)); FAIL=$((FAIL + _bk_fail)); SKIP=$((SKIP + _bk_skip))
+        if [ "${_bk_fail}" = "0" ]; then
+            ok "A46c backup.sh DRY_RUN 整体无 FAIL（PASS=${_bk_pass} SKIP=${_bk_skip}）"
+        else
+            fail "A46c backup.sh FAIL=${_bk_fail}（PASS=${_bk_pass} SKIP=${_bk_skip}）"
+        fi
+    else
+        fail "A46c backup.sh 未输出 BACKUP_RESULT 行（脚本结尾契约违反）"
     fi
 fi
 
