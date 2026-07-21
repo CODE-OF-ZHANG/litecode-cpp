@@ -51,6 +51,7 @@ add_executable(test_admin_users       unit/test_admin_users.cpp)
 add_executable(test_admin_stats       unit/test_admin_stats.cpp)
 add_executable(test_admin_audit_logs  unit/test_admin_audit_logs.cpp)
 add_executable(test_admin_queue       unit/test_admin_queue.cpp)
+add_executable(test_admin_special_judge unit/test_admin_special_judge.cpp)
 # v1.2.68 Phase 9 ★ Prometheus 指标接入 — MetricsService +
 # /api/v1/metrics 路由的 pure-unit + 进程内 httplib smoke。Header-only
 # + small surface area, link 集合对齐 test_health (nlohmann_json 不需要，
@@ -251,6 +252,19 @@ target_link_libraries(test_special_judge PRIVATE
     OpenSSL::SSL
     OpenSSL::Crypto)
 target_include_directories(test_special_judge PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+
+# v1.3.1 — Admin Special Judge CRUD (header-only special_judge_repo
+# + audit_log_repo, no httplib / nlohmann_json — the route layer's
+# 256KB clamp is checked via a header grep in the test binary, not by
+# instantiating the route). Same link set as test_special_judge.
+target_link_libraries(test_admin_special_judge PRIVATE
+    GTest::gtest_main
+    mysql::concpp
+    OpenSSL::SSL
+    OpenSSL::Crypto)
+target_include_directories(test_admin_special_judge PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/db)
 
@@ -492,6 +506,7 @@ add_test(NAME admin_problem_crud COMMAND test_admin_problem_crud)
 add_test(NAME admin_bulk_import COMMAND test_admin_bulk_import)
 add_test(NAME docker_client      COMMAND test_docker_client)
 add_test(NAME special_judge      COMMAND test_special_judge)
+add_test(NAME admin_special_judge COMMAND test_admin_special_judge)
 add_test(NAME warm_pool          COMMAND test_warm_pool)
 add_test(NAME judge_scheduler    COMMAND test_judge_scheduler)
 

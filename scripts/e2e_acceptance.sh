@@ -2084,6 +2084,416 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════
+#  A48 — Special Judge 闭环端到端（v1.3.1 P0）
+#
+#  覆盖 SPEC §11 Phase 4 ☆ "Special Judge 框架（v1.3）"占位清理。
+#  三层断言（沿用 A47 / A44 / A45 模板）：
+#    A48a 静态环节点（judge.sh / admin 3 端点 / problem_routes.h /
+#                     audit_log_repo.h / unit_test / CMake 注册）
+#    A48b runbook（docs/runbooks/special-judge.md 存在 + 关键术语命中）
+#    A48c 真栈（admin PUT SPJ → 公共 detail has_special_judge=true →
+#              提交 AC_CODE → status=ac → DELETE → has_special_judge=false）
+# ═════════════════════════════════════════════════════════════
+kase "A48" "Special Judge 闭环端到端（v1.3.1 P0）"
+
+# ── A48a: 静态环节点 ──
+_a48a_missing=()
+_judge_sh="${ROOT}/judge/judge.sh"
+_admin_routes="${ROOT}/src/routes/admin_problem_routes.h"
+_public_routes="${ROOT}/src/routes/problem_routes.h"
+_audit_repo="${ROOT}/src/db/audit_log_repo.h"
+_unit_test="${ROOT}/tests/unit/test_admin_special_judge.cpp"
+_test_cmake="${ROOT}/tests/CMakeLists.txt"
+_e2e_judge="${ROOT}/judge/tests/test_judge_e2e.sh"
+
+# judge.sh 接线
+for needle in 'special_judge_source' 'compile_spj' 'compare_special_with' \
+              'SPECIAL_JUDGE_ENABLED' 'spj_err_for_info' 'spj_stdout_for_info'; do
+    if ! [ -f "$_judge_sh" ] || ! grep -qF "$needle" "$_judge_sh"; then
+        _a48a_missing+=("judge.sh 缺 ${needle}")
+    fi
+done
+# admin 3 端点声明 + handler + server.put/del/get 注册 + 256KB clamp
+for needle in 'admin_put_special_judge_handler' \
+              'admin_delete_special_judge_handler' \
+              'admin_get_special_judge_handler' \
+              'kMaxSpjSourceLenAdmin = 256 * 1024' \
+              'server.put(R"(/api/v1/admin/problems/([^/]+)/special-judge)"' \
+              'server.del(R"(/api/v1/admin/problems/([^/]+)/special-judge)"' \
+              'server.get(R"(/api/v1/admin/problems/([^/]+)/special-judge)"'; do
+    if ! [ -f "$_admin_routes" ] || ! grep -qF "$needle" "$_admin_routes"; then
+        _a48a_missing+=("admin_routes 缺 ${needle}")
+    fi
+done
+# public detail 透 judge_type + has_special_judge
+for needle in '"judge_type", s.judge_type' 'has_special_judge' 'exists_for_problem'; do
+    if ! [ -f "$_public_routes" ] || ! grep -qF "$needle" "$_public_routes"; then
+        _a48a_missing+=("public_routes 缺 ${needle}")
+    fi
+done
+# audit 2 action
+for needle in 'kActionProblemSpjUpsert  = "problem.spj_upsert"' \
+              'kActionProblemSpjRemove  = "problem.spj_remove"'; do
+    if ! [ -f "$_audit_repo" ] || ! grep -qF "$needle" "$_audit_repo"; then
+        _a48a_missing+=("audit_repo 缺 ${needle}")
+    fi
+done
+# unit test + CMake 注册
+for needle in 'AdminSpjConstants' 'AdminSpjAuditAction' 'AdminSpjValidator' \
+              'kMaxSpjSourceLenAdmin' \
+              'add_executable(test_admin_special_judge' \
+              'add_test(NAME admin_special_judge'; do
+    if ! grep -qF "$needle" "$_test_cmake" "$_unit_test" 2>/dev/null; then
+        _a48a_missing+=("tests 缺 ${needle}")
+    fi
+done
+# judge e2e 升级
+for needle in 'special_judge_source' 'compile_spj'; do
+    if ! [ -f "$_e2e_judge" ] || ! grep -qF "$needle" "$_e2e_judge"; then
+        _a48a_missing+=("e2e_judge 缺 ${needle}")
+    fi
+done
+
+if [ "${#_a48a_missing[@]}" -eq 0 ]; then
+    ok "A48a 静态环节点齐（judge.sh 6 + admin 7 + public 3 + audit 2 + test 6 + e2e 2 = 26 项）"
+else
+    fail "A48a 静态环节点缺：${_a48a_missing[*]}"
+fi
+
+# ── A48b: runbook 存在 + 关键术语命中 ──
+_runbook="${ROOT}/docs/runbooks/special-judge.md"
+if [ -f "$_runbook" ]; then
+    ok "A48b docs/runbooks/special-judge.md 存在"
+    _runbook_missing=()
+    for needle in 'compile_spj' 'compare_special_with' 'spj_stdout_for_info' \
+                  'run_spj' 'SPEC §11 Phase 4' 'protocol' 'exit code' \
+                  'no special judge' 'kill-after'; do
+        if ! grep -qiE "$needle" "$_runbook"; then
+            _runbook_missing+=("$needle")
+        fi
+    done
+    if [ "${#_runbook_missing[@]}" -eq 0 ]; then
+        ok "A48b runbook 含 9 项关键术语（compile_spj / compare_special_with / spj_stdout / run_spj / SPEC 引用 / protocol / exit code / no special judge / kill-after）"
+    else
+        fail "A48b runbook 缺关键术语：${_runbook_missing[*]}"
+    fi
+    # 行数 sanity
+    _rb_lines="$(wc -l < "$_runbook")"
+    if [ "${_rb_lines}" -ge 100 ]; then
+        ok "A48b runbook 行数=${_rb_lines} ≥ 100"
+    else
+        fail "A48b runbook 行数=${_rb_lines} < 100（疑似退化）"
+    fi
+else
+    fail "A48b docs/runbooks/special-judge.md 缺失"
+fi
+
+# ── A48c: 真栈 — admin PUT SPJ + 公共 detail has_special_judge + 提交 AC → ac + DELETE 兜底 ──
+if [ "${SERVER_UP}" = "1" ] && [ -n "${ADMIN_TOK}" ] && [ -n "${PID}" ]; then
+    # 用独立的 SPJ 题目 fixture，避免污染 JUDGE_PROBLEM_SLUG 的现有 test cases。
+    # 两-sum 现有 test_cases 是 exact，不能直接改成 special（会污染 A6/A7 等）。
+    # 改用新建 e2e-spj-$(rnd) 临时题目，judge_type=special。
+    SPJ_SLUG="e2e-spj-$(rnd)"
+    spj_create="$(jq -n --arg slug "${SPJ_SLUG}" '{
+        slug:$slug, title:"E2E SPJ 临时题目", difficulty:"easy",
+        description:"# e2e SPJ\nSPJ 闭环验收脚本创建。",
+        time_limit_ms:1000, memory_limit_mb:256,
+        samples:[{input:"",output:"hello",judge_type:"special"}],
+        test_cases:[{input:"",expected_output:"hello",judge_type:"special",float_epsilon:1e-6}]
+    }')"
+    api POST /admin/problems -t "${ADMIN_TOK}" -d "${spj_create}"
+    if [ "${HTTP_CODE}" != "201" ]; then
+        fail "A48c 创建 SPJ 临时题目失败 HTTP=${HTTP_CODE}"
+    else
+        ok "A48c 创建 SPJ 临时题目 slug=${SPJ_SLUG}"
+
+        # PUT SPJ（"always AC" SPJ：expected vs actual 字节比较）
+        spj_source='// always-AC SPJ: read three file paths, byte-compare
+#include <cstdio>
+int main(int argc, char** argv) {
+    if (argc != 4) return 2;
+    FILE* e = std::fopen(argv[2], "rb");
+    FILE* a = std::fopen(argv[3], "rb");
+    if (!e || !a) return 2;
+    int c1, c2;
+    do { c1 = std::fgetc(e); c2 = std::fgetc(a);
+         if (c1 != c2) { std::fclose(e); std::fclose(a); return 1; }
+    } while (c1 != EOF && c2 != EOF);
+    std::fclose(e); std::fclose(a);
+    return 0;
+}'
+        spj_body="$(jq -n --arg s "${spj_source}" '{source:$s,language:"cpp"}')"
+        api PUT "/admin/problems/${SPJ_SLUG}/special-judge" -t "${ADMIN_TOK}" -d "${spj_body}"
+        assert_code 200 "A48c PUT /admin/problems/.../special-judge"
+        # source_bytes 字段对得上
+        sb="$(jqb '.data.source_bytes')"
+        if [ "${sb:-0}" -gt 100 ]; then
+            ok "A48c PUT 返回 source_bytes=${sb} > 100（SPJ 源码上传成功）"
+        else
+            fail "A48c PUT 后 source_bytes=${sb} 异常（预期 ≥ 100）"
+        fi
+
+        # GET 应该返 exists=true
+        api GET "/admin/problems/${SPJ_SLUG}/special-judge" -t "${ADMIN_TOK}"
+        assert_code 200 "A48c GET /admin/problems/.../special-judge"
+        assert_jq '.data.exists' 'true' "A48c GET 返 exists=true"
+
+        # 公共 detail 应有 has_special_judge=true
+        api GET "/problems/${SPJ_SLUG}"
+        assert_code 200 "A48c GET /problems/:slug（公共 detail）"
+        hsp="$(jqb '.data.has_special_judge')"
+        [ "${hsp}" = "true" ] && ok "A48c 公共 detail has_special_judge=true" \
+            || fail "A48c 公共 detail has_special_judge='${hsp}' != true"
+        # samples[0].judge_type = special
+        jt0="$(jqb '.data.samples[0].judge_type')"
+        [ "${jt0}" = "special" ] && ok "A48c 公共 detail samples[0].judge_type=special" \
+            || fail "A48c 公共 detail samples[0].judge_type='${jt0}' != special"
+
+        # 提交正解 → SPJ 接受 → AC（需 JUDGE_UP=true，否则 skip）
+        if [ "${JUDGE_UP}" = "1" ]; then
+            SPJ_AC_CODE='#include <iostream>
+int main() { std::cout << "hello\n"; return 0; }'
+            spj_submit_body="$(jq -n \
+                --argjson pid "$(jqb '.data.id' < "${RESP_BODY}" 2>/dev/null || echo 0)" \
+                --arg code "${SPJ_AC_CODE}" \
+                '{problem_id:$pid,language:"cpp",code:$code}')"
+            # 直接用 PID 从前面取 SPJ 题目 id
+            SPJ_PID="$(jqb '.data.id' < "${RESP_BODY}" 2>/dev/null || echo "")"
+            api GET "/problems/${SPJ_SLUG}"  # 重读以确保 PID 拿到
+            SPJ_PID="$(jqb '.data.id')"
+            spj_submit_body="$(jq -n --argjson pid "${SPJ_PID}" \
+                --arg code "${SPJ_AC_CODE}" \
+                '{problem_id:$pid,language:"cpp",code:$code}')"
+            api POST /submissions -t "${USER_TOK}" -d "${spj_submit_body}"
+            if [ "${HTTP_CODE}" = "201" ]; then
+                spj_sub_id="$(jqb '.data.submission_id')"
+                # 轮询终态
+                spj_start=${SECONDS}
+                while :; do
+                    api GET "/submissions/${spj_sub_id}" -t "${USER_TOK}"
+                    spj_status="$(jqb '.data.status')"
+                    case "${spj_status}" in
+                        ac|wa|re|tle|mle|ole|pe|ce|se) break;;
+                    esac
+                    if [ $((SECONDS - spj_start)) -ge "${JUDGE_POLL_TIMEOUT_S}" ]; then break; fi
+                    sleep 1
+                done
+                if [ "${spj_status}" = "ac" ]; then
+                    ok "A48c 提交正解 → SPJ 接受 → AC（v1.3.1 闭环端到端通）"
+                else
+                    fail "A48c 提交正解 status='${spj_status}'（预期 ac）"
+                fi
+            else
+                fail "A48c 提交正解 POST HTTP=${HTTP_CODE}"
+            fi
+        else
+            skip "A48c 提交正解（所需 judge 能力缺失）"
+        fi
+
+        # DELETE → 公共 detail has_special_judge=false（兜底）
+        api DELETE "/admin/problems/${SPJ_SLUG}/special-judge" -t "${ADMIN_TOK}"
+        assert_code 204 "A48c DELETE /admin/problems/.../special-judge"
+        api GET "/problems/${SPJ_SLUG}"
+        hsp2="$(jqb '.data.has_special_judge')"
+        [ "${hsp2}" = "false" ] && ok "A48c DELETE 后 公共 detail has_special_judge=false（兜底生效）" \
+            || fail "A48c DELETE 后 has_special_judge='${hsp2}' != false"
+
+        # 审计行 problem.spj_upsert + problem.spj_remove 应能查到
+        sleep 1
+        api GET "/admin/audit-logs?action=problem.spj_upsert&limit=5" -t "${ADMIN_TOK}"
+        n_up="$(jqb '.data.items | length')"
+        [ "${n_up:-0}" -ge 1 ] && ok "A48c audit_logs 有 problem.spj_upsert 记录" \
+            || fail "A48c 未查到 problem.spj_upsert 审计记录"
+        api GET "/admin/audit-logs?action=problem.spj_remove&limit=5" -t "${ADMIN_TOK}"
+        n_rm="$(jqb '.data.items | length')"
+        [ "${n_rm:-0}" -ge 1 ] && ok "A48c audit_logs 有 problem.spj_remove 记录" \
+            || fail "A48c 未查到 problem.spj_remove 审计记录"
+
+        # 软删 SPJ 临时题目，清理 fixture
+        api DELETE "/admin/problems/${SPJ_SLUG}" -t "${ADMIN_TOK}" >/dev/null
+    fi
+elif [ "${SERVER_UP}" = "1" ]; then
+    skip "A48c 真栈（缺 admin token 或 SPJ 题 PID）"
+else
+    skip "A48c 真栈（server 未启动）"
+fi
+
+# 反向汇入汇总（与 v1.2.67 FUZZ_RESULT / v1.2.72 DRILL_RESULT / v1.2.74 PROFILE_RESULT 同款）
+# A48a/b 静态 + runbook 计数与真栈解耦；这里只声明子集标签
+SPJ_RESULT="PASS=${PASS} FAIL=${FAIL} SKIP=${SKIP}"
+# shellcheck disable=SC2034  # 仅末尾打印供外部 grep
+echo "SPJ_RESULT ${SPJ_RESULT}"
+
+# ═════════════════════════════════════════════════════════════
+#  A49 — judge_type 扩展端到端（v1.3.1+）
+#
+#  覆盖 SPEC §4.3 + §11 Phase 4 ☆ judge_type 扩展：
+#  V011 ENUM 加 ignore_case / ignore_all_whitespace 两个值，
+#  compare.sh / judge.sh case 分支 / admin 双端 validator 同步扩。
+#
+#  三层断言（沿用 A48 模板）：
+#    A49a 静态环节点（V011 SQL + compare.sh 新函数 + judge.sh case +
+#                     admin 双端 validator + test_common_unit +
+#                     test_judge_e2e + README 文档化）
+#    A49b 文档化（judge/README.md + problems/README.md 含 6 值描述）
+#    A49c 真栈（bulk-import 一道 ignore_case 测试题 + 提交带大小写差异
+#              的正解 → status=ac 验证 judge.sh 走 compare_ignore_case）
+# ═════════════════════════════════════════════════════════════
+kase "A49" "judge_type 扩展端到端（v1.3.1+ ignore_case + ignore_all_whitespace）"
+
+# ── A49a: 静态环节点 ──
+_a49a_missing=()
+_v011_sql="${ROOT}/db/migrations/V011__add_more_judge_types.sql"
+_compare_sh="${ROOT}/judge/lib/compare.sh"
+_judge_sh="${ROOT}/judge/judge.sh"
+_bulk_routes="${ROOT}/src/routes/admin_bulk_import_routes.h"
+_admin_routes="${ROOT}/src/routes/admin_problem_routes.h"
+_unit_test="${ROOT}/judge/tests/test_common_unit.sh"
+_e2e_judge="${ROOT}/judge/tests/test_judge_e2e.sh"
+
+# V011 SQL
+for needle in 'V011__add_more_judge_types' "'ignore_case'" "'ignore_all_whitespace'" \
+              'MODIFY COLUMN judge_type' \
+              "INSERT INTO schema_migrations (version) VALUES ('V011')"; do
+    if ! [ -f "$_v011_sql" ] || ! grep -qF "$needle" "$_v011_sql"; then
+        _a49a_missing+=("V011 SQL 缺 ${needle}")
+    fi
+done
+# compare.sh 新函数
+for needle in 'compare_ignore_case' 'compare_ignore_all_whitespace' \
+              "LC_ALL=C tr '[:upper:][:lower:]' '[:lower:][:upper:]'"; do
+    if ! [ -f "$_compare_sh" ] || ! grep -qF "$needle" "$_compare_sh"; then
+        _a49a_missing+=("compare.sh 缺 ${needle}")
+    fi
+done
+# judge.sh case 分支
+for needle in 'ignore_case)' 'ignore_all_whitespace)' \
+              'compare_ignore_case' 'compare_ignore_all_whitespace'; do
+    if ! [ -f "$_judge_sh" ] || ! grep -qF "$needle" "$_judge_sh"; then
+        _a49a_missing+=("judge.sh 缺 ${needle}")
+    fi
+done
+# admin 双端 validator
+for needle in 'ignore_case' 'ignore_all_whitespace' \
+              'judge_type must be one of: exact, ignore_trailing,'; do
+    if ! grep -qF "$needle" "$_bulk_routes" "$_admin_routes" 2>/dev/null; then
+        _a49a_missing+=("admin validator 缺 ${needle}")
+    fi
+done
+# 测试覆盖
+for needle in 'compare_ignore_case' 'compare_ignore_all_whitespace'; do
+    if ! [ -f "$_unit_test" ] || ! grep -qF "$needle" "$_unit_test"; then
+        _a49a_missing+=("test_common_unit 缺 ${needle}")
+    fi
+done
+for needle in 'guard_or_skip "ignore_case"' 'guard_or_skip "ignore_all_whitespace"'; do
+    if ! [ -f "$_e2e_judge" ] || ! grep -qF "$needle" "$_e2e_judge"; then
+        _a49a_missing+=("test_judge_e2e 缺 ${needle}")
+    fi
+done
+
+if [ "${#_a49a_missing[@]}" -eq 0 ]; then
+    ok "A49a 静态环节点齐（V011 SQL 5 + compare.sh 3 + judge.sh 4 + admin 双端 3 + 单测 2 + e2e 2 = 19 项）"
+else
+    fail "A49a 静态环节点缺：${_a49a_missing[*]}"
+fi
+
+# ── A49b: README 文档化 6 值 ──
+_judge_readme="${ROOT}/judge/README.md"
+_problems_readme="${ROOT}/problems/README.md"
+_a49b_missing=()
+if ! grep -qF 'ignore_case' "$_judge_readme"; then
+    _a49b_missing+=('judge/README.md 缺 ignore_case')
+fi
+if ! grep -qF 'ignore_all_whitespace' "$_judge_readme"; then
+    _a49b_missing+=('judge/README.md 缺 ignore_all_whitespace')
+fi
+if ! grep -qF 'ignore_case' "$_problems_readme"; then
+    _a49b_missing+=('problems/README.md 缺 ignore_case')
+fi
+if ! grep -qF 'ignore_all_whitespace' "$_problems_readme"; then
+    _a49b_missing+=('problems/README.md 缺 ignore_all_whitespace')
+fi
+if [ "${#_a49b_missing[@]}" -eq 0 ]; then
+    ok "A49b judge/README.md + problems/README.md 均含 ignore_case + ignore_all_whitespace（文档化 4/4）"
+else
+    fail "A49b README 文档化缺：${_a49b_missing[*]}"
+fi
+
+# ── A49c: 真栈 — bulk-import 一道 ignore_case 测试题 + 提交大小写归一化正解 → ac ──
+# 注：忽略大小写不需 judge 端特殊镜像（复用现有 litecode-judge:test），
+# 但题目数据要先导入 DB（V011 migration 已应用）— JUDGE_UP 缺失时跳过提交步骤。
+if [ "${SERVER_UP}" = "1" ] && [ -n "${ADMIN_TOK}" ]; then
+    JT_SLUG="e2e-jt-$(rnd)"
+    jt_body="$(jq -n --arg slug "${JT_SLUG}" '{
+        slug:$slug, title:"E2E judge_type=ignore_case 临时题", difficulty:"easy",
+        description:"# e2e judge_type\nignore_case 扩展验收脚本创建。",
+        time_limit_ms:1000, memory_limit_mb:256,
+        samples:[{input:"",output:"hello world",judge_type:"ignore_case"}],
+        test_cases:[{input:"",expected_output:"HELLO WORLD",judge_type:"ignore_case",float_epsilon:1e-6}]
+    }')"
+    api POST /admin/problems -t "${ADMIN_TOK}" -d "${jt_body}"
+    if [ "${HTTP_CODE}" != "201" ]; then
+        fail "A49c 创建 judge_type=ignore_case 临时题 HTTP=${HTTP_CODE}"
+    else
+        ok "A49c 创建 judge_type=ignore_case 临时题 slug=${JT_SLUG}"
+
+        # 公共 detail 应能返 samples[0].judge_type=ignore_case（新 ENUM 值生效）
+        api GET "/problems/${JT_SLUG}"
+        jt0="$(jqb '.data.samples[0].judge_type')"
+        if [ "${jt0}" = "ignore_case" ]; then
+            ok "A49c 公共 detail samples[0].judge_type=ignore_case（V011 ENUM 生效）"
+        else
+            fail "A49c samples[0].judge_type='${jt0}'（预期 ignore_case）"
+        fi
+
+        # 提交正解（输出 "Hello World" 与期望 "HELLO WORLD" 大小写差异）→ AC
+        if [ "${JUDGE_UP}" = "1" ]; then
+            JT_PID="$(jqb '.data.id')"
+            JT_CODE='#include <iostream>
+int main() { std::cout << "Hello World\n"; return 0; }'
+            jt_submit="$(jq -n --argjson pid "${JT_PID}" --arg code "${JT_CODE}" \
+                '{problem_id:$pid,language:"cpp",code:$code}')"
+            api POST /submissions -t "${USER_TOK}" -d "${jt_submit}"
+            if [ "${HTTP_CODE}" = "201" ]; then
+                jt_sub_id="$(jqb '.data.submission_id')"
+                jt_start=${SECONDS}
+                while :; do
+                    api GET "/submissions/${jt_sub_id}" -t "${USER_TOK}"
+                    jt_status="$(jqb '.data.status')"
+                    case "${jt_status}" in
+                        ac|wa|re|tle|mle|ole|pe|ce|se) break;;
+                    esac
+                    if [ $((SECONDS - jt_start)) -ge "${JUDGE_POLL_TIMEOUT_S}" ]; then break; fi
+                    sleep 1
+                done
+                if [ "${jt_status}" = "ac" ]; then
+                    ok "A49c 提交正解（大小写差异）→ status=ac（compare_ignore_case 端到端通）"
+                else
+                    fail "A49c 提交正解 status='${jt_status}'（预期 ac）"
+                fi
+            else
+                fail "A49c 提交正解 POST HTTP=${HTTP_CODE}"
+            fi
+        else
+            skip "A49c 提交正解（所需 judge 能力缺失）"
+        fi
+
+        # 软删临时题清理 fixture
+        api DELETE "/admin/problems/${JT_SLUG}" -t "${ADMIN_TOK}" >/dev/null
+    fi
+elif [ "${SERVER_UP}" = "1" ]; then
+    skip "A49c 真栈（缺 admin token）"
+else
+    skip "A49c 真栈（server 未启动）"
+fi
+
+# 反向汇入（v1.3.1+ 风格）
+JT_RESULT="PASS=${PASS} FAIL=${FAIL} SKIP=${SKIP}"
+# shellcheck disable=SC2034  # 仅末尾打印供外部 grep
+echo "JT_RESULT ${JT_RESULT}"
+
+# ═════════════════════════════════════════════════════════════
 #  总结
 # ═════════════════════════════════════════════════════════════
 echo

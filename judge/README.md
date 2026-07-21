@@ -15,7 +15,8 @@ judge/
 ├── lib/               # 模块化子脚本（被 judge.sh source）
 │   ├── common.sh      # 时间戳 / 字节截断 / JSON 转义 / 工具函数
 │   ├── cgroup.sh      # cgroup v2 cpu.stat / memory.peak 读取
-│   └── compare.sh     # exact / ignore_trailing / float_eps / special 比对器
+│   ├── compare.sh     # exact / ignore_trailing / float_eps / special（无 SPJ 兜底）比对器
+│   └── spj.sh         # v1.3.1 Special Judge 三件套：compile_spj / run_spj / compare_special_with
 ├── tests/
 │   ├── test_common_unit.sh   # 单元测试：lib/*.sh（24 用例，~0.1s）
 │   └── test_judge_e2e.sh     # 端到端测试：覆盖 SPEC §7 全部状态分支（AC/WA/CE/TLE/RE/OLE/PE/special/SE）
@@ -57,6 +58,8 @@ judge/
   "compile_timeout_ms":  10000,                          // 默认 10000
   "run_hard_timeout_ms": 30000,                          // 默认 30000
   "output_limit_bytes":  16777216,                       // 默认 16M，OLE 阈值
+  "special_judge_source":   "// (optional) C++ SPJ source code ...", // v1.3.1 — 挂 SPJ 时由 web 端从 problem_special_judges 填
+  "special_judge_language": "cpp",                        // v1.3.1 — 镜像只支持 cpp
   "test_cases": [
     {
       "input":           "STDIN 内容",
@@ -134,7 +137,11 @@ docker run --rm -i \
 | 比对 | judge_type=ignore_trailing rstrip 后相等 | **AC** |
 | 比对 | judge_type=ignore_trailing rstrip 后不等 | **PE** |
 | 比对 | judge_type=float_eps | **AC** / **WA** |
-| 比对 | judge_type=special | **SE**（v1.3 占位） |
+| 比对 | judge_type=ignore_case（v1.3.1+） | ASCII 大小写不敏感 cmp（`LC_ALL=C tr '[:upper:][:lower:]' '[:lower:][:upper:]'`）；`Hello` / `HELLO` / `hello` 都判 **AC**；非字母差异（如数字）按原样 cmp |
+| 比对 | judge_type=ignore_all_whitespace（v1.3.1+） | 行内 `[ \t]+ → 单空格` 折叠 + 空行忽略后 cmp；`a  b\tc\n\nd e\n` 与期望 `a b c\nd e\n` 判 **AC**；末尾多空格也归一化（与 `ignore_trailing` 在末尾空白上重叠） |
+| 比对 | judge_type=special（有 SPJ 编译成功） | 调 `spj_bin <input> <expected> <actual>`：`rc=0` ⇒ **AC**；`rc=1` ⇒ **WA**；其它 ⇒ **SE**（case 级） |
+| 比对 | judge_type=special（SPJ 编译失败） | 整 submission **SE** + error_message 含 SPJ 编译 stderr 指纹 |
+| 比对 | judge_type=special（题未挂 SPJ） | **WA**（"no special judge configured" 兜底，让 operator 看到题没挂 SPJ） |
 
 ---
 
@@ -179,6 +186,95 @@ docker run --rm -i \
 
 容器内只有 `judgeuser`（UID 1000）：即使逃逸也无 root 可提。
 用户态进程数受限（pids-limit=50），单提交无法 fork 炸弹。
+
+---
+
+## Special Judge 协议（v1.3.1）
+
+判题镜像支持**管理员上传的 C++ SPJ 程序**对单题做自定义比对。三参数顺序固定为
+`<input> <expected_output> <actual_output>`（不是 Codeforces testlib 的 `<input> <output> <answer>`），
+判 `rc=0 ⇒ AC` / `rc=1 ⇒ WA` / 其它 ⇒ SE。整段 SPJ 流程在 `judge/lib/spj.sh`：
+
+| 函数 | 作用 | 调用方 |
+|------|------|--------|
+| `compile_spj <src> <out_bin>` | g++ 编译 SPJ（10s 超时），写 stderr 到 `<out_bin>.err` | judge.sh 主循环 |
+| `run_spj <bin> <input> <expected> <actual>` | 调 SPJ 三件套，rc 直传 | compare_special_with |
+| `compare_special_with <bin> <out> <expected> <input>` | drop-in 替代 `compare_special`（参数顺序匹配 judge.sh 调用点） | judge.sh step 3 special case |
+| `spj_stdout_for_info [limit]` | 读 `JUDGE_TMP/spj_stdout` 截到 limit 字节，返 SPJ 拒绝原因进 case_results.info | judge.sh case WA / SE 分支 |
+| `spj_err_for_info <bin> [limit]` | 读 `<bin>.err` 截到 limit 字节，返编译错误进 error_message | judge.sh SPJ compile failed 分支 |
+
+**SPJ 调用契约**（管理员写 SPJ 时参考）：
+
+```cpp
+// int main(int argc, char* argv[])
+//   argv[1] = input   file path      (用户提供给 solution 的 stdin 副本)
+//   argv[2] = expected output file path  (DB 里 test_cases.expected_output)
+//   argv[3] = actual   output file path  (solution 跑出来的 stdout)
+//   退出码: 0 = AC, 1 = WA, 其它 = SE
+//   stdout 第一行  →  case_results[i].info (截到 2KB)
+//   stderr         →  不捕获（噪音隔离）
+//   timebox        →  同 solution 的 time_limit_s + 1
+//   membox         →  同 solution 的 memory_limit_mb（继承容器 cgroup）
+```
+
+**最小可工作 SPJ 模板**（永远 AC：expected 与 actual 字节比较）：
+
+```cpp
+#include <cstdio>
+int main(int argc, char** argv) {
+    if (argc != 4) return 2;  // 参数错 → SE
+    FILE* e = std::fopen(argv[2], "rb");
+    FILE* a = std::fopen(argv[3], "rb");
+    if (!e || !a) return 2;
+    int c1, c2;
+    do { c1 = std::fgetc(e); c2 = std::fgetc(a);
+         if (c1 != c2) { std::fclose(e); std::fclose(a); return 1; }  // WA
+    } while (c1 != EOF && c2 != EOF);
+    std::fclose(e); std::fclose(a);
+    return 0;  // AC
+}
+```
+
+**典型进阶 SPJ**（浮点容差、单向差、特殊数据结构匹配）：管理员在 `problems/README.md`
+的 `special_judge_source` schema 注释 + `docs/runbooks/special-judge.md §6` 找模板。
+
+**安全模型**（与 solution 同 jail）：
+- SPJ 用与 solution 完全相同的 secure compile flags（`-fstack-protector-strong` /
+  `-D_FORTIFY_SOURCE=2` / `-Wl,-z,now` / `-Wl,-z,relro`），见 `judge/lib/spj.sh:66-76`
+- SPJ 进程继承 solution 的 cgroup CPU / memory cap
+- SPJ timebox = `time_limit_s + 1`（与 solution 同超时）
+- 容器 `--security-opt=no-new-privileges` + `USER judgeuser (UID 1000)` 兜底
+- SPJ 编译失败 → 整 submission 翻 SE + error_message 含 stderr 指纹（不让 case 误判 WA）
+
+**`compare_special` 在 `compare.sh` 的兜底路径**仍保留：题未挂 SPJ 时（即 `task.json` 的
+`special_judge_source` 为空字符串），`compare_special` 返 `rc=1` 让 judge.sh 走 WA 分支，
+operator 看到「no special judge configured」就知道题还没挂 SPJ — 这是 v1.2.52 起的行为，
+v1.3.1 闭环后兜底逻辑完整保留。
+
+**task.json 字段**（web 端从 `problem_special_judges` 填，由 `submission_routes.h:614-647` 装载）：
+- `special_judge_source`: 可选，C++ 源码字符串；空 = 无 SPJ（走 compare.sh 兜底 WA）
+- `special_judge_language`: 可选，默认 `"cpp"`（镜像只支持 C++）
+
+**完整运行示例**：
+
+```bash
+cat > /tmp/spj-task.json <<'EOF'
+{
+  "submission_id": 42, "language": "cpp",
+  "code": "#include <iostream>\nint main(){std::cout<<\"hello\\n\";return 0;}",
+  "time_limit_ms": 1000, "memory_limit_mb": 128,
+  "compile_timeout_ms": 10000, "run_hard_timeout_ms": 30000,
+  "output_limit_bytes": 16777216,
+  "special_judge_source": "#include <cstdio>\nint main(int argc,char**argv){if(argc!=4)return 2;FILE*e=fopen(argv[2],\"rb\");FILE*a=fopen(argv[3],\"rb\");if(!e||!a)return 2;int c1,c2;do{c1=fgetc(e);c2=fgetc(a);if(c1!=c2){fclose(e);fclose(a);return 1;}}while(c1!=EOF&&c2!=EOF);fclose(e);fclose(a);return 0;}",
+  "special_judge_language": "cpp",
+  "test_cases": [
+    {"input":"","expected_output":"hello\n","judge_type":"special","float_epsilon":1e-6}
+  ]
+}
+EOF
+docker run --rm -i litecode-judge:test /usr/local/bin/judge.sh < /tmp/spj-task.json
+# 期望：{"submission_id":42,"status":"ac","time_used_ms":...,"memory_used_kb":...,"error_message":null,"failed_case_index":null,"case_results":[{"index":0,"status":"ac",...,"info":null}]}
+```
 
 ---
 
@@ -240,7 +336,7 @@ docker run --rm \
 
 | 项 | 状态 | 说明 |
 |----|------|------|
-| Special Judge | **v1.3** 占位 | v1.2 返回 SE；逻辑占位可释放队列槽位但不真判 |
+| Special Judge | ✅ v1.3.1 闭环 | admin 上传 C++ SPJ → judge.sh 编译 → 按 rc 判 AC/WA/SE；judge/lib/spj.sh 三件套完整；无 SPJ 兜底 WA |
 | Markdown 预净化 | **v1.3** 强制 | v1.2 软要求；与 Phase 4 判题模块无关 |
 | Compile-time TLE 防御 | ✅ Phase 4 | g++ 独立 10s timeout + 模板递归炸测 |
 | OLE 防御 | ✅ Phase 4 | 16MB 截断 → 立即判 OLE，不再比对 |

@@ -60,12 +60,72 @@ v1.2.10 代码落地的小差异）：
 | `exact` | 完全字符串匹配（默认） |
 | `ignore_trailing` | 忽略每行尾部空白后逐行比较（**AC/PE 规则沿用 v1.1**） |
 | `float_eps` | 按浮点比较，绝对/相对误差 < `float_epsilon` 视为相等 |
-| `special` | Special Judge（v1.3+ 接入，当前会让判题返回 SE） |
+| `special` | Special Judge（v1.3.1 闭环：admin 上传 C++ SPJ → judge.sh 编译 → 按 rc 判 AC/WA/SE；无 SPJ 兜底 WA） |
+| `ignore_case`（v1.3.1+） | ASCII 大小写不敏感（`a-z ⇄ A-Z` 翻转后 cmp；UTF-8 多字节字符按原样 cmp；与 Codeforces / AtCoder 的 case-insensitive 输出一致） |
+| `ignore_all_whitespace`（v1.3.1+） | 行内多空格折叠（`[ \t]+ → 单空格`）+ 空行忽略；比 `ignore_trailing` 严格（行内也折叠，与 ignore_trailing 在末尾空白上重叠） |
 
 > 注：v1.2.10 实现的 `parse_test_cases_array` 在 wire 协议上接受 `float_epsilon`
 > 字段，但实现层固定绑 `1e-8` 默认值（详见 v1.2.10 changelog + header 注释）。
 > 本仓库内 `sqrt-x.json` 在 `float_eps` 用例中给出 `1e-4` 容差——其作用是说明题面期望，
 > 实际入库值仍为 DB 默认值，未来 §8.1 schema 升级后再做 binding 透传。
+
+### Special Judge（v1.3.1 闭环）
+
+`judge_type=special` 的题目需要管理员上传一道 C++ **Special Judge 源程序**，
+由 `judge.sh` 在判题时编译并按 SPJ 的退出码判定 AC/WA/SE。
+
+**SPJ 字段在 JSON 中的位置**（与 `slug` / `samples` 同级，写到题目 JSON 即可随批量导入
+进入 `problem_special_judges` 表）：
+
+```jsonc
+{
+  "slug": "floating-point-sum",
+  "title": "浮点求和（容差 1e-4）",
+  "difficulty": "medium",
+  "description": "## 题目描述\n\n求和并按 1e-4 误差比较。",
+  "samples": [{ "input": "3\n1.0 2.0 3.0\n", "output": "6.0\n" }],
+  "test_cases": [
+    {
+      "input": "3\n1.0 2.0 3.0\n",
+      "expected_output": "6.0\n",
+      "judge_type": "special",
+      "float_epsilon": 0.0001
+    }
+  ],
+  // ↓ v1.3.1 新增：SPJ 源码（与 slug/samples 同级；非 sample 的字段）
+  "special_judge_source": "// SPJ: byte-compare + 1e-4 浮点容差\n"
+                          "#include <cstdio>\n"
+                          "#include <cstdlib>\n"
+                          "#include <cmath>\n"
+                          "int main(int argc, char** argv) {\n"
+                          "    if (argc != 4) return 2;\n"
+                          "    FILE* e = std::fopen(argv[2], \"rb\");\n"
+                          "    FILE* a = std::fopen(argv[3], \"rb\");\n"
+                          "    if (!e || !a) return 2;\n"
+                          "    // ... 浮点解析 + 误差比较 ...\n"
+                          "    return 0;  // AC；1 = WA\n"
+                          "}\n",
+  "special_judge_language": "cpp"
+}
+```
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `special_judge_source` | 选填 | C++ SPJ 源程序；空 = 题未挂 SPJ，judge.sh 走 WA 兜底。JSON 导入时入库到 `problem_special_judges.source`（MEDIUMTEXT 16MB） |
+| `special_judge_language` | 选填 | 默认 `"cpp"`；当前镜像只支持 C++，其它值 400 INVALID_INPUT |
+
+> **批量导入路径**：`admin_bulk_import_routes.h::detail::process_one_file` 已识别
+> `special_judge_source` / `special_judge_language` 并写入 V010 表（见
+> `tests/unit/test_admin_special_judge.cpp::UpsertIdempotentSameContent` 验证）。
+>
+> **单题上传路径**：POST/PUT `/admin/problems/:slug` 不接受 SPJ 字段（保持题目
+> 元数据与 SPJ 解耦），SPJ 必须通过 PUT `/admin/problems/:slug/special-judge`
+> 单独上传，幂等 upsert（v1.3.1 加的 3 个 admin 端点）。
+>
+> **admin 端 source 大小 clamp**：256 KB（`kMaxSpjSourceLenAdmin`，比 repo ceiling 16MB
+> 紧很多，因为 admin 上传通常很小 + 编译时间可控）。超 256KB → 400 INVALID_INPUT。
+> 仓库内 MEDIUMTEXT 仍 16MB，可由运维手工 `INSERT INTO problem_special_judges`
+> 应急超过 256KB 的 SPJ（v1.3.2+ 计划抬高 admin cap）。
 
 ---
 

@@ -60,6 +60,33 @@ docker compose --profile proxy up -d
 # 监控（Prometheus + Grafana + Alertmanager + cAdvisor + node-exporter）
 docker compose --profile monitoring up -d
 
+### 2.1.1 一键试运行：导入题 + 跑判题（v1.3.1 final hash `51be5f5` 起）
+
+适合首次启动后想快速体验"提交代码 → 看 AC/WA/TLE"端到端的用户。
+脚本会：①启动 docker-compose 11 服务栈 ②应用 V001-V011 migrations
+③bulk-import 7 道种子题 ④注册测试用户 ⑤演示 6 种 `judge_type`
+（exact / float_eps / ignore_trailing / ignore_case / ignore_all_whitespace /
+special）⑥演示 7 种 `status`（AC / WA / TLE / MLE / OLE / CE / RE）⑦SPJ 闭环
+演示（admin PUT SPJ → AC → DELETE → 兜底 WA）。
+
+```bash
+# 默认宽松模式（失败也不 exit 1，仅打印）
+bash scripts/demo_submission.sh
+
+# CI 强约束（任一 case 失败 exit 1）
+DEMO_STRICT=1 bash scripts/demo_submission.sh
+
+# 仅探测环境 + 打印计划，不真启动
+DEMO_DRY_RUN=1 bash scripts/demo_submission.sh
+
+# 自定义服务地址
+BASE_URL=http://host:8080 bash scripts/demo_submission.sh
+```
+
+脚本跑完后输出测试账号 + 浏览器入口提示，可直接打开
+`http://localhost:8080/problem.html?slug=two-sum` 手动验证。
+完整设计文档见 `scripts/demo_submission.sh` 头部注释。
+
 # 日志聚合（Loki + Promtail；默认 Docker logs 仍可用）
 docker compose --profile logging up -d
 

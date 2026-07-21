@@ -94,6 +94,7 @@
 #include "../config.h"                          // RateLimitConfig
 #include "../db/connection_pool.h"              // ConnectionPool
 #include "../db/problem_repo.h"                 // problem_repo::list / find_by_slug / ProblemListFilter / ProblemListResult
+#include "../db/special_judge_repo.h"           // special_judge_repo::exists_for_problem (v1.3.1 has_special_judge 透出)
 #include "../db/tag_repo.h"                     // tag_repo::list_tags_for_problem / TagRow
 #include "../db/test_case_repo.h"               // test_case_repo::list_samples_for_problem / SampleCaseRow
 #include "../logger.h"                          // LOG_INFO / LOG_WARN
@@ -448,30 +449,40 @@ inline nlohmann::json serialize_problem_row(const litecode::ProblemRow& p) {
 //    - tags        : list of {id, name} from tag_repo. Ordered by
 //                    tag name ASC (matches tag_repo's own ordering,
 //                    so the front-end doesn't have to re-sort).
-//    - samples     : list of {input, output} from
+//    - samples     : list of {input, output, judge_type} from
 //                    test_case_repo. Ordered by (order_num ASC, id
-//                    ASC) — same as the DB. judge_type is
-//                    deliberately NOT surfaced today; the front-end
-//                    renders samples as text and never compares.
+//                    ASC) — same as the DB. judge_type IS surfaced
+//                    (v1.3.1 — was deliberately hidden before); the
+//                    admin editor reads it back from /problems/:slug
+//                    so the `judge_type` select doesn't fall back to
+//                    "exact" on every edit.
 //
 //  We still OMIT is_deleted (same reason as the list endpoint:
 //  a `true` value would mean we leaked a tombstone). We DO include
 //  the maintenance counters (accepted_count / submission_count)
 //  because the front-end uses them to render "AC率" / "提交数"
 //  on the detail page header.
+//
+//  v1.3.1 also adds `has_special_judge` (bool) — defaults to false.
+//  The public GET /problems/:slug handler looks up the SPJ row via
+//  special_judge_repo::exists_for_problem and threads the result in.
+//  Admin POST/PUT callers (admin_problem_routes.h) accept the default
+//  false; admin sees the truth via the dedicated GET endpoint.
 // ────────────────────────────────────────────────────────────────────────────
 
 inline nlohmann::json serialize_sample(const litecode::SampleCaseRow& s) {
     return nlohmann::json{
-        {"input",  s.input},
-        {"output", s.expected_output},
+        {"input",      s.input},
+        {"output",     s.expected_output},
+        {"judge_type", s.judge_type},
     };
 }
 
 inline nlohmann::json serialize_problem_detail(
         const litecode::ProblemRow& p,
         const std::vector<litecode::TagRow>& tags,
-        const std::vector<litecode::SampleCaseRow>& samples) {
+        const std::vector<litecode::SampleCaseRow>& samples,
+        bool has_special_judge = false) {
     nlohmann::json tags_j = nlohmann::json::array();
     for (const auto& t : tags) {
         tags_j.push_back(nlohmann::json{
@@ -484,19 +495,20 @@ inline nlohmann::json serialize_problem_detail(
         samples_j.push_back(serialize_sample(s));
     }
     return nlohmann::json{
-        {"id",               p.id},
-        {"slug",             p.slug},
-        {"title",            p.title},
-        {"difficulty",       p.difficulty},
-        {"description",      p.description},
-        {"time_limit",       p.time_limit},
-        {"memory_limit",     p.memory_limit},
-        {"accepted_count",   p.accepted_count},
-        {"submission_count", p.submission_count},
-        {"tags",             std::move(tags_j)},
-        {"samples",          std::move(samples_j)},
-        {"created_at",       p.created_at},
-        {"updated_at",       p.updated_at},
+        {"id",                 p.id},
+        {"slug",               p.slug},
+        {"title",              p.title},
+        {"difficulty",         p.difficulty},
+        {"description",        p.description},
+        {"time_limit",         p.time_limit},
+        {"memory_limit",       p.memory_limit},
+        {"accepted_count",     p.accepted_count},
+        {"submission_count",   p.submission_count},
+        {"tags",               std::move(tags_j)},
+        {"samples",            std::move(samples_j)},
+        {"has_special_judge",  has_special_judge},
+        {"created_at",         p.created_at},
+        {"updated_at",         p.updated_at},
     };
 }
 
@@ -723,16 +735,37 @@ inline void get_problem_detail_handler(httplib::Response&         res,
         return;
     }
 
-    // 6) Serialize + log + respond. nlohmann::json lets us build
+    // 6) Special-judge probe (v1.3.1). One extra SELECT against
+    //    problem_special_judges — boolean EXISTS, doesn't pull
+    //    the source bytes (that stays admin-only via the dedicated
+    //    GET endpoint). Failure surfaces a 500 like any other repo
+    //    probe in this handler — the SPJ table is a side table that
+    //    shouldn't block the detail page when down.
+    bool has_special_judge = false;
+    try {
+        has_special_judge =
+            litecode::special_judge_repo::exists_for_problem(pool, row->id);
+    } catch (const std::exception& e) {
+        LOG_ERROR("problem_detail: exists_for_problem threw",
+                  {{"problem_id", std::to_string(row->id)},
+                   {"type",       typeid(e).name()},
+                   {"reason",     e.what()}});
+        send_error(res, 500, litecode::ErrorCode::INTERNAL_ERROR,
+                   std::string("internal error: ") + e.what());
+        return;
+    }
+
+    // 7) Serialize + log + respond. nlohmann::json lets us build
     //    the response in one place; serialize_problem_detail is
     //    the single owner of the field shape.
     LOG_INFO("problem_detail: served",
              {{"slug",       slug_str},
               {"problem_id", std::to_string(row->id)},
               {"tags",       std::to_string(tags.size())},
-              {"samples",    std::to_string(samples.size())}});
+              {"samples",    std::to_string(samples.size())},
+              {"has_special_judge", has_special_judge ? "1" : "0"}});
 
-    send_success(res, serialize_problem_detail(*row, tags, samples));
+    send_success(res, serialize_problem_detail(*row, tags, samples, has_special_judge));
 }
 
 // ────────────────────────────────────────────────────────────────────────────

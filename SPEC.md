@@ -454,13 +454,15 @@ POST /api/v1/submissions
 | float_epsilon | DECIMAL(10,8) NULL | 浮点误差容忍（仅 `judge_type=float_eps` 时使用） |
 | order_num | INT NOT NULL DEFAULT 0 | 用例顺序 |
 
-> **judge_type 说明**（v1.2）:
+> **judge_type 说明**（v1.2 + v1.3.1+ 扩展）:
 > | 取值 | 行为 |
 > |------|------|
 > | `exact` | 完全字符串匹配（默认） |
 > | `ignore_trailing` | 忽略每行尾部空白后逐行比较（AC/PE 判定沿用 v1.1 规则） |
 > | `float_eps` | 按浮点比较，绝对/相对误差 < `float_epsilon` 视为相等 |
-> | `special` | Special Judge（v1.3+ 实现，MVP 阶段留字段） |
+> | `special` | Special Judge（v1.3.1 P0 闭环已落地：admin 上传 C++ SPJ → judge.sh 调 spj.sh 三件套 → 按 rc 0/1/其它 判 AC/WA/SE；无 SPJ 兜底判 WA；详见 `judge/lib/spj.sh` + `docs/runbooks/special-judge.md`） |
+> | `ignore_case`（v1.3.1+） | ASCII 大小写不敏感：`LC_ALL=C tr '[:upper:][:lower:]' '[:lower:][:upper:]'` 后逐字节 cmp；`Hello` / `HELLO` / `hello` 都判 AC；非字母字符（含 UTF-8 多字节）按原样 cmp |
+> | `ignore_all_whitespace`（v1.3.1+） | 行内 `[ \t]+ → 单空格` 折叠 + 空行忽略后 cmp；比 `ignore_trailing` 严格（行内也折叠），末尾空白归一化与 `ignore_trailing` 重叠 |
 
 ### 4.4 submissions 表
 
@@ -542,6 +544,9 @@ POST /api/v1/submissions
 | PUT | `/api/v1/admin/problems/:slug` | 🔒 admin | 30 次/分 | 修改题目（含标签关联更新） |
 | DELETE | `/api/v1/admin/problems/:slug` | 🔒 admin | 10 次/分 | 软删除题目（设置 `is_deleted=TRUE`，不真正删除） |
 | POST | `/api/v1/admin/problems/import` | 🔒 admin | 5 次/小时 | 批量导入（multipart/form-data，JSON/YAML 文件） |
+| PUT | `/api/v1/admin/problems/:slug/special-judge` | 🔒 admin | 30 次/分 | **v1.3.1** 上传 / 替换该题 Special Judge 源码（≤256KB admin cap；body `{source, language?}`；幂等 upsert 到 `problem_special_judges`；写 `audit_logs action=problem.spj_upsert`） |
+| DELETE | `/api/v1/admin/problems/:slug/special-judge` | 🔒 admin | 30 次/分 | **v1.3.1** 移除该题 Special Judge（204 幂等；写 `audit_logs action=problem.spj_remove`；移除后该题 `judge_type=special` 的 case 走 WA 兜底） |
+| GET | `/api/v1/admin/problems/:slug/special-judge` | 🔒 admin | 30 次/分 | **v1.3.1** 查看该题 Special Judge（返 `{exists, language, source, source_bytes, created_at, updated_at}`） |
 
 > 全部路径以 `/api/v1/admin/*` 开头需要 JWT 中 `role=admin`，非管理员返回 403 Forbidden。
 
@@ -717,7 +722,7 @@ POST /api/v1/submissions
           - `exact`         → 完全相同 AC，否则 WA
           - `ignore_trailing` → 去尾部空白后相同 AC，否则 PE
           - `float_eps`     → 浮点按 epsilon 比较，相同 AC，否则 WA
-          - `special`       → MVP 返回 SE（v1.3+ 接入 SPJ）
+          - `special`       → 有 SPJ 时调 `spj_bin <input> <expected> <actual>`：`rc=0` ⇒ **AC**；`rc=1` ⇒ **WA**；其它 ⇒ **SE**（case 级）；无 SPJ 全 case 判 WA（v1.3.1）
    c. 汇总：所有测试点通过 → AC；首个失败测试点为该 submission 的最终状态
    d. 任何基础设施异常（容器 OOM、DB 写失败）→ SE
 
@@ -822,6 +827,11 @@ ENTRYPOINT ["/usr/local/bin/judge.sh"]
 > - `test_cases[].judge_type` 新增字段（默认 `exact`，可省略）
 > - `test_cases[].float_epsilon` 新增字段（仅 `float_eps` 时使用）
 > - `description_md` 建议在管理端**导入前**预净化（v1.2 软要求，v1.3 强制）
+
+> **v1.3.1 增补**（Special Judge 闭环）：
+> - `special_judge_source` 顶层字段（MEDIUMTEXT，可选）：`judge_type=special` 的题目用，C++ SPJ 源码（≤256KB admin wire 上限；repo ceiling 16MB）
+> - `special_judge_language` 顶层字段（ENUM('cpp')，可选，默认 `"cpp"`）：SPJ 语言，当前镜像只支持 C++
+> - bulk-import 路径（`/admin/problems/import`）已识别这两个字段并写入 `problem_special_judges`（V010）；单题 CRUD 路径（POST/PUT `/admin/problems`）不识别（保持题目元数据与 SPJ 解耦），admin 通过 PUT `/admin/problems/:slug/special-judge` 单独上传
 
 ### 8.2 批量导入（🔒 管理员专属）
 
@@ -1064,7 +1074,8 @@ litecode-cpp/
 - [x] ★ `judge_type` 判题分支（exact / ignore_trailing / float_eps / special）—— judge.sh（v1.2.13）
 - [x] ★ SE 系统错误状态（容器/DB 异常时使用）—— judge_scheduler + submission_routes（v1.2.15 + v1.2.16）
 - [x] ☆ SSE 推送（GET /api/v1/submissions/sse/:id）—— judge_notifier + submission_routes + judge_scheduler 接线（v1.2.17）
-- [x] ☆ Special Judge 框架（v1.3）
+- [x] ☆ Special Judge 框架（v1.3.1 P0 闭环：admin 3 端点 + judge.sh 接线 + 公共 detail 透 judge_type / has_special_judge + 测试 + e2e A48 + runbook；P1 judge_type 扩展 / P2 Interactive 推 v1.4；`commit f3866a4`）
+- [x] ☆ judge_type 扩展 ignore_case / ignore_all_whitespace（v1.3.1+：V011 ENUM 扩展 + compare.sh 新函数 + judge.sh case 分支 + admin 双端 validator + 单测 + e2e A49 + README 同步；`commit f3866a4`）
 
 ### Phase 5 - 前端页面
 
@@ -1180,6 +1191,8 @@ litecode-cpp/
 | **A33** | **编辑器草稿持久化**（v1.2） | 写一半代码刷新页面 → 弹"恢复草稿"提示，确认后代码回来 |
 | **A34** | **深色模式**（v1.2） | 切换深色模式后页面正确变色，刷新后保持 |
 | **A35** | **失败登录锁定**（v1.2） | 连续 5 次失败登录后 15 分钟内该用户名登录返回 423 Locked + `Retry-After` 头，错误信封与"用户名/密码错误"一致（不泄露账号是否存在）；audit_logs 新增 `auth.login_locked` 行；解锁后正确密码可登录成功并清零计数器 |
+| **A48** | **Special Judge 闭环**（v1.3.1） | admin PUT SPJ 源码（200 + source_bytes 回显 + audit `problem.spj_upsert`）→ admin GET 返 exists=true → 公共 `/problems/:slug` `data.has_special_judge=true` + `data.samples[i].judge_type=special` 透出 → 提交正解 → `status=ac`（SPJ rc=0）→ admin DELETE（204 + audit `problem.spj_remove`）→ 公共 detail `has_special_judge=false` → 提交正解 → `status=wa`（无 SPJ 兜底）；SPJ 编译失败 → 整 submission `status=se` + error_message 含 SPJ stderr 指纹；三层断言：A48a 静态 26 项关键环节点（judge.sh 6 + admin 7 + public 3 + audit 2 + test 6 + e2e 2）/ A48b runbook 9 项术语 / A48c 真栈 5 步（PUT→GET→has_special_judge=true→AC→DELETE→兜底）+ audit `problem.spj_upsert/remove` 双行验证；详见 `docs/runbooks/special-judge.md` |
+| **A49** | **judge_type 扩展**（v1.3.1+） | `judge_type=ignore_case` 与 `judge_type=ignore_all_whitespace` 两个新值在 V011 ENUM 扩列后能被 judge.sh 正确路由：bulk-import 一道 `judge_type=ignore_case` 测试题 → 公共 detail `samples[0].judge_type=ignore_case` → 提交 `Hello World`（期望 `HELLO WORLD`）→ `status=ac`（LC_ALL=C tr 大小写归一化）；三层断言：A49a 静态 19 项环节点（V011 SQL 5 + compare.sh 3 + judge.sh 4 + admin 双端 validator 3 + 单测 2 + e2e 2）/ A49b README 文档化（judge/README.md + problems/README.md 均含 ignore_case + ignore_all_whitespace）/ A49c 真栈 bulk-import + 提交大小写差异正解 → status=ac |
 
 ### 12.2 性能验收
 
@@ -1219,7 +1232,7 @@ litecode-cpp/
 
 | 版本 | 功能 |
 |------|------|
-| v1.3 | Special Judge、Markdown 预净化强制、problem_revisions 编辑历史、比赛/Contest 模块 |
+| v1.3 | Special Judge（**v1.3.1 P0 闭环**）、Markdown 预净化强制、problem_revisions 编辑历史、比赛/Contest 模块 |
 | v1.4 | 讨论区、题解、收藏、错题本 |
 | v1.5 | 多语言支持（Python/Java/Go）、管理员操作审计日志增强、系统监控面板（已 v1.2 部分落地） |
 | v2.0 | 多实例 + Redis session 共享、判题微服务拆分 |
