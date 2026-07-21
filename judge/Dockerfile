@@ -21,7 +21,7 @@
 #     litecode-judge:latest /judge/task.json
 # =============================================================
 
-FROM ubuntu:22.04
+FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
