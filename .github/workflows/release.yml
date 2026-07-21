@@ -115,7 +115,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build + push web (multi-arch)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -129,7 +129,7 @@ jobs:
           sbom: true
 
       - name: Build + push judge (multi-arch)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./judge
           file: judge/Dockerfile
