@@ -1,0 +1,57 @@
+# LiteCode-CPP — Promtail Docker log collector
+# Optional Phase 9 logging profile.  request_id is parsed as a field, never a
+# Loki label, to avoid unbounded label cardinality.
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      # Keep only LiteCode containers; other workloads on the Docker host are
+      # deliberately excluded from this project's Loki tenant.
+      - source_labels:
+          - __meta_docker_container_name
+        regex: '/litecode-.*'
+        action: keep
+      - source_labels:
+          - __meta_docker_container_name
+        regex: '/(litecode-.*)'
+        target_label: container
+        replacement: '$1'
+      - source_labels:
+          - __meta_docker_container_label_com_docker_compose_service
+        target_label: compose_service
+      - source_labels:
+          - __meta_docker_container_log_stream
+        target_label: stream
+      - source_labels:
+          - __meta_docker_container_id
+        target_label: __path__
+        replacement: /var/lib/docker/containers/$1/$1-json.log
+    pipeline_stages:
+      # Docker's json-file driver wraps the application line in {log,stream,time}.
+      - docker: {}
+      # LiteCode's stdout line is JSON; non-LiteCode lines simply yield no fields.
+      - json:
+          expressions:
+            ts: ts
+            level: level
+            logger: logger
+            request_id: request_id
+      - labels:
+          level:
+          logger:
+      - timestamp:
+          source: ts
+          format: RFC3339Nano
+          action_on_failure: skip

@@ -78,6 +78,9 @@ jobs:
           docker compose --profile proxy config --quiet
           docker compose --profile monitoring config --quiet
           docker compose --profile backup config --quiet
+          docker compose --profile logging config --quiet
+          ./scripts/validate_log_aggregation.sh
+          bash scripts/lint.sh logrotate
 
   # ───── Job 2: build (cmake + ccache) ─────────────────────────
   build:

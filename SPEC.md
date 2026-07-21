@@ -143,9 +143,9 @@
 
 - [x] ★ Prometheus 指标 `/api/v1/metrics`（`submissions_total{status}`、`judge_duration_seconds`、`queue_size`、`warm_pool_size`、`db_pool_active`）
 - [x] ★ Grafana 面板（系统概览 / 判题 P95 / 错误率 / 队列 / 资源）
-- [ ] ★ 日志聚合（stdout JSON 格式，Docker logs 接管，可选 Loki/ELK）
-- [ ] ★ 日志轮转（logrotate 或 Docker log driver `json-file` + `max-size`）
-- [ ] ☆ 备份验证（每月 1 次 restore drill 到测试环境）
+- [x] ★ 日志聚合（stdout JSON 格式，Docker logs 接管，可选 Loki/ELK）—— v1.2.70（保留现有 json-file + max-size=10m/max-file=3 基线；新增 `logging` profile 的 Loki + Promtail 集中采集，Grafana provisioning 固定 `uid: loki`，request_id 作为字段而非高基数 label）
+- [x] ★ 日志轮转（logrotate 或 Docker log driver `json-file` + `max-size`）—— v1.2.71（现有 `&default-logging` 覆盖全部 Compose profile service，固定 `json-file` + `max-size=10m` + `max-file=3`；新增 `scripts/lint.sh logrotate` 全服务渲染策略 gate 并接入 CI；`tests/unit/test_logger.cpp` 已覆盖文件多段轮转、单文件截断和不可写回退）
+- [x] ☆ 备份验证（每月 1 次 restore drill 到测试环境）—— v1.2.72（`scripts/restore_drill.sh` 黑盒演练 + `docs/runbooks/monthly-restore-drill.md` runbook + `scripts/lint.sh restore_drill` 自检子任务；隔离栈 drill-mysql/drill-proxy/drill-web 独立端口 3307/8081 + 临时卷，不污染主栈；smoke：health 200 + admin 登录 + bulk-import two-sum + 提交 AC 轮询 ac + /api/v1/metrics 200；末行 `DRILL_RESULT PASS=N FAIL=N SKIP=N` 兼容 v1.2.67 FUZZ_RESULT 风格；RESTORE_STRICT=1 时缺前置升级为 FAIL；schedule `0 9 1-7 * 1`）
 - [ ] ☆ 告警规则（P99 延迟 / 队列积压 / 磁盘 / 证书过期）
 - [ ] △ 性能 Profile（`perf` / flamegraph 跑判题热路径）
 
@@ -1130,9 +1130,9 @@ litecode-cpp/
 
 - [x] ★ Prometheus 指标接入（`/api/v1/metrics`：submissions_total{status}、judge_duration_seconds、queue_size、warm_pool_size、db_pool_active）—— v1.2.68（`src/routes/metrics.h` MetricsService：counter 单 label 族（status）+ histogram（Cumulative buckets 5ms→10s 共 11 档）+ gauge provider（scrape 时 live 采样）+ Prometheus 0.0.4 text exposition + `Content-Type: text/plain; version=0.0.4; charset=utf-8`；`src/app_context_metrics.cpp` build_metrics_deps 集中注册 SPEC §16.4 全部 7 个 metric family（counter + histogram + 5 gauge）+ `src/judge/judge_scheduler.h` `set_metrics()` + worker run_one_task 头部 `steady_clock::now()` 闭环 → finish_se / 成功 mark_finished 路径各 `record_task_metrics(started_at, status)` 一次（observe + inc）；`/api/v1/metrics` 取代 Phase 1 占位 501；15 unit tests：empty render / counter 字母序稳定 / histogram bucket 累加 + _sum + _count + 单 +Inf bucket / gauge provider scrape 时采样（不 eager）+ 异常 → NaN / 8 线程 × 1000 inc 原子性 / 4 线程 × 250 observe 原子性 / 路由 Content-Type + 200 body；零 src/main.cpp 改动之外的侵入）
 - [x] ★ Grafana 面板（系统概览 / 判题 P95 / 错误率 / 队列 / 资源）—— v1.2.69（`monitoring/grafana/dashboards/phase9-overview.json` 5 行 14 chart 全部改用 v1.2.68 MetricsService 真实暴露的 7 个 `litecode_*` metric family（移除 v1.2.57 占位里残留的 5 个幽灵指标：`litecode_http_requests_total` / `db_pool_size` / `active_sessions` / `process_start_time_seconds` / `judge_active`）+ `monitoring/grafana/datasources.yml` 给 Prometheus DS 钉 `uid: prometheus` 让 panel `datasource.uid: prometheus` 显式 bind 住（Grafana 默认随机 UID 会失配）+ `scripts/validate_grafana_dashboards.sh` 黑盒 linter 三段（jq JSON parse + 7 个 LiteCode metric family allowlist 交叉对照 + histogram `_bucket/_sum/_count` 后缀自动放行 + datasources.yml uid lint，阻断任何幽灵指标引用漂回仓里）+ `docs/deployment.md` §7 扩 14 chart 数据源映射表 + §9.8 新增「Grafana No data」故障排查 + §9.3 末尾「新增 metric 时两处同步」约束；负样本（注入 `litecode_db_pool_size` 引用）实测 linter 报 2 ERR exit 1，phase9-overview.json 正样本 PASS exit 0）
-- [ ] ★ 日志聚合（stdout JSON 格式，Docker logs 接管，可选 Loki/ELK）
-- [ ] ★ 日志轮转（logrotate 或 Docker log driver `json-file` + `max-size`）
-- [ ] ☆ 备份验证（每月 1 次 restore drill 到测试环境）
+- [x] ★ 日志聚合（stdout JSON 格式，Docker logs 接管，可选 Loki/ELK）—— v1.2.70（保留现有 json-file + max-size=10m/max-file=3 基线；新增 `logging` profile 的 Loki + Promtail 集中采集，Grafana provisioning 固定 `uid: loki`，request_id 作为字段而非高基数 label）
+- [x] ★ 日志轮转（logrotate 或 Docker log driver `json-file` + `max-size`）—— v1.2.71（现有 `&default-logging` 覆盖全部 Compose profile service，固定 `json-file` + `max-size=10m` + `max-file=3`；新增 `scripts/lint.sh logrotate` 全服务渲染策略 gate 并接入 CI；`tests/unit/test_logger.cpp` 已覆盖文件多段轮转、单文件截断和不可写回退）
+- [x] ☆ 备份验证（每月 1 次 restore drill 到测试环境）—— v1.2.72（`scripts/restore_drill.sh` 黑盒演练 + `docs/runbooks/monthly-restore-drill.md` runbook + `scripts/lint.sh restore_drill` 自检子任务；隔离栈 drill-mysql/drill-proxy/drill-web 独立端口 3307/8081 + 临时卷，不污染主栈；smoke：health 200 + admin 登录 + bulk-import two-sum + 提交 AC 轮询 ac + /api/v1/metrics 200；末行 `DRILL_RESULT PASS=N FAIL=N SKIP=N` 兼容 v1.2.67 FUZZ_RESULT 风格；RESTORE_STRICT=1 时缺前置升级为 FAIL；schedule `0 9 1-7 * 1`）
 - [ ] ☆ 告警规则（P99 延迟、队列积压、磁盘、证书过期）
 - [ ] △ 性能 Profile（`perf` / `flamegraph` 跑一次判题热路径）
 
@@ -1340,7 +1340,7 @@ litecode-cpp/
 
 - `scripts/backup.sh` 每日凌晨 3 点 mysqldump + 压缩 + 异地（OSS/S3）
 - 保留策略：日备 7 份 / 周备 4 份 / 月备 6 份
-- 每月 1 次 restore drill 到测试环境，验证备份可用
+- 每月 1 次 restore drill 到测试环境（`scripts/restore_drill.sh`），验证 backup 可用 — v1.2.72；详见 [`docs/runbooks/monthly-restore-drill.md`](../docs/runbooks/monthly-restore-drill.md)
 
 ### 16.6 日志策略
 

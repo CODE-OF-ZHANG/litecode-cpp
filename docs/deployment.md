@@ -25,6 +25,7 @@
               └─────────┘  └──────────────────┘
 
   profile=monitoring：  + prometheus + grafana + alertmanager + cadvisor + node-exporter
+  profile=logging：     + loki + promtail（Docker json-file 日志聚合）
   profile=backup：      + backup (每日 03:00 mysqldump + 异地 rclone)
   profile=proxy：       + caddy
 ```
@@ -59,11 +60,17 @@ docker compose --profile proxy up -d
 # 监控（Prometheus + Grafana + Alertmanager + cAdvisor + node-exporter）
 docker compose --profile monitoring up -d
 
+# 日志聚合（Loki + Promtail；默认 Docker logs 仍可用）
+docker compose --profile logging up -d
+
+# 监控 + 日志（Grafana Explore 查询 Loki）
+docker compose --profile monitoring --profile logging up -d
+
 # 数据库备份（每日 03:00 自动跑）
 docker compose --profile backup up -d
 
 # 全部
-docker compose --profile proxy --profile monitoring --profile backup up -d
+docker compose --profile proxy --profile monitoring --profile logging --profile backup up -d
 ```
 
 ### 2.3 销毁重建（清空数据）
@@ -100,7 +107,7 @@ docker compose down -v                 # -v 会删所有 named volumes（含 mys
 | CORS | `CORS_ALLOWED_ORIGINS` |
 | Rate limit | `RATE_LIMIT_REGISTER_PER_MIN=5` 等 |
 | Admin bootstrap | `ADMIN_USERNAME/PASSWORD/EMAIL` |
-| **Compose**（Phase 7）| `WEB_BIND`、`CADDY_*`、`PROMETHEUS_*`、`GRAFANA_*`、`ALERTMANAGER_*`、`CADVISOR_*`、`NODE_EXPORTER_*`、`BACKUP_*` |
+| **Compose**（Phase 7）| `WEB_BIND`、`CADDY_*`、`PROMETHEUS_*`、`GRAFANA_*`、`ALERTMANAGER_*`、`CADVISOR_*`、`NODE_EXPORTER_*`、`LOKI_*`、`BACKUP_*` |
 
 > 12-factor 约定：真实环境变量优先于 `.env` 文件。所以生产环境用
 > `docker compose --env-file prod.env up` 或 k8s ConfigMap 注入。
@@ -193,11 +200,31 @@ docker compose --profile backup up -d backup
 
 ### 5.4 备份演练（每月 1 次）
 
-`docs/runbooks/monthly-restore-drill.md`（TODO v1.2.58+）会自动化：
-1. 启全新 mysql 容器（不同端口）
-2. 灌最新备份
-3. 跑 smoke tests（健康检查 + admin 登录 + 提交一条 AC）
-4. 报告 P95 延迟
+`scripts/restore_drill.sh` 端到端恢复演练（v1.2.7X），自动完成 SPEC §16.5 描述的演练剧本，
+详细 runbook 见 [`docs/runbooks/monthly-restore-drill.md`](runbooks/monthly-restore-drill.md)。
+1. 找到 `${BACKUP_DIR}/litecode_*.sql.gz` 最新一份
+2. 拉起隔离 mysql-drill（端口 3307）→ 灌 backup → 校验表行数 + admin 行存在
+3. 拉起 drill-proxy + drill-web（端口 8081，连 drill-mysql）
+4. smoke：
+   - `GET /api/v1/health` 200
+   - `POST /auth/login` 200（admin/admin123!）
+   - bulk-import `two-sum` 201
+   - 注册测试用户 + 提交 AC → 轮询 `ac`
+   - `GET /api/v1/metrics` 200（v1.2.68 暴露）
+5. 拆 drill 栈（容器 + 临时卷，不污染主栈）
+6. 输出 `DRILL_RESULT PASS=N FAIL=N SKIP=N` 末行
+
+调用方式：
+
+```bash
+# 手动演练（缺前置时 SKIP 不报错）
+bash scripts/restore_drill.sh
+
+# CI / 月度告警（缺前置升级为 FAIL，便于监控）
+RESTORE_STRICT=1 bash scripts/restore_drill.sh
+```
+
+默认 schedule：`0 9 1-7 * 1`（每月第一个周一上午 09:00，与 CI 周一周期对齐）。
 
 ---
 
@@ -256,6 +283,8 @@ MYSQL_HOST=mysql MYSQL_PASSWORD="$MYSQL_ROOT_PASSWORD" \
 | Alertmanager | http://127.0.0.1:9093 | 无 |
 | cAdvisor | http://127.0.0.1:8088 | 无 |
 | node-exporter | http://127.0.0.1:9100/metrics | 无 |
+| Loki（`logging` profile） | http://127.0.0.1:3100 | 无 |
+| Promtail（`logging` profile） | 仅 Docker network :9080 | 无 |
 
 Grafana 启动后自动加载 **LiteCode Phase 9 Overview** 仪表盘（v1.2.69，5 个
 panel 分组 14 个 chart：系统概览 / 判题 P95·P99 / 错误率 / 队列·预热池 /
@@ -289,6 +318,45 @@ scripts/validate_grafana_dashboards.sh
 `litecode_active_sessions` / `litecode_process_start_time_seconds` /
 `litecode_judge_active` 这 5 个从未实现的指标就是栽在没这道 lint 上）；
 (3) 校验 datasources.yml 的 Prometheus DS 必须有 `uid:` 字段。
+
+### 7.1 日志聚合（Loki + Promtail）
+
+应用日志默认已经满足 SPEC §16.6：`LOG_FORMAT=json` 将一行一个 JSON
+对象写到 stdout，Docker `json-file` driver 负责 `docker compose logs` 接管，
+并以 `max-size=10m` / `max-file=3` 做宿主机轮转。这个基础路径不依赖 Loki，
+因此 Loki 暂时不可用不会阻断 web 启动。
+
+需要集中搜索时启用可选 profile：
+
+```bash
+docker compose --profile logging up -d
+# 与 Grafana 一起使用：
+docker compose --profile monitoring --profile logging up -d
+curl http://127.0.0.1:3100/ready
+```
+
+Promtail 通过只读 Docker socket 和只读 `/var/lib/docker/containers` 发现并读取
+`litecode-*` 容器的 json-file 日志，再发送到 Loki。Linux Docker Engine 上这两个
+挂载点必须可读；Docker Desktop/Windows 若 Docker VM 不提供宿主机日志目录，
+请继续使用 `docker compose logs`，或把 Promtail 运行在能读取 Docker daemon
+日志目录的 Linux 节点上。socket 与日志目录均为 `:ro`，Promtail 不暴露宿主端口，
+Loki 默认只绑定 loopback。
+
+Grafana provisioning 会创建固定 UID 为 `loki` 的数据源。打开 Grafana Explore
+后可用以下 LogQL 查询：
+
+```logql
+{container="litecode-web"}
+{container="litecode-web", level="ERROR"} | json
+{compose_service="web"} | json | request_id != ""
+```
+
+`request_id`、`msg` 和应用字段作为日志内容解析，不作为 Loki label，以避免高
+基数标签导致索引膨胀。配置变更后可运行：
+
+```bash
+scripts/validate_log_aggregation.sh
+```
 
 **新增 metric 时**两处同步：先在 `src/app_context_metrics.cpp` 加
 `register_*()` 调用，再在 `scripts/validate_grafana_dashboards.sh` 的
@@ -334,9 +402,17 @@ docker compose exec docker-proxy sh -c 'env | grep -E "^(CONTAINERS|IMAGES|NETWO
 docker run --rm litecode-judge:latest id
 # 期望：uid=1000(judgeuser)
 
-# 5. 日志轮转
-docker inspect litecode-web --format '{{.HostConfig.LogConfig.Config}}'
-# 期望：max-size=10m max-file=3
+# 5. 日志轮转（json-file + 10MB/3 文件）
+scripts/lint.sh logrotate
+
+# 对已启动的全部 profile 容器做 runtime probe
+for cid in $(docker compose \
+    --profile proxy --profile monitoring --profile backup --profile logging \
+    ps -q); do
+    docker inspect "$cid" \
+        --format '{{.Name}} driver={{.HostConfig.LogConfig.Type}} options={{.HostConfig.LogConfig.Config}}'
+done
+# 期望：每个容器均为 driver=json-file、max-size=10m、max-file=3
 
 # 6. CSP 头
 curl -I http://127.0.0.1:8080/ | grep -i content-security-policy
@@ -426,6 +502,30 @@ scripts/validate_grafana_dashboards.sh
 #    等一会刷新面板即可
 ```
 
+### 9.9 Loki 没有日志
+
+**原因**：`logging` profile 未启动、Promtail 无法读取 Docker json-file 目录，
+或 Loki 与 Promtail 不在同一个 `litecode-net` 网络。
+
+**解决**：
+
+```bash
+# 查看两个服务状态和 Promtail 采集错误
+docker compose --profile logging ps
+docker compose --profile logging logs --tail=100 promtail
+
+# 确认 Loki readiness
+docker compose --profile logging exec loki wget -qO- http://127.0.0.1:3100/ready
+
+# 验证配置契约（不启动容器）
+scripts/validate_log_aggregation.sh
+```
+
+Docker Desktop/Windows 不能将 `/var/lib/docker/containers` 映射给 Promtail
+时，Loki profile 会保持不可用；这不影响 `docker compose logs web`，也不影响
+stdout JSON 或 Docker `json-file` 轮转。把聚合栈部署到 Linux Docker Engine，
+或仅使用 Docker logs，是安全的降级路径。
+
 ---
 
 ## 10. 故障排查清单
@@ -439,6 +539,8 @@ scripts/validate_grafana_dashboards.sh
 | Caddy 502 | `docker compose logs caddy` 看后端 health_uri 是否通过 |
 | Prometheus scrape 失败 | `curl http://127.0.0.1:9090/api/v1/targets` 看 job 状态 |
 | Grafana dashboard 空 | `datasource` 选 Prometheus（默认）；F12 console 看 query error |
+| Loki 无日志 | `docker compose --profile logging logs --tail=100 promtail`；再跑 `scripts/validate_log_aggregation.sh` |
+| 日志轮转策略异常 | `scripts/lint.sh logrotate`；再用上方 `docker inspect` 检查运行时 LogConfig |
 
 ---
 
@@ -456,7 +558,11 @@ scripts/validate_grafana_dashboards.sh
 | cadvisor | 0.5 | 256 MB | 无 |
 | node-exporter | 0.25 | 64 MB | 无 |
 | grafana | 0.5 | 256 MB | `grafana-data` |
+| loki (logging) | 0.5 | 256 MB | `loki-data` |
+| promtail (logging) | 0.25 | 128 MB | `promtail-positions` |
 | backup | 0.5 | 256 MB | `backup-data` |
 | **合计（默认 profile）** | **2.0** | **1600 MB** | — |
 | **+ monitoring** | **4.5** | **3.2 GB** | — |
+| **+ logging** | **5.25** | **3.6 GB** | — |
+| **+ monitoring + logging** | **5.25** | **3.6 GB** | — |
 | **+ backup** | **5.0** | **3.5 GB** | — |

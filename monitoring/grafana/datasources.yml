@@ -27,3 +27,13 @@ datasources:
     # basicAuthUser: ""
     # secureJsonData:
     #   basicAuthPassword: ""
+
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    # Loki is enabled by the optional `logging` profile.
+    url: http://loki:3100
+    editable: false
+    jsonData:
+      maxLines: 1000

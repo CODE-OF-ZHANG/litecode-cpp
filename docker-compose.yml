@@ -7,6 +7,8 @@
 # 销毁重建：  docker compose down -v
 # 仅启基础：  docker compose up -d mysql docker-proxy web
 # 启用监控：  docker compose --profile monitoring up -d
+# 启用日志：  docker compose --profile logging up -d
+# 监控+日志： docker compose --profile monitoring --profile logging up -d
 # 启用反向代理： docker compose --profile proxy up -d
 # -------------------------------------------------------------
 # 服务拓扑：
@@ -423,6 +425,61 @@ services:
       retries: 3
     logging: *default-logging
 
+  # ───── 7a. Loki（可选，profile=logging 启用）──────────────
+  # Loki 只保存 Docker json-file 的集中副本；默认部署不拉起它。
+  loki:
+    image: grafana/loki:3.1.1
+    container_name: litecode-loki
+    restart: unless-stopped
+    profiles: ["logging"]
+    command:
+      - "-config.file=/etc/loki/loki-config.yml"
+    ports:
+      - "${LOKI_BIND:-127.0.0.1}:${LOKI_PORT:-3100}:3100"
+    volumes:
+      - ./monitoring/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    networks:
+      - litecode-net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3100/ready | grep -q ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging: *default-logging
+
+  # ───── 7b. Promtail（可选，profile=logging 启用）───────────
+  # 只读 Docker socket + json-file 目录，发现 litecode-* 容器并推送 Loki。
+  promtail:
+    image: grafana/promtail:3.1.1
+    container_name: litecode-promtail
+    restart: unless-stopped
+    profiles: ["logging"]
+    depends_on:
+      loki:
+        condition: service_healthy
+    command:
+      - "-config.file=/etc/promtail/promtail-config.yml"
+    volumes:
+      - ./monitoring/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - promtail-positions:/tmp/positions
+    networks:
+      - litecode-net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+    logging: *default-logging
+
   # ───── 8. 数据库备份（Phase 7 ☆ / SPEC §16.5）────────────────
   # alpine 镜像 + mysql-client + dcron + zstd + rclone，自带 mysqldump
   # 且体积小（~80MB）。默认 24h 一次 + 保留 14 天 + 可选 rclone 异地。
@@ -514,3 +571,7 @@ volumes:
   # mounts break). First-mount auto-creates the volume.
   judge-tmp:
     name: litecode-judge-tmp
+  loki-data:
+    name: litecode-loki-data
+  promtail-positions:
+    name: litecode-promtail-positions
