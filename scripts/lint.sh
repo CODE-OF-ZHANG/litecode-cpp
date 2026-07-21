@@ -17,6 +17,11 @@
 #   9. caddy 双模式自检（Phase 7 ★ v1.2.76：caddy/Caddyfile.{local,prod}
 #      关键环节点 + docker-compose.yml caddy service entrypoint 切换逻辑
 #      + .env.example CADDY_MODE/LITECODE_DOMAIN 文档化）
+#  10. Special Judge 闭环自检（v1.3.1：judge.sh 接线 + admin 3 端点 +
+#      test_admin_special_judge 单测 + audit action enum + runbook）
+#  11. judge_type 扩展自检（v1.3.1+：ignore_case + ignore_all_whitespace
+#      加进 V011 ENUM + compare.sh + judge.sh case 分支 + admin 双端
+#      validator + 单测 + e2e）
 #
 # 用法：
 #   ./scripts/lint.sh                # 全跑
@@ -29,6 +34,8 @@
 #   ./scripts/lint.sh perf_profile   # 只 perf_profile.sh 自检（v1.2.74）
 #   ./scripts/lint.sh backup         # 只 backup.sh 自检（v1.2.75）
 #   ./scripts/lint.sh caddy          # 只 caddy 双模式自检（v1.2.76）
+#   ./scripts/lint.sh special_judge  # 只 Special Judge 闭环自检（v1.3.1）
+#   ./scripts/lint.sh judge_type     # 只 judge_type 扩展自检（v1.3.1+）
 #
 # 退出码：首个失败步骤的退出码（0 = 全过）
 # =============================================================
@@ -578,6 +585,294 @@ do_caddy() {
     ok "caddy 双模式：local=${local_lines}行 / prod=${prod_lines}行 + compose 切换 + runbook 通过"
 }
 
+do_special_judge() {
+    info "[special_judge] v1.3.1 SPJ 闭环自检（admin 3 端点 + judge.sh 接线 + 测试 + runbook）"
+    local judge_sh="${PROJECT_ROOT}/judge/judge.sh"
+    local spj_lib="${PROJECT_ROOT}/judge/lib/spj.sh"
+    local admin_routes="${PROJECT_ROOT}/src/routes/admin_problem_routes.h"
+    local public_routes="${PROJECT_ROOT}/src/routes/problem_routes.h"
+    local audit_repo="${PROJECT_ROOT}/src/db/audit_log_repo.h"
+    local spj_repo="${PROJECT_ROOT}/src/db/special_judge_repo.h"
+    local unit_test="${PROJECT_ROOT}/tests/unit/test_admin_special_judge.cpp"
+    local test_cmake="${PROJECT_ROOT}/tests/CMakeLists.txt"
+    local e2e_judge="${PROJECT_ROOT}/judge/tests/test_judge_e2e.sh"
+    local runbook="${PROJECT_ROOT}/docs/runbooks/special-judge.md"
+
+    # 1. 文件存在性 + 行数 sanity
+    local missing=()
+    for f in "$judge_sh" "$spj_lib" "$admin_routes" "$public_routes" \
+             "$audit_repo" "$spj_repo" "$unit_test" "$test_cmake" \
+             "$e2e_judge" "$runbook"; do
+        [ -f "$f" ] || missing+=("$f")
+    done
+    if [ "${#missing[@]}" -gt 0 ]; then
+        err "v1.3.1 SPJ 闭环依赖文件缺失：${missing[*]}"
+        return 1
+    fi
+
+    # 2. judge.sh 接线关键环节点（SPEC §11 Phase 4 ☆ / §4.3 special）
+    local missing_judge=()
+    grep -qF 'special_judge_source'                "$judge_sh" \
+        || missing_judge+=('judge.sh 读 special_judge_source 字段')
+    grep -qF 'compile_spj'                        "$judge_sh" \
+        || missing_judge+=('judge.sh 调 compile_spj 编译 SPJ')
+    grep -qF 'compare_special_with'               "$judge_sh" \
+        || missing_judge+=('judge.sh 调 compare_special_with 走 special case')
+    grep -qF 'SPECIAL_JUDGE_ENABLED'              "$judge_sh" \
+        || missing_judge+=('judge.sh SPECIAL_JUDGE_ENABLED 开关')
+    grep -qF 'spj_err_for_info'                   "$judge_sh" \
+        || missing_judge+=('judge.sh SPJ compile fail → info 折叠')
+    grep -qF 'spj_stdout_for_info'                "$judge_sh" \
+        || missing_judge+=('judge.sh SPJ stdout → info 折叠')
+    if [ "${#missing_judge[@]}" -gt 0 ]; then
+        err "judge.sh SPJ 接线缺失：${missing_judge[*]}"
+        return 1
+    fi
+
+    # 3. judge/lib/spj.sh lib 三件套
+    local missing_spj_lib=()
+    grep -qE '^compile_spj\(\)'                   "$spj_lib" \
+        || missing_spj_lib+=('compile_spj 函数')
+    grep -qE '^run_spj\(\)'                       "$spj_lib" \
+        || missing_spj_lib+=('run_spj 函数')
+    grep -qE '^compare_special_with\(\)'          "$spj_lib" \
+        || missing_spj_lib+=('compare_special_with 函数')
+    if [ "${#missing_spj_lib[@]}" -gt 0 ]; then
+        err "judge/lib/spj.sh lib 函数缺失：${missing_spj_lib[*]}"
+        return 1
+    fi
+
+    # 4. admin_problem_routes.h 3 端点 + 256KB clamp + 解析路径
+    local missing_admin=()
+    grep -qF 'PUT    /api/v1/admin/problems/:slug/special-judge' "$admin_routes" \
+        || missing_admin+=('PUT 端点声明')
+    grep -qF 'DELETE /api/v1/admin/problems/:slug/special-judge' "$admin_routes" \
+        || missing_admin+=('DELETE 端点声明')
+    grep -qF 'GET    /api/v1/admin/problems/:slug/special-judge' "$admin_routes" \
+        || missing_admin+=('GET 端点声明')
+    grep -qF 'admin_put_special_judge_handler'    "$admin_routes" \
+        || missing_admin+=('admin_put_special_judge_handler 实现')
+    grep -qF 'admin_delete_special_judge_handler' "$admin_routes" \
+        || missing_admin+=('admin_delete_special_judge_handler 实现')
+    grep -qF 'admin_get_special_judge_handler'    "$admin_routes" \
+        || missing_admin+=('admin_get_special_judge_handler 实现')
+    grep -qF 'kMaxSpjSourceLenAdmin = 256 * 1024' "$admin_routes" \
+        || missing_admin+=('admin 端 256KB clamp (kMaxSpjSourceLenAdmin)')
+    grep -qF 'server.put(R"(/api/v1/admin/problems/([^/]+)/special-judge)"' "$admin_routes" \
+        || missing_admin+=('server.put 路由注册')
+    grep -qF 'server.del(R"(/api/v1/admin/problems/([^/]+)/special-judge)"' "$admin_routes" \
+        || missing_admin+=('server.del 路由注册')
+    grep -qF 'server.get(R"(/api/v1/admin/problems/([^/]+)/special-judge)"' "$admin_routes" \
+        || missing_admin+=('server.get 路由注册')
+    if [ "${#missing_admin[@]}" -gt 0 ]; then
+        err "admin_problem_routes.h SPJ 端点缺失：${missing_admin[*]}"
+        return 1
+    fi
+
+    # 5. problem_routes.h 公共 detail 透 judge_type + has_special_judge
+    local missing_public=()
+    grep -qF '"judge_type", s.judge_type'         "$public_routes" \
+        || missing_public+=('serialize_sample 透 judge_type')
+    grep -qF 'has_special_judge'                  "$public_routes" \
+        || missing_public+=('has_special_judge 字段')
+    grep -qF 'exists_for_problem'                 "$public_routes" \
+        || missing_public+=('公共 detail 用 exists_for_problem 探测')
+    if [ "${#missing_public[@]}" -gt 0 ]; then
+        err "problem_routes.h SPJ 字段透出缺失：${missing_public[*]}"
+        return 1
+    fi
+
+    # 6. audit_log_repo.h 2 个新 action enum
+    local missing_audit=()
+    grep -qF 'kActionProblemSpjUpsert  = "problem.spj_upsert"' "$audit_repo" \
+        || missing_audit+=('kActionProblemSpjUpsert')
+    grep -qF 'kActionProblemSpjRemove  = "problem.spj_remove"' "$audit_repo" \
+        || missing_audit+=('kActionProblemSpjRemove')
+    if [ "${#missing_audit[@]}" -gt 0 ]; then
+        err "audit_log_repo.h SPJ action 缺失：${missing_audit[*]}"
+        return 1
+    fi
+
+    # 7. tests/unit/test_admin_special_judge.cpp 单测 + CMakeLists.txt 注册
+    local missing_test=()
+    grep -qF 'AdminSpjConstants'                  "$unit_test" \
+        || missing_test+=('AdminSpjConstants 测试套件')
+    grep -qF 'AdminSpjAuditAction'                "$unit_test" \
+        || missing_test+=('AdminSpjAuditAction 测试套件')
+    grep -qF 'AdminSpjValidator'                  "$unit_test" \
+        || missing_test+=('AdminSpjValidator 测试套件')
+    grep -qF 'kMaxSpjSourceLenAdmin'              "$unit_test" \
+        || missing_test+=('admin 端 clamp 镜像常量')
+    grep -qF 'add_executable(test_admin_special_judge' "$test_cmake" \
+        || missing_test+=('CMakeLists.txt add_executable')
+    grep -qF 'add_test(NAME admin_special_judge'  "$test_cmake" \
+        || missing_test+=('CMakeLists.txt add_test 注册')
+    if [ "${#missing_test[@]}" -gt 0 ]; then
+        err "tests/unit SPJ 单测缺失：${missing_test[*]}"
+        return 1
+    fi
+
+    # 8. judge/tests/test_judge_e2e.sh 升级 [special] 占位 → 真用 SPJ
+    local missing_e2e=()
+    grep -qF 'special_judge_source'              "$e2e_judge" \
+        || missing_e2e+=('test_judge_e2e.sh 喂 special_judge_source')
+    grep -qF 'compile_spj'                        "$e2e_judge" \
+        || missing_e2e+=('test_judge_e2e.sh SPJ AC 用例')
+    if [ "${#missing_e2e[@]}" -gt 0 ]; then
+        err "judge/tests/test_judge_e2e.sh SPJ 闭环用例缺失：${missing_e2e[*]}"
+        return 1
+    fi
+
+    # 9. 行数 sanity（防退化）
+    local admin_lines judge_sh_lines unit_test_lines e2e_judge_lines runbook_lines
+    admin_lines="$(wc -l < "$admin_routes")"
+    judge_sh_lines="$(wc -l < "$judge_sh")"
+    unit_test_lines="$(wc -l < "$unit_test")"
+    e2e_judge_lines="$(wc -l < "$e2e_judge")"
+    runbook_lines="$(wc -l < "$runbook")"
+    if [ "${unit_test_lines}" -lt 200 ] || [ "${runbook_lines}" -lt 100 ] \
+       || [ "${e2e_judge_lines}" -lt 380 ]; then
+        err "SPJ 文件行数异常：unit=${unit_test_lines} / runbook=${runbook_lines} / e2e=${e2e_judge_lines}（疑似退化）"
+        return 1
+    fi
+
+    ok "special_judge 闭环：admin_routes=${admin_lines}行 / judge.sh=${judge_sh_lines}行 / unit=${unit_test_lines}行 / e2e=${e2e_judge_lines}行 / runbook=${runbook_lines}行 通过"
+}
+
+do_judge_type() {
+    info "[judge_type] v1.3.1+ judge_type 扩展自检（ignore_case + ignore_all_whitespace 落地）"
+    local compare_sh="${PROJECT_ROOT}/judge/lib/compare.sh"
+    local judge_sh="${PROJECT_ROOT}/judge/judge.sh"
+    local bulk_routes="${PROJECT_ROOT}/src/routes/admin_bulk_import_routes.h"
+    local admin_routes="${PROJECT_ROOT}/src/routes/admin_problem_routes.h"
+    local v011_sql="${PROJECT_ROOT}/db/migrations/V011__add_more_judge_types.sql"
+    local unit_test="${PROJECT_ROOT}/judge/tests/test_common_unit.sh"
+    local e2e_judge="${PROJECT_ROOT}/judge/tests/test_judge_e2e.sh"
+    local judge_readme="${PROJECT_ROOT}/judge/README.md"
+    local problems_readme="${PROJECT_ROOT}/problems/README.md"
+
+    # 1. 文件存在性
+    local missing=()
+    for f in "$compare_sh" "$judge_sh" "$bulk_routes" "$admin_routes" \
+             "$v011_sql" "$unit_test" "$e2e_judge" \
+             "$judge_readme" "$problems_readme"; do
+        [ -f "$f" ] || missing+=("$f")
+    done
+    if [ "${#missing[@]}" -gt 0 ]; then
+        err "v1.3.1+ judge_type 扩展依赖文件缺失：${missing[*]}"
+        return 1
+    fi
+
+    # 2. compare.sh 新增函数
+    local missing_cmp=()
+    grep -qE '^compare_ignore_case\(\)'               "$compare_sh" \
+        || missing_cmp+=('compare_ignore_case 函数')
+    grep -qE '^compare_ignore_all_whitespace\(\)'     "$compare_sh" \
+        || missing_cmp+=('compare_ignore_all_whitespace 函数')
+    # ASCII 归一化必须用 LC_ALL=C tr (locale 不敏感)
+    grep -qF "LC_ALL=C tr '[:upper:][:lower:]' '[:lower:][:upper:]'" "$compare_sh" \
+        || missing_cmp+=('LC_ALL=C tr ASCII 归一化')
+    if [ "${#missing_cmp[@]}" -gt 0 ]; then
+        err "compare.sh 新函数缺失：${missing_cmp[*]}"
+        return 1
+    fi
+
+    # 3. judge.sh step 3 case 分支新增
+    local missing_judge=()
+    grep -qF 'ignore_case)' "$judge_sh" \
+        || missing_judge+=('judge.sh ignore_case case 分支')
+    grep -qF 'ignore_all_whitespace)' "$judge_sh" \
+        || missing_judge+=('judge.sh ignore_all_whitespace case 分支')
+    grep -qF 'compare_ignore_case' "$judge_sh" \
+        || missing_judge+=('judge.sh 调 compare_ignore_case')
+    grep -qF 'compare_ignore_all_whitespace' "$judge_sh" \
+        || missing_judge+=('judge.sh 调 compare_ignore_all_whitespace')
+    if [ "${#missing_judge[@]}" -gt 0 ]; then
+        err "judge.sh 新分支缺失：${missing_judge[*]}"
+        return 1
+    fi
+
+    # 4. admin 双端 validator 接受 6 值
+    local missing_validator=()
+    for needle in 'ignore_case' 'ignore_all_whitespace' \
+                  'judge_type must be one of: exact, ignore_trailing,'; do
+        if ! grep -qF "$needle" "$bulk_routes"; then
+            missing_validator+=("admin_bulk_import_routes 缺 ${needle}")
+        fi
+        if ! grep -qF "$needle" "$admin_routes"; then
+            missing_validator+=("admin_problem_routes 缺 ${needle}")
+        fi
+    done
+    if [ "${#missing_validator[@]}" -gt 0 ]; then
+        err "admin validator 扩展缺失：${missing_validator[*]}"
+        return 1
+    fi
+
+    # 5. V011 migration 包含 ENUM 扩展 + 6 个值
+    local missing_sql=()
+    grep -qF 'V011__add_more_judge_types' "$v011_sql" \
+        || missing_sql+=('V011 文件名错误（应 V011__add_more_judge_types.sql）')
+    grep -qF "'ignore_case'" "$v011_sql" \
+        || missing_sql+=('V011 ENUM 缺 ignore_case')
+    grep -qF "'ignore_all_whitespace'" "$v011_sql" \
+        || missing_sql+=('V011 ENUM 缺 ignore_all_whitespace')
+    grep -qF "MODIFY COLUMN judge_type" "$v011_sql" \
+        || missing_sql+=('V011 应 ALTER MODIFY COLUMN judge_type')
+    grep -qF "INSERT INTO schema_migrations (version) VALUES ('V011')" "$v011_sql" \
+        || missing_sql+=('V011 schema_migrations 写入缺失')
+    if [ "${#missing_sql[@]}" -gt 0 ]; then
+        err "V011 migration 缺失：${missing_sql[*]}"
+        return 1
+    fi
+
+    # 6. unit + e2e 测试覆盖
+    local missing_test=()
+    grep -qF 'compare_ignore_case' "$unit_test" \
+        || missing_test+=('test_common_unit.sh 缺 compare_ignore_case')
+    grep -qF 'compare_ignore_all_whitespace' "$unit_test" \
+        || missing_test+=('test_common_unit.sh 缺 compare_ignore_all_whitespace')
+    grep -qF 'guard_or_skip "ignore_case"' "$e2e_judge" \
+        || missing_test+=('test_judge_e2e.sh 缺 [ignore_case]')
+    grep -qF 'guard_or_skip "ignore_all_whitespace"' "$e2e_judge" \
+        || missing_test+=('test_judge_e2e.sh 缺 [ignore_all_whitespace]')
+    if [ "${#missing_test[@]}" -gt 0 ]; then
+        err "测试用例缺失：${missing_test[*]}"
+        return 1
+    fi
+
+    # 7. README 文档化 6 个 judge_type
+    local missing_doc=()
+    if ! grep -qF 'ignore_case' "$judge_readme"; then
+        missing_doc+=('judge/README.md 缺 ignore_case 描述')
+    fi
+    if ! grep -qF 'ignore_all_whitespace' "$judge_readme"; then
+        missing_doc+=('judge/README.md 缺 ignore_all_whitespace 描述')
+    fi
+    if ! grep -qF 'ignore_case' "$problems_readme"; then
+        missing_doc+=('problems/README.md 缺 ignore_case 描述')
+    fi
+    if ! grep -qF 'ignore_all_whitespace' "$problems_readme"; then
+        missing_doc+=('problems/README.md 缺 ignore_all_whitespace 描述')
+    fi
+    if [ "${#missing_doc[@]}" -gt 0 ]; then
+        err "README 同步缺失：${missing_doc[*]}"
+        return 1
+    fi
+
+    # 8. 行数 sanity
+    local compare_lines judge_sh_lines v011_lines
+    compare_lines="$(wc -l < "$compare_sh")"
+    judge_sh_lines="$(wc -l < "$judge_sh")"
+    v011_lines="$(wc -l < "$v011_sql")"
+    if [ "${compare_lines}" -lt 180 ] || [ "${v011_lines}" -lt 30 ] \
+       || [ "${judge_sh_lines}" -lt 600 ]; then
+        err "judge_type 文件行数异常：compare=${compare_lines} / judge.sh=${judge_sh_lines} / v011=${v011_lines}"
+        return 1
+    fi
+
+    ok "judge_type 扩展：compare.sh=${compare_lines}行 / judge.sh=${judge_sh_lines}行 / V011=${v011_lines}行 / admin 双端 validator + 单测 + e2e 通过"
+}
+
 # ───── 入口 ────────────────────────────────────────────
 SUBCMD="${1:-all}"
 case "$SUBCMD" in
@@ -591,6 +886,8 @@ case "$SUBCMD" in
         do_perf_profile
         do_backup
         do_caddy
+        do_special_judge
+        do_judge_type
         echo ""
         ok "全部 lint 通过"
         ;;
@@ -604,8 +901,10 @@ case "$SUBCMD" in
     perf_profile)  do_perf_profile ;;
     backup)        do_backup ;;
     caddy)         do_caddy ;;
+    special_judge) do_special_judge ;;
+    judge_type)    do_judge_type ;;
     *)
-        echo "用法: $0 {all|shellcheck|hadolint|compose|logrotate|alerting|restore_drill|perf_profile|backup|caddy}" >&2
+        echo "用法: $0 {all|shellcheck|hadolint|compose|logrotate|alerting|restore_drill|perf_profile|backup|caddy|special_judge|judge_type}" >&2
         exit 64
         ;;
 esac

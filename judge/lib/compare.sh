@@ -4,10 +4,12 @@
 # =============================================================
 # SPEC §7.1.b / §7.4
 # 提供：
-#   - compare_exact <out> <expected>           完全相同（已归一化的字节相等）
-#   - compare_ignore_trailing <out> <expected> 行级 rstrip 后相等
-#   - compare_float_eps <out> <expected> <eps> 浮点 epsilon
-#   - compare_special <out> <expected>          special judge（v1.3 占位）
+#   - compare_exact               <out> <expected>       完全相同（已归一化的字节相等）
+#   - compare_ignore_trailing     <out> <expected>       行级 rstrip 后相等
+#   - compare_ignore_case         <out> <expected>       ASCII 大小写不敏感（v1.3.1+）
+#   - compare_ignore_all_whitespace <out> <expected>     行内多空格折叠 + 空行忽略（v1.3.1+）
+#   - compare_float_eps           <out> <expected> <eps> 浮点 epsilon
+#   - compare_special             <out> <expected>       special judge（v1.3 闭环 v1.3.1）
 # 全部返回：0 相等，1 不等
 # =============================================================
 
@@ -44,6 +46,66 @@ compare_ignore_trailing() {
     # rstrip 去掉 [ \t]+ 在每行末尾
     sed -E 's/[ \t]+$//' "${a}" > "${tmp_a}"
     sed -E 's/[ \t]+$//' "${b}" > "${tmp_b}"
+    local rc=1
+    if cmp -s "${tmp_a}" "${tmp_b}"; then
+        rc=0
+    fi
+    rm -f "${tmp_a}" "${tmp_b}"
+    return "${rc}"
+}
+
+# ignore_case — ASCII 大小写不敏感（v1.3.1+ / SPEC §4.3 / §11 Phase 4 ☆ 扩展）
+#
+# 语义：把所有 ASCII a-z / A-Z 归一化为大写后逐字节 cmp（cmp -i 等价），
+#       其它字节（含 UTF-8 多字节字符 / 数字 / 符号 / 中文等）按原样 cmp。
+#       与主流 OJ（Codeforces / AtCoder / LeetCode）的 "case-insensitive"
+#       输出一致：用户写 "Hello" 与期望 "HELLO" / "hello" 均判 AC。
+#
+# 实现细节：
+#   1) 用 LC_ALL=C tr '[:upper:][:lower:]' '[:lower:][:upper:]' 做字母大小写翻转；
+#      tr 在 C locale 下严格按 ASCII 表，不会受 locale 影响。
+#   2) 仅翻转一次（不是逐字符 tolower），效率与 tr 等价；不用 sed y/ 因为它
+#      在非 GNU sed 上行为差异。
+#   3) 输出行结构 / 空白 / 行数变化 → 仍判 1（不等）；ignore_case 只对字母
+#      做归一化，不处理空白 / 行数差异（那是 ignore_trailing /
+#      ignore_all_whitespace 的语义）。
+compare_ignore_case() {
+    local a="$1" b="$2"
+    local tmp_a tmp_b
+    tmp_a="$(mktemp -p /tmp judge-ic-XXXXXX)"
+    tmp_b="$(mktemp -p /tmp judge-ic-XXXXXX)"
+    LC_ALL=C tr '[:upper:][:lower:]' '[:lower:][:upper:]' < "${a}" > "${tmp_a}"
+    LC_ALL=C tr '[:upper:][:lower:]' '[:lower:][:upper:]' < "${b}" > "${tmp_b}"
+    local rc=1
+    if cmp -s "${tmp_a}" "${tmp_b}"; then
+        rc=0
+    fi
+    rm -f "${tmp_a}" "${tmp_b}"
+    return "${rc}"
+}
+
+# ignore_all_whitespace — 行内多空格折叠 + 空行忽略（v1.3.1+ / SPEC §4.3）
+#
+# 语义：把每行 [ \t]+ 折叠成单空格（保留行结构），并删除空行（只剩
+#       \n 或全空白字符的行），然后 cmp。比 ignore_trailing 严格：
+#       ignore_trailing 只 rstrip 末尾空白，"a  b\n" 期望 "ab\n" 仍 PE；
+#       ignore_all_whitespace 把行内多空格折叠为单空格后两边一致才算 AC。
+#
+# 实现细节：
+#   1) sed -E 's/[ \t]+/ /g' — 行内多空格折叠为单空格（不动行尾）
+#   2) sed '/^[[:space:]]*$/d' — 删除空行 / 全空白行
+#   3) cmp -s — 字节级比较
+#   4) 不归一化 tab 为 space（保留 \t 与 " " 的区别），但 [ \t]+ 折叠后
+#      tab 与 space 都折叠为单 space，行尾的 [\t ]+ 也被折叠 → 与 ignore_trailing
+#      在"末尾空白"语义上重叠但更宽松（行内也折叠）。
+#   5) 不处理 BOM / CRLF（已由 judge.sh Section C 落盘前归一化）。
+compare_ignore_all_whitespace() {
+    local a="$1" b="$2"
+    local tmp_a tmp_b
+    tmp_a="$(mktemp -p /tmp judge-iaw-XXXXXX)"
+    tmp_b="$(mktemp -p /tmp judge-iaw-XXXXXX)"
+    sed -E 's/[ \t]+/ /g; /^[[:space:]]*$/d' "${a}" > "${tmp_a}"
+    sed -E 's/[ \t]+/ /g; /^[[:space:]]*$/d' "${b}" > "${tmp_b}"
     local rc=1
     if cmp -s "${tmp_a}" "${tmp_b}"; then
         rc=0

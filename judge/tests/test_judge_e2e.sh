@@ -347,17 +347,123 @@ int main(){ printf("3.14159 3.141593\n"); return 0; }'
 fi
 
 # ─────────────────────────────────────────────────────────────
-# [special] v1.3 占位
-# v1.2.52: compare.sh:148 改成 "无 SPJ 时判 WA"（让 operator 看到题没挂 SPJ），
-# 不是 SE。测试期望随之改为 wa。
+# [ignore_case] v1.3.1+ — SPEC §4.3 judge_type 扩展
+# 用户写 "Hello World" 与期望 "HELLO world" → AC；
+# 写 "abc123" 与期望 "abc124" → WA（数字差异）。
+# ─────────────────────────────────────────────────────────────
+if guard_or_skip "ignore_case"; then
+    code='#include <iostream>
+int main(){ std::cout << "Hello World\n"; return 0; }'
+    cases='[{"input":"","expected_output":"HELLO world","judge_type":"ignore_case","float_epsilon":1e-6}]'
+    make_task "${code}" "${cases}"
+    out="$(run_judge "${TEST_ROOT}/task.json")"
+    expect_status "$(get_status "${out}")" "ac" "ignore_case 大小写归一化 → AC"
+
+    code='#include <iostream>
+int main(){ std::cout << "abc123\n"; return 0; }'
+    cases='[{"input":"","expected_output":"abc124","judge_type":"ignore_case","float_epsilon":1e-6}]'
+    make_task "${code}" "${cases}"
+    out="$(run_judge "${TEST_ROOT}/task.json")"
+    expect_status "$(get_status "${out}")" "wa" "ignore_case 非字母差异 → WA"
+fi
+
+# ─────────────────────────────────────────────────────────────
+# [ignore_all_whitespace] v1.3.1+ — SPEC §4.3 judge_type 扩展
+# 用户写 "a  b\tc\n\nd e\n" 与期望 "a b c\nd e\n" → AC；
+# 内容不同（"alpha" vs "gamma"）→ WA。
+# ─────────────────────────────────────────────────────────────
+if guard_or_skip "ignore_all_whitespace"; then
+    code='#include <iostream>
+int main(){ std::cout << "a  b\tc\n\nd e\n"; return 0; }'
+    cases='[{"input":"","expected_output":"a b c\nd e\n","judge_type":"ignore_all_whitespace","float_epsilon":1e-6}]'
+    make_task "${code}" "${cases}"
+    out="$(run_judge "${TEST_ROOT}/task.json")"
+    expect_status "$(get_status "${out}")" "ac" "ignore_all_whitespace 行内多空格折叠 + 空行忽略 → AC"
+
+    code='#include <iostream>
+int main(){ std::cout << "alpha\nbeta\n"; return 0; }'
+    cases='[{"input":"","expected_output":"alpha\ngamma\n","judge_type":"ignore_all_whitespace","float_epsilon":1e-6}]'
+    make_task "${code}" "${cases}"
+    out="$(run_judge "${TEST_ROOT}/task.json")"
+    expect_status "$(get_status "${out}")" "wa" "ignore_all_whitespace 内容不同 → WA"
+fi
+
+# ─────────────────────────────────────────────────────────────
+# [special] v1.3.1 — 闭合 SPJ 端到端 (SPEC §11 Phase 4 ☆ / §4.3)
+#
+# 三层断言（v1.2.52 占位只验"无 SPJ → WA"）：
+#   a) 无 SPJ → WA（保留 v1.2.52 行为作为回归保险）
+#   b) 有 SPJ + 正解 → AC（验证 compile_spj + compare_special_with
+#      三参数顺序 <bin> <input> <expected> <actual> + rc=0 走通）
+#   c) SPJ 编译失败 → 整 submission SE（验证 SPJ_COMPILE_RC != 0 时
+#      每个 special case 都 emit SE + FINAL_STATUS='se'）
+# judge.sh section "判 Special Judge 编译" 已有完整接线（line 233-260 +
+# step 3 case special 分支 line 475-554）。
 # ─────────────────────────────────────────────────────────────
 if guard_or_skip "special"; then
+    # (a) 无 SPJ — 保留 v1.2.52 行为
     code='#include <iostream>
 int main() { std::cout << "anything\n"; return 0; }'
     cases='[{"input":"","expected_output":"anything","judge_type":"special","float_epsilon":1e-6}]'
     make_task "${code}" "${cases}"
     out="$(run_judge "${TEST_ROOT}/task.json")"
     expect_status "$(get_status "${out}")" "wa" "special judge w/o SPJ → WA (compare.sh:148)"
+
+    # (b) 有 SPJ + 正解 → AC。
+    # SPJ 始终 AC（读三个文件，expected == actual 时返 0），
+    # 用户代码输出 "hello" 匹配 expected="hello"。
+    spj_always_ac='// minimal SPJ: read three file paths, byte-compare
+#include <cstdio>
+int main(int argc, char** argv) {
+    if (argc != 4) return 2;
+    FILE* e = std::fopen(argv[2], "rb");
+    FILE* a = std::fopen(argv[3], "rb");
+    if (!e || !a) return 2;
+    int c1, c2;
+    do { c1 = std::fgetc(e); c2 = std::fgetc(a);
+         if (c1 != c2) { std::fclose(e); std::fclose(a); return 1; }
+    } while (c1 != EOF && c2 != EOF);
+    std::fclose(e); std::fclose(a);
+    return 0;
+}'
+    code='#include <iostream>
+int main() { std::cout << "hello\n"; return 0; }'
+    cases='[{"input":"","expected_output":"hello","judge_type":"special","float_epsilon":1e-6}]'
+    jq -n \
+        --arg code "${code}" \
+        --arg spj  "${spj_always_ac}" \
+        --argjson cases "${cases}" \
+        '{
+            submission_id: 42, language: "cpp", code: $code,
+            special_judge_source: $spj, special_judge_language: "cpp",
+            time_limit_ms: 1000, memory_limit_mb: 128,
+            compile_timeout_ms: 10000, run_hard_timeout_ms: 30000,
+            output_limit_bytes: 16777216,
+            test_cases: $cases
+        }' > "${TEST_ROOT}/task.json"
+    out="$(run_judge "${TEST_ROOT}/task.json")"
+    expect_status "$(get_status "${out}")" "ac" "special judge with SPJ + 正解 → AC (compile_spj + compare_special_with rc=0)"
+
+    # (c) SPJ 编译失败 → 整 submission SE。
+    # 故意给一个 g++ 编译失败的 SPJ：主函数签名错（缺分号）。
+    spj_compile_fail='this is not valid C++; int main( { return 0; }'
+    code='#include <iostream>
+int main() { std::cout << "hello\n"; return 0; }'
+    cases='[{"input":"","expected_output":"hello","judge_type":"special","float_epsilon":1e-6}]'
+    jq -n \
+        --arg code "${code}" \
+        --arg spj  "${spj_compile_fail}" \
+        --argjson cases "${cases}" \
+        '{
+            submission_id: 42, language: "cpp", code: $code,
+            special_judge_source: $spj, special_judge_language: "cpp",
+            time_limit_ms: 1000, memory_limit_mb: 128,
+            compile_timeout_ms: 10000, run_hard_timeout_ms: 30000,
+            output_limit_bytes: 16777216,
+            test_cases: $cases
+        }' > "${TEST_ROOT}/task.json"
+    out="$(run_judge "${TEST_ROOT}/task.json")"
+    expect_status "$(get_status "${out}")" "se" "SPJ 编译失败 → 整 submission SE (compile_spj rc != 0)"
 fi
 
 # ─────────────────────────────────────────────────────────────

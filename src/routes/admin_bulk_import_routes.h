@@ -301,10 +301,12 @@ inline std::optional<std::string> require_judge_type(
     const std::string v = body[field].get<std::string>();
     if (v.empty()) return default_value;
     if (v != "exact" && v != "ignore_trailing" &&
-        v != "float_eps" && v != "special") {
+        v != "float_eps" && v != "special" &&
+        v != "ignore_case" && v != "ignore_all_whitespace") {
         failure.stage   = "validate";
         failure.reason  = "judge_type must be one of: exact, ignore_trailing, "
-                          "float_eps, special";
+                          "float_eps, special, ignore_case, "
+                          "ignore_all_whitespace";
         failure.details = {{"field", field},
                            {"value", truncate_for_envelope(v)}};
         return std::nullopt;

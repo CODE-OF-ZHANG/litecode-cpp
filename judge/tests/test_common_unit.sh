@@ -124,6 +124,44 @@ printf "alpha\nbeta\n" > "${work}/a"
 printf "alpha\ngamma\n" > "${work}/b"
 compare_ignore_trailing "${work}/a" "${work}/b" && fail "ignore_trailing content differ" || ok "ignore_trailing content differ"
 
+# ignore_case: 大小写不同 → 视为相等（v1.3.1+）
+printf "Hello World\n" > "${work}/a"
+printf "HELLO world\n" > "${work}/b"
+compare_ignore_case "${work}/a" "${work}/b" && ok "ignore_case ASCII upper/lower" || fail "ignore_case ASCII upper/lower"
+
+# ignore_case: 完全相同
+printf "abc123\n" > "${work}/a"
+printf "abc123\n" > "${work}/b"
+compare_ignore_case "${work}/a" "${work}/b" && ok "ignore_case identical" || fail "ignore_case identical"
+
+# ignore_case: 非字母差异（如数字 / 符号）→ 不等
+printf "abc123\n" > "${work}/a"
+printf "abc124\n" > "${work}/b"
+compare_ignore_case "${work}/a" "${work}/b" && fail "ignore_case numeric diff (should fail)" || ok "ignore_case numeric diff"
+
+# ignore_case: 非 ASCII 字符按原样 cmp（UTF-8 多字节字节序列比对）
+printf "你好\n" > "${work}/a"
+printf "你好\n" > "${work}/b"
+compare_ignore_case "${work}/a" "${work}/b" && ok "ignore_case UTF-8 identical" || fail "ignore_case UTF-8 identical"
+printf "你好\n" > "${work}/a"
+printf "再见\n" > "${work}/b"
+compare_ignore_case "${work}/a" "${work}/b" && fail "ignore_case UTF-8 diff (should fail)" || ok "ignore_case UTF-8 diff"
+
+# ignore_all_whitespace: 行内多空格折叠 + 空行忽略 → 视为相等（v1.3.1+）
+printf "a  b\tc\n\nd e\n" > "${work}/a"
+printf "a b c\nd e\n" > "${work}/b"
+compare_ignore_all_whitespace "${work}/a" "${work}/b" && ok "ignore_all_whitespace fold + blank-line drop" || fail "ignore_all_whitespace fold + blank-line drop"
+
+# ignore_all_whitespace: 末尾多空格（与 ignore_trailing 重叠部分）
+printf "hello\n" > "${work}/a"
+printf "hello  \n" > "${work}/b"
+compare_ignore_all_whitespace "${work}/a" "${work}/b" && ok "ignore_all_whitespace trailing fold" || fail "ignore_all_whitespace trailing fold"
+
+# ignore_all_whitespace: 内容不同
+printf "alpha\nbeta\n" > "${work}/a"
+printf "alpha\ngamma\n" > "${work}/b"
+compare_ignore_all_whitespace "${work}/a" "${work}/b" && fail "ignore_all_whitespace content differ" || ok "ignore_all_whitespace content differ"
+
 # float_eps: 相等
 printf "1.0 2.0 3.0\n" > "${work}/a"
 printf "1.0000001 2.0 3.0\n" > "${work}/b"

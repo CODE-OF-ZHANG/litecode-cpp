@@ -472,6 +472,39 @@ for ((i = 0; i < TC_COUNT; i++)); do
                 "${i}" "${CASE_STATUS}" "${TIME_MS}" "${MEM_KB}" \
                 >> "${JUDGE_TMP}/case_results.jsonl"
             ;;
+        ignore_case)
+            # ASCII 大小写不敏感（v1.3.1+ / SPEC §4.3 扩展）：
+            # compare_ignore_case 把 a-z / A-Z 翻转对调后逐字节 cmp，
+            # "Hello" / "HELLO" / "hello" 都判 AC；其它字节原样 cmp。
+            # 与 float_eps / special 语义正交，不读 float_epsilon。
+            if compare_ignore_case "${OUT_FILE}" "${EXPECTED_FILE}"; then
+                CASE_STATUS="ac"
+            else
+                FINAL_STATUS="wa"
+                FAILED_CASE_INDEX="${i}"
+                CASE_STATUS="wa"
+            fi
+            printf '{"index":%s,"status":"%s","time_ms":%s,"mem_kb":%s,"info":null}\n' \
+                "${i}" "${CASE_STATUS}" "${TIME_MS}" "${MEM_KB}" \
+                >> "${JUDGE_TMP}/case_results.jsonl"
+            ;;
+        ignore_all_whitespace)
+            # 行内多空格折叠 + 空行忽略（v1.3.1+ / SPEC §4.3 扩展）：
+            # compare_ignore_all_whitespace 把每行 [ \t]+ 折叠为单空格 +
+            # 删除空行后 cmp。"a  b\n" 与期望 "a b\n" 判 AC，行尾多空格
+            # 也归一化（与 ignore_trailing 重叠）。不归一化 BOM/CRLF（上游
+            # judge.sh Section C 已处理）。
+            if compare_ignore_all_whitespace "${OUT_FILE}" "${EXPECTED_FILE}"; then
+                CASE_STATUS="ac"
+            else
+                FINAL_STATUS="wa"
+                FAILED_CASE_INDEX="${i}"
+                CASE_STATUS="wa"
+            fi
+            printf '{"index":%s,"status":"%s","time_ms":%s,"mem_kb":%s,"info":null}\n' \
+                "${i}" "${CASE_STATUS}" "${TIME_MS}" "${MEM_KB}" \
+                >> "${JUDGE_TMP}/case_results.jsonl"
+            ;;
         special)
             # ─── Special Judge 调度（SPEC §11 Phase 4 ☆ / §4.3）───
             # 三个分支：

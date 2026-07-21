@@ -96,6 +96,7 @@
 #include "../db/audit_log_repo.h"               // audit_log_repo::record + kActionProblem*
 #include "../db/connection_pool.h"              // ConnectionPool
 #include "../db/problem_repo.h"                 // problem_repo::create / update / soft_delete / find_by_*
+#include "../db/special_judge_repo.h"           // special_judge_repo::find_by_problem_id / upsert / remove_by_problem_id (v1.3.1)
 #include "../db/tag_repo.h"                     // tag_repo::find_or_create_many / replace / list_tags_for_problem
 #include "../db/test_case_repo.h"               // test_case_repo::list_samples_for_problem / replace_for_problem
 #include "../db/problem_revisions_repo.h"      // problem_revisions_repo::record_best_effort (v1.2.12)
@@ -170,10 +171,12 @@ inline std::optional<std::string> require_judge_type(
     const std::string v = body[field].get<std::string>();
     if (v.empty()) return default_value;
     if (v != "exact" && v != "ignore_trailing" &&
-        v != "float_eps" && v != "special") {
+        v != "float_eps" && v != "special" &&
+        v != "ignore_case" && v != "ignore_all_whitespace") {
         send_error(res, 400, ErrorCode::INVALID_INPUT,
                    "judge_type must be one of: exact, ignore_trailing, "
-                   "float_eps, special",
+                   "float_eps, special, ignore_case, "
+                   "ignore_all_whitespace",
                    {{"field", field},
                     {"value", truncate_for_envelope(v)}});
         return std::nullopt;
@@ -1128,6 +1131,411 @@ inline void admin_delete_problem_handler(
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+//  PUT /api/v1/admin/problems/:slug/special-judge   (v1.3.1 — SPJ 闭环)
+//
+//  SPEC §11 Phase 4 ☆ + §7.1 judge_type='special':
+//    admin uploads the C++ source that implements the problem's
+//    custom comparison. The source is stored in
+//    `problem_special_judges` (V010) keyed by problem_id (PK + FK
+//    ON DELETE CASCADE). judge.sh reads task.json's
+//    `special_judge_source` and compiles / invokes it per case.
+//
+//  Wire flow:
+//    1) require_admin
+//    2) consume_rate_limit (admin.write)
+//    3) extract_slug_from_admin_path (400 on bad shape)
+//    4) parse_json_body → require_string(source) + optional language
+//       - source: 1..256KB (kMaxSpjSourceLenAdmin — tighter than the
+//         repo's 16MB ceiling because admin uploads are typically
+//         tiny; 256KB caps compile time at g++ < 5s comfortably under
+//         the 10s compile_timeout)
+//       - language: defaults to "cpp" (only C++ today; the judge
+//         image is g++/gcc-only)
+//    5) problem_repo::find_by_slug → 404 if not live
+//    6) special_judge_repo::upsert(problem_id, source, language)
+//       - throws on FK violation (problem gone) → 404
+//       - throws on validation → 400
+//    7) audit_log_repo::record (action=problem.spj_upsert,
+//       payload={source_bytes, language})
+//    8) send_success 200 + {problem_id, source_bytes, language,
+//       updated_at}
+//
+//  Why we re-fetch the row after upsert: the repo doesn't return
+//  updated_at (the ON UPDATE CURRENT_TIMESTAMP write is fire-and-forget).
+//  We issue a follow-up find_by_problem_id to surface the post-update
+//  timestamp in the response — gives the admin UI a stable cursor to
+//  detect re-saves.
+//
+//  Idempotency: PUT twice with the same body is two writes, not a no-op.
+//  The route layer matches the standard "PUT = upsert" contract; a
+//  future client that wants true idempotency can compare updated_at.
+// ────────────────────────────────────────────────────────────────────────────
+
+inline void admin_put_special_judge_handler(
+        httplib::Response&             res,
+        const httplib::Request&        req,
+        ConnectionPool&                pool,
+        RateLimiter&                   limiter,
+        const RateLimitConfig&         rate_cfg,
+        const JwtConfig&               jwt_cfg) {
+    const auto claims = require_admin(req, jwt_cfg);
+    consume_rate_limit(res, req, limiter, admin_write_quota(rate_cfg));
+
+    const auto slug_v = detail::extract_slug_from_admin_path(req);
+    if (!slug_v) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   "slug must be 1-100 chars of [a-z0-9-], not starting "
+                   "or ending with '-'",
+                   {{"field", "slug"},
+                    {"value", std::string(req.path)}});
+        return;
+    }
+    const std::string slug = *slug_v;
+
+    // Parse body.
+    const auto body = parse_json_body(req, res);
+    if (!body) return;  // parse_json_body already emitted 400
+    const auto& j = *body;  // alias so the rest reads naturally
+
+    const auto source_v = detail::require_string(j, res, "source");
+    if (!source_v) return;
+    const std::string& source = *source_v;
+
+    // Admin-side clamp: 256 KB. The repo ceiling is 16 MB; admin UI
+    // uploads want a tighter bound to keep compile time predictable.
+    constexpr std::size_t kMaxSpjSourceLenAdmin = 256 * 1024;
+    if (source.size() > kMaxSpjSourceLenAdmin) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   "special judge source exceeds 256KB admin cap "
+                   "(repo ceiling is 16MB; tighten the source or open "
+                   "a follow-up to raise the admin cap)",
+                   {{"field", "source"},
+                    {"size",  std::to_string(source.size())},
+                    {"max",   std::to_string(kMaxSpjSourceLenAdmin)}});
+        return;
+    }
+
+    // language — defaults to cpp; reject anything else with 400 (the
+    // repo would do the same, but surfacing here keeps the error
+    // path consistent with the rest of the admin handler set).
+    std::string language = litecode::kSpjLanguageCxx;
+    if (j.contains("language") && !j["language"].is_null()) {
+        if (!j["language"].is_string()) {
+            send_error(res, 400, ErrorCode::INVALID_INPUT,
+                       "field 'language' must be a string when present",
+                       {{"field", "language"}});
+            return;
+        }
+        language = j["language"].get<std::string>();
+        std::string verr;
+        if (!litecode::special_judge_repo::validate_language(language, &verr)) {
+            send_error(res, 400, ErrorCode::INVALID_INPUT, verr,
+                       {{"field", "language"},
+                        {"value", detail::truncate_for_envelope(language)}});
+            return;
+        }
+    }
+
+    // Look up problem_id (live only; soft-deleted problems can hold
+    // their SPJ in the table but the public detail already 404s them,
+    // so we keep the same gate here for symmetry).
+    std::optional<int> problem_id;
+    try {
+        const auto row = problem_repo::find_by_slug(
+            pool, slug, /*include_deleted=*/false);
+        if (!row.has_value()) {
+            send_error(res, 404, ErrorCode::NOT_FOUND, "problem not found",
+                       {{"slug", slug}});
+            return;
+        }
+        problem_id = row->id;
+    } catch (const std::exception& e) {
+        LOG_ERROR("admin_spj_upsert: find_by_slug threw",
+                  {{"slug",   slug},
+                   {"type",   typeid(e).name()},
+                   {"reason", e.what()}});
+        send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                   std::string("internal error: ") + e.what());
+        return;
+    }
+
+    // Upsert the SPJ row.
+    try {
+        litecode::special_judge_repo::upsert(pool, *problem_id, source, language);
+    } catch (const std::exception& e) {
+        // FK violation lands here too; surface as 404 to match the
+        // "no such problem" contract (the race window between
+        // find_by_slug and upsert is small but real under load).
+        const std::string what = e.what();
+        if (what.find("problem_id does not exist") != std::string::npos) {
+            send_error(res, 404, ErrorCode::NOT_FOUND,
+                       "problem not found (FK violation on upsert)",
+                       {{"slug", slug}});
+            return;
+        }
+        LOG_ERROR("admin_spj_upsert: special_judge_repo::upsert threw",
+                  {{"problem_id", std::to_string(*problem_id)},
+                   {"type",       typeid(e).name()},
+                   {"reason",     what}});
+        send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                   std::string("internal error: ") + what);
+        return;
+    }
+
+    // Audit log.
+    try {
+        AuditEntry ae;
+        ae.admin_id    = std::stoi(claims.user_id);
+        ae.action      = audit_log_repo::kActionProblemSpjUpsert;
+        ae.target_type = "problem";
+        ae.target_id   = slug;
+        ae.payload     = {
+            {"source_bytes", source.size()},
+            {"language",     language},
+        };
+        ae.ip = extract_client_ip(req);
+        audit_log_repo::record(pool, ae);
+    } catch (const std::exception& e) {
+        LOG_ERROR("admin_spj_upsert: audit_log::record threw",
+                  {{"slug",   slug},
+                   {"type",   typeid(e).name()},
+                   {"reason", e.what()}});
+        send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                   std::string("internal error: ") + e.what());
+        return;
+    }
+
+    // Re-fetch the row so the response carries the post-update
+    // updated_at (set by MySQL's ON UPDATE CURRENT_TIMESTAMP).
+    std::optional<litecode::SpecialJudgeRow> after;
+    try {
+        after = litecode::special_judge_repo::find_by_problem_id(
+            pool, *problem_id);
+    } catch (const std::exception&) {
+        // Best-effort; the row IS there (upsert succeeded), we just
+        // can't read it back right now. Surface a 200 with the values
+        // we have; clients retrying the GET will pick up updated_at
+        // on the next call.
+    }
+
+    nlohmann::json payload = {
+        {"problem_id",   *problem_id},
+        {"slug",         slug},
+        {"source_bytes", source.size()},
+        {"language",     language},
+        {"updated_at",   after.has_value() ? after->updated_at : ""},
+    };
+
+    LOG_INFO("admin_spj_upsert: saved",
+             {{"problem_id",   std::to_string(*problem_id)},
+              {"slug",         slug},
+              {"source_bytes", std::to_string(source.size())},
+              {"admin_id",     claims.user_id}});
+
+    send_success(res, payload);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  DELETE /api/v1/admin/problems/:slug/special-judge   (v1.3.1)
+//
+//  Idempotent: removes the problem_special_judges row if present; 204
+//  either way (matches the soft-delete pattern for the problem itself).
+//  judge_type='special' test cases then fall back to "no SPJ" → judge.sh
+//  flips every case to WA (SPEC §7.1 contract: empty spj_source ⇒ WA
+//  for every special case, not SE — admins get immediate feedback when
+//  they detach an SPJ).
+//
+//  Wire flow:
+//    1) require_admin
+//    2) consume_rate_limit (admin.write)
+//    3) extract_slug_from_admin_path
+//    4) resolve problem_id (404 if no live row — keep semantics
+//       symmetric with PUT, which also 404s on a missing slug)
+//    5) special_judge_repo::remove_by_problem_id
+//    6) audit_log_repo::record (action=problem.spj_remove)
+//    7) send_no_content(204)
+// ────────────────────────────────────────────────────────────────────────────
+
+inline void admin_delete_special_judge_handler(
+        httplib::Response&             res,
+        const httplib::Request&        req,
+        ConnectionPool&                pool,
+        RateLimiter&                   limiter,
+        const RateLimitConfig&         rate_cfg,
+        const JwtConfig&               jwt_cfg) {
+    const auto claims = require_admin(req, jwt_cfg);
+    consume_rate_limit(res, req, limiter, admin_write_quota(rate_cfg));
+
+    const auto slug_v = detail::extract_slug_from_admin_path(req);
+    if (!slug_v) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   "slug must be 1-100 chars of [a-z0-9-], not starting "
+                   "or ending with '-'",
+                   {{"field", "slug"},
+                    {"value", std::string(req.path)}});
+        return;
+    }
+    const std::string slug = *slug_v;
+
+    std::optional<int> problem_id;
+    try {
+        const auto row = problem_repo::find_by_slug(
+            pool, slug, /*include_deleted=*/false);
+        if (!row.has_value()) {
+            send_error(res, 404, ErrorCode::NOT_FOUND, "problem not found",
+                       {{"slug", slug}});
+            return;
+        }
+        problem_id = row->id;
+    } catch (const std::exception& e) {
+        LOG_ERROR("admin_spj_remove: find_by_slug threw",
+                  {{"slug",   slug},
+                   {"type",   typeid(e).name()},
+                   {"reason", e.what()}});
+        send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                   std::string("internal error: ") + e.what());
+        return;
+    }
+
+    bool removed = false;
+    try {
+        removed = litecode::special_judge_repo::remove_by_problem_id(
+            pool, *problem_id);
+    } catch (const std::exception& e) {
+        LOG_ERROR("admin_spj_remove: special_judge_repo::remove threw",
+                  {{"problem_id", std::to_string(*problem_id)},
+                   {"type",       typeid(e).name()},
+                   {"reason",     e.what()}});
+        send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                   std::string("internal error: ") + e.what());
+        return;
+    }
+
+    // Audit (even when no row was removed — the admin GET-then-DELETE
+    // flow is observable, and "DELETE on no row" is still a
+    // security-trail event).
+    try {
+        AuditEntry ae;
+        ae.admin_id    = std::stoi(claims.user_id);
+        ae.action      = audit_log_repo::kActionProblemSpjRemove;
+        ae.target_type = "problem";
+        ae.target_id   = slug;
+        ae.payload     = {
+            {"removed",   removed},    // false ⇒ no row was attached
+            {"problem_id", *problem_id},
+        };
+        ae.ip = extract_client_ip(req);
+        audit_log_repo::record(pool, ae);
+    } catch (const std::exception& e) {
+        LOG_ERROR("admin_spj_remove: audit_log::record threw",
+                  {{"slug",   slug},
+                   {"type",   typeid(e).name()},
+                   {"reason", e.what()}});
+        send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                   std::string("internal error: ") + e.what());
+        return;
+    }
+
+    LOG_INFO("admin_spj_remove: detached",
+             {{"problem_id", std::to_string(*problem_id)},
+              {"slug",       slug},
+              {"had_row",    removed ? "1" : "0"},
+              {"admin_id",   claims.user_id}});
+
+    send_no_content(res);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  GET /api/v1/admin/problems/:slug/special-judge   (v1.3.1)
+//
+//  Returns the SPJ row (source + language + timestamps) for the admin
+//  editor to prefill the textarea on edit. Public detail intentionally
+//  surfaces ONLY `has_special_judge` (boolean) — the source itself is
+//  admin-only (matches the existing admin-only attachment pattern).
+//
+//  Wire shape (200):
+//    {
+//      "exists":       bool,
+//      "language":     "cpp" (when exists=true; "" when false),
+//      "source":       "..."  (when exists=true; "" when false),
+//      "source_bytes": N     (when exists=true; 0 when false),
+//      "created_at":   "YYYY-MM-DD HH:MM:SS",
+//      "updated_at":   "YYYY-MM-DD HH:MM:SS"
+//    }
+//
+//  404 when the problem slug itself doesn't exist (live).
+// ────────────────────────────────────────────────────────────────────────────
+
+inline void admin_get_special_judge_handler(
+        httplib::Response&             res,
+        const httplib::Request&        req,
+        ConnectionPool&                pool,
+        RateLimiter&                   limiter,
+        const RateLimitConfig&         rate_cfg,
+        const JwtConfig&               jwt_cfg) {
+    const auto claims = require_admin(req, jwt_cfg);
+    consume_rate_limit(res, req, limiter, admin_write_quota(rate_cfg));
+
+    const auto slug_v = detail::extract_slug_from_admin_path(req);
+    if (!slug_v) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   "slug must be 1-100 chars of [a-z0-9-], not starting "
+                   "or ending with '-'",
+                   {{"field", "slug"},
+                    {"value", std::string(req.path)}});
+        return;
+    }
+    const std::string slug = *slug_v;
+
+    std::optional<int> problem_id;
+    try {
+        const auto row = problem_repo::find_by_slug(
+            pool, slug, /*include_deleted=*/false);
+        if (!row.has_value()) {
+            send_error(res, 404, ErrorCode::NOT_FOUND, "problem not found",
+                       {{"slug", slug}});
+            return;
+        }
+        problem_id = row->id;
+    } catch (const std::exception& e) {
+        LOG_ERROR("admin_spj_get: find_by_slug threw",
+                  {{"slug",   slug},
+                   {"type",   typeid(e).name()},
+                   {"reason", e.what()}});
+        send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                   std::string("internal error: ") + e.what());
+        return;
+    }
+
+    std::optional<litecode::SpecialJudgeRow> spj;
+    try {
+        spj = litecode::special_judge_repo::find_by_problem_id(
+            pool, *problem_id);
+    } catch (const std::exception& e) {
+        LOG_ERROR("admin_spj_get: find_by_problem_id threw",
+                  {{"problem_id", std::to_string(*problem_id)},
+                   {"type",       typeid(e).name()},
+                   {"reason",     e.what()}});
+        send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                   std::string("internal error: ") + e.what());
+        return;
+    }
+
+    nlohmann::json payload = {
+        {"problem_id",   *problem_id},
+        {"slug",         slug},
+        {"exists",       spj.has_value()},
+        {"language",     spj.has_value() ? spj->language : std::string("")},
+        {"source",       spj.has_value() ? spj->source   : std::string("")},
+        {"source_bytes", spj.has_value() ? static_cast<std::int64_t>(spj->source.size()) : static_cast<std::int64_t>(0)},
+        {"created_at",   spj.has_value() ? spj->created_at : std::string("")},
+        {"updated_at",   spj.has_value() ? spj->updated_at : std::string("")},
+    };
+
+    send_success(res, payload);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 //  Route registration
 //
 //  Mirrors the pattern from problem_routes.h / tag_routes.h. The
@@ -1208,6 +1616,74 @@ inline HttpServer& register_admin_problem_routes(
                 throw;
             } catch (const std::exception& e) {
                 LOG_ERROR("admin_problem_delete: handler threw",
+                          {{"type",   typeid(e).name()},
+                           {"reason", e.what()}});
+                if (res.body.empty()) {
+                    send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                               std::string("internal error: ") + e.what());
+                } else {
+                    throw;
+                }
+            }
+        });
+
+    // ──── v1.3.1 — Special Judge CRUD ────────────────────────────────
+    // PUT    /api/v1/admin/problems/:slug/special-judge  (admin, 30/min)
+    // GET    /api/v1/admin/problems/:slug/special-judge  (admin, 30/min)
+    // DELETE /api/v1/admin/problems/:slug/special-judge  (admin, 30/min)
+
+    server.put(R"(/api/v1/admin/problems/([^/]+)/special-judge)",
+        [&pool, &limiter, rate_cfg, jwt_cfg]
+        (const httplib::Request& req, httplib::Response& res) {
+            try {
+                admin_put_special_judge_handler(res, req, pool, limiter,
+                                                rate_cfg, jwt_cfg);
+            } catch (const ApiException&) {
+                throw;
+            } catch (const std::exception& e) {
+                LOG_ERROR("admin_spj_put: handler threw",
+                          {{"type",   typeid(e).name()},
+                           {"reason", e.what()}});
+                if (res.body.empty()) {
+                    send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                               std::string("internal error: ") + e.what());
+                } else {
+                    throw;
+                }
+            }
+        });
+
+    server.del(R"(/api/v1/admin/problems/([^/]+)/special-judge)",
+        [&pool, &limiter, rate_cfg, jwt_cfg]
+        (const httplib::Request& req, httplib::Response& res) {
+            try {
+                admin_delete_special_judge_handler(res, req, pool, limiter,
+                                                   rate_cfg, jwt_cfg);
+            } catch (const ApiException&) {
+                throw;
+            } catch (const std::exception& e) {
+                LOG_ERROR("admin_spj_delete: handler threw",
+                          {{"type",   typeid(e).name()},
+                           {"reason", e.what()}});
+                if (res.body.empty()) {
+                    send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                               std::string("internal error: ") + e.what());
+                } else {
+                    throw;
+                }
+            }
+        });
+
+    server.get(R"(/api/v1/admin/problems/([^/]+)/special-judge)",
+        [&pool, &limiter, rate_cfg, jwt_cfg]
+        (const httplib::Request& req, httplib::Response& res) {
+            try {
+                admin_get_special_judge_handler(res, req, pool, limiter,
+                                                rate_cfg, jwt_cfg);
+            } catch (const ApiException&) {
+                throw;
+            } catch (const std::exception& e) {
+                LOG_ERROR("admin_spj_get: handler threw",
                           {{"type",   typeid(e).name()},
                            {"reason", e.what()}});
                 if (res.body.empty()) {
