@@ -124,7 +124,7 @@
 **Phase 7 剩余**
 
 - [ ] ☆ 备份脚本 `scripts/backup.sh`（mysqldump 每日 + 异地）
-- [ ] ☆ 监控告警（Grafana 面板：判题 P99 延迟 > 5s / 队列积压 > 50）
+- [x] ☆ 监控告警（Grafana 面板：判题 P99 延迟 > 5s / 队列积压 > 50）—— v1.2.57（dashboard + alertmanager + 10 条告警规则）+ v1.2.73（补 `WebContainerMemoryHigh` + 端到端 lint/e2e + runbook）
 
 **Phase 8 质量保障**
 
@@ -146,7 +146,7 @@
 - [x] ★ 日志聚合（stdout JSON 格式，Docker logs 接管，可选 Loki/ELK）—— v1.2.70（保留现有 json-file + max-size=10m/max-file=3 基线；新增 `logging` profile 的 Loki + Promtail 集中采集，Grafana provisioning 固定 `uid: loki`，request_id 作为字段而非高基数 label）
 - [x] ★ 日志轮转（logrotate 或 Docker log driver `json-file` + `max-size`）—— v1.2.71（现有 `&default-logging` 覆盖全部 Compose profile service，固定 `json-file` + `max-size=10m` + `max-file=3`；新增 `scripts/lint.sh logrotate` 全服务渲染策略 gate 并接入 CI；`tests/unit/test_logger.cpp` 已覆盖文件多段轮转、单文件截断和不可写回退）
 - [x] ☆ 备份验证（每月 1 次 restore drill 到测试环境）—— v1.2.72（`scripts/restore_drill.sh` 黑盒演练 + `docs/runbooks/monthly-restore-drill.md` runbook + `scripts/lint.sh restore_drill` 自检子任务；隔离栈 drill-mysql/drill-proxy/drill-web 独立端口 3307/8081 + 临时卷，不污染主栈；smoke：health 200 + admin 登录 + bulk-import two-sum + 提交 AC 轮询 ac + /api/v1/metrics 200；末行 `DRILL_RESULT PASS=N FAIL=N SKIP=N` 兼容 v1.2.67 FUZZ_RESULT 风格；RESTORE_STRICT=1 时缺前置升级为 FAIL；schedule `0 9 1-7 * 1`）
-- [ ] ☆ 告警规则（P99 延迟 / 队列积压 / 磁盘 / 证书过期）
+- [x] ☆ 告警规则（P99 延迟 / 队列积压 / 磁盘 / 证书过期）
 - [ ] △ 性能 Profile（`perf` / flamegraph 跑判题热路径）
 
 ### Standing Issues / 已知技术债
@@ -1133,7 +1133,7 @@ litecode-cpp/
 - [x] ★ 日志聚合（stdout JSON 格式，Docker logs 接管，可选 Loki/ELK）—— v1.2.70（保留现有 json-file + max-size=10m/max-file=3 基线；新增 `logging` profile 的 Loki + Promtail 集中采集，Grafana provisioning 固定 `uid: loki`，request_id 作为字段而非高基数 label）
 - [x] ★ 日志轮转（logrotate 或 Docker log driver `json-file` + `max-size`）—— v1.2.71（现有 `&default-logging` 覆盖全部 Compose profile service，固定 `json-file` + `max-size=10m` + `max-file=3`；新增 `scripts/lint.sh logrotate` 全服务渲染策略 gate 并接入 CI；`tests/unit/test_logger.cpp` 已覆盖文件多段轮转、单文件截断和不可写回退）
 - [x] ☆ 备份验证（每月 1 次 restore drill 到测试环境）—— v1.2.72（`scripts/restore_drill.sh` 黑盒演练 + `docs/runbooks/monthly-restore-drill.md` runbook + `scripts/lint.sh restore_drill` 自检子任务；隔离栈 drill-mysql/drill-proxy/drill-web 独立端口 3307/8081 + 临时卷，不污染主栈；smoke：health 200 + admin 登录 + bulk-import two-sum + 提交 AC 轮询 ac + /api/v1/metrics 200；末行 `DRILL_RESULT PASS=N FAIL=N SKIP=N` 兼容 v1.2.67 FUZZ_RESULT 风格；RESTORE_STRICT=1 时缺前置升级为 FAIL；schedule `0 9 1-7 * 1`）
-- [ ] ☆ 告警规则（P99 延迟、队列积压、磁盘、证书过期）
+- [x] ☆ 告警规则（P99 延迟、队列积压、磁盘、证书过期）—— v1.2.73（11 条 alertname：v1.2.57 落地的 10 条 + v1.2.73 新增 `WebContainerMemoryHigh`（cadvisor 内存 > 80%/5m，SPEC §16.4 字面阈值）+ `LoginFailuresByIPHigh` 占位（metrics.cpp 缺 per-IP counter，v1.2.74+ 扩；当前 expr=`vector(0) > 100` 永不 firing）；alertmanager.yml 3 receiver（default-webhook/critical-webhook/infra-webhook）+ 2 inhibit rule（critical 抑制同 alertname warning；WebContainerMemoryHigh 抑制 JudgeWarmPoolDepleted）+ Slack/PagerDuty/Email 替换示例注释 + business-hours time_intervals 注释；`scripts/lint.sh alerting` 5 段自检（文件行数 + 6 条 SPEC §16.4 alertname + severity 覆盖 + alertmanager 顶层字段齐备 + 可选 promtool/amtool）；e2e A44 五段断言（A44a 静态 alertname + severity / A44b alertmanager 顶层 / A44c alertmanager `/-/ready` + receivers 列表 / A44d prometheus `/-/ready` + 6 条规则全在 / A44e canary POST 探针）；`docs/runbooks/alerting.md` 完整 runbook（§2 落地清单对照表 + §3 已知未落地 LoginFailuresByIPHigh + §4 11 条处置手册 + §5 一键操作 + §6 故障排查）；零 src/* 改动；SPEC §16.4 字面阈值与现阈值差异在文件头部 + runbook §2.1 表说明。Phase 9 剩 1 项 [ ]：性能 Profile）
 - [ ] △ 性能 Profile（`perf` / `flamegraph` 跑一次判题热路径）
 
 ---

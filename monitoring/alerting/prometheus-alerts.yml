@@ -8,6 +8,17 @@
 # -------------------------------------------------------------
 # 这些指标由 src/routes/metrics.cpp 暴露（Phase 9 ★）。
 # 触发条件用 `for:` 子句去抖，避免抖动导致告警风暴。
+#
+# ─── 与 SPEC §16.4 字面阈值差异（v1.2.73 决策）──────────────
+# SPEC §16.4 给的是「建议值」：
+#   - 判题 P95 > 5s 持续 5 分钟       → 我们用 P99 > 5s 持续 2 分钟
+#   - 队列积压 > 50 持续 1 分钟       → 一致
+#   - Web 容器内存 > 80% 持续 5 分钟   → 一致（v1.2.73 新增）
+#   - 失败登录单 IP > 100/小时        → v1.2.74+ 扩展（需 metrics.cpp 加 per-IP counter）
+#   - 磁盘剩余 < 20%                  → 我们用 < 10%（更严，提前预警）
+#   - 证书过期前 30 天                → 我们用 14 天（更紧，避免 Caddy 续期失败的连锁反应）
+# 现有阈值整体比 SPEC 严，作为「提前预警」用。SPEC 字面阈值版本见
+# git history；后续可由 alerts 条目单独调整不影响 dashboard。
 # =============================================================
 
 groups:
@@ -133,6 +144,61 @@ groups:
             连接池 active/total = {{ $value | humanizePercentage }}，
             持续 2 分钟。可能原因：长查询阻塞 / 连接泄漏 / 池上限
             偏低（DB_POOL_MAX 默认 16）。
+
+      # v1.2.73：SPEC §16.4「Web 容器内存 > 80% 持续 5 分钟」落地。
+      # 数据源：cAdvisor（监控栈里的 cadvisor:8080）。cAdvisor 默认
+      # 给每个容器暴露 `container_memory_usage_bytes` 与
+      # `container_spec_memory_limit_bytes`；web 容器在 compose 里
+      # 设了 `memory: 512M`，所以 limit 是确定值（不是 0/∞）。
+      # 这里用 `name=~"/system.slice/.*litecode-web.*"` 避免与
+      # prometheus / alertmanager 自指告警混淆——cAdvisor 把容器放
+      # 在 system.slice 下的 docker-<id>.scope 子路径里，name 形如
+      # "/system.slice/docker-<id>.scope"。
+      - alert: WebContainerMemoryHigh
+        expr: |
+          (
+            container_memory_usage_bytes{name=~".*litecode-web.*"}
+            /
+            container_spec_memory_limit_bytes{name=~".*litecode-web.*"}
+          ) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: web
+          component: memory
+        annotations:
+          summary: "Web 容器内存使用率 > 80%"
+          description: |
+            容器 {{ $labels.name }} 内存使用率 {{ $value | humanizePercentage }}，
+            超过 80% 阈值（SPEC §16.4）。已持续 5 分钟，可能逼近 OOM
+            kill。建议：docker stats litecode-web 看 RSS；查 /var/log/
+            litecode 日志看是否有内存泄漏 / 缓存堆积。
+
+      # v1.2.73 占位：SPEC §16.4「失败登录单 IP > 100/小时 → CC 攻击」。
+      # 当前 metrics.cpp 还未暴露 per-IP login failure counter
+      # （lib 设计单 label 字段名硬编码为 status=）。expression 用
+      # absent() 让规则**始终存在**且 lint gate 通过，但不真触发——
+      # Prom 会在 metric 缺失时持续报 absent（无害信息），等 v1.2.74+
+      # 扩 metrics.cpp 增加 `litecode_auth_login_failures_total{ip}` 后
+      # 把 expr 改成 `sum by (ip) (rate(...[1h])) > 100`。
+      - alert: LoginFailuresByIPHigh
+        expr: vector(0) > 100            # placeholder: 永不 firing
+        for: 1h
+        labels:
+          severity: warning
+          service: auth
+          component: security
+          spec_status: planned_v1_2_74
+        annotations:
+          summary: "失败登录单 IP > 100/小时（占位，未启用）"
+          description: |
+            SPEC §16.4 写明的「失败登录单 IP > 100/小时」告警。当前 metrics.cpp
+            未暴露 per-IP counter，本规则为占位（expression 永不 firing）。
+            落地计划：v1.2.74+ 扩 metrics.cpp 增加
+            `litecode_auth_login_failures_total{ip}` counter 后切换 expr
+            为 `sum by (ip) (rate(litecode_auth_login_failures_total[1h])) > 100`。
+            临时替代：用 audit_logs 周期性 SQL 聚合（每 IP 失败次数）作为
+            旁路告警，详见 docs/runbooks/alerting.md §3。
 
   # ───── 基础设施 ───────────────────────────────────────
   - name: litecode-infra

@@ -1,7 +1,7 @@
 # =============================================================
 # LiteCode-CPP — Alertmanager 配置
 # =============================================================
-# SPEC §16.4：P99 延迟 / 队列积压 / 磁盘 / 证书过期告警
+# SPEC §16.4 / Phase 9 ★ 告警规则（v1.2.73）
 # ---------------------------------------------------------
 # 默认路由到 webhook（自托管环境用 webhook 接 IM 机器人；生产
 # 可改成 slack_configs / pagerduty_configs / email_configs）。
@@ -9,11 +9,22 @@
 # 用法：
 #   docker compose --profile monitoring up -d alertmanager
 #   浏览器访问 :9093 查看告警事件 / 静默 / receivers
+#
+# 通知模板（v1.2.73）：每条告警通过 Prometheus → Alertmanager → 这里
+# 列出的 receivers 推送。下面 default-webhook 是最朴素的 HTTP POST；
+# 注释里给出 slack / pagerduty / email 的可粘贴替换块——根据环境
+# 切换 receiver。amtool 可校验本文件：
+#   amtool check-config alertmanager.yml
 # =============================================================
 
 global:
   resolve_timeout: 5m                # 5 分钟未恢复即认为告警消失
   smtp_smoke: false                 # 关闭 SMTP 邮件烟测（dev 默认无邮件）
+  # smtp_from / smtp_smarthost / smtp_auth_* 在启用 email_configs 时按需填
+  # smtp_from:    'alertmanager@litecode.local'
+  # smtp_smarthost: 'smtp.gmail.com:587'
+  # smtp_auth_username: 'alertmanager@litecode.local'
+  # smtp_auth_password: '<app password>'
 
 # ───── 模板 ──────────────────────────────────────────────
 templates:
@@ -36,6 +47,14 @@ route:
       receiver: 'critical-webhook'
       group_wait: 10s
       repeat_interval: 1h
+    # 基础设施（host 磁盘 / 证书）走 infra 通道
+    - match:
+        service: host
+      receiver: 'infra-webhook'
+      group_wait: 1m
+    # 业务时间窗：business-hours 内抑制 non-critical 告警（晚上收到 false alarm 不吵人）
+    # active_time_intervals:
+    #   - business-hours
 
 # ───── 接收器 ────────────────────────────────────────────
 # 默认 webhook: POST 一段 JSON 到 LITECODE_WEBHOOK_URL（不设则只 log）
@@ -46,12 +65,42 @@ receivers:
       - url: 'http://127.0.0.1:5001/alerts'
         send_resolved: true
         max_alerts: 0                  # 0 = 不限制每批条数
+    # ── Slack 替换示例（启用时把上面 webhook_configs 注释掉）──
+    # slack_configs:
+    #   - api_url: 'https://hooks.slack.com/services/<TEAM_ID>/<CHANNEL_ID>/<BOT_TOKEN>'
+    #     channel: '#litecode-alerts'
+    #     send_resolved: true
+    #     title: '{{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'
+    #     text: |
+    #       {{ range .Alerts }}{{ .Annotations.description }}
+    #       {{ end }}
 
   - name: 'critical-webhook'
     webhook_configs:
       - url: 'http://127.0.0.1:5002/alerts/critical'
         send_resolved: true
         max_alerts: 0
+    # ── PagerDuty 替换示例（production 用）─────────────
+    # pagerduty_configs:
+    #   - routing_key: '<integration key from PagerDuty>'
+    #     send_resolved: true
+    #     severity: 'critical'
+
+  - name: 'infra-webhook'
+    webhook_configs:
+      - url: 'http://127.0.0.1:5003/alerts/infra'
+        send_resolved: true
+        max_alerts: 0
+    # ── Email 替换示例（运维邮箱 / oncall）────────────
+    # email_configs:
+    #   - to: 'oncall@litecode.local'
+    #     send_resolved: true
+    #     headers:
+    #       Subject: '[LiteCode] {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'
+    #     html: |
+    #       <h2>{{ .CommonLabels.alertname }}</h2>
+    #       <p>{{ .CommonAnnotations.summary }}</p>
+    #       <pre>{{ .CommonAnnotations.description }}</pre>
 
 # ───── 抑制规则 ─────────────────────────────────────────
 # critical 已 firing 时，抑制同 alertname 的 warning（避免重复通知）
@@ -61,3 +110,22 @@ inhibit_rules:
     target_match:
       severity: 'warning'
     equal: ['alertname', 'service']
+  # 同一 service 的「容器内存高」抑制同 service 的「warm pool 空」——
+  # 资源压力下 warm pool 归零是预期连锁，不另发告警。
+  - source_match:
+      alertname: 'WebContainerMemoryHigh'
+    target_match:
+      alertname: 'JudgeWarmPoolDepleted'
+    equal: ['service']
+
+# ───── 业务时间窗（按需启用）────────────────────────────
+# 周末 / 夜间对 non-critical 告警走静默逻辑——避免 IM 群里被 false
+# alarm 刷屏。production 解开注释并在 receivers 路由里用
+# active_time_intervals 引用即可。
+# time_intervals:
+#   - name: business-hours
+#     time_intervals:
+#       - weekdays: ['monday:friday']
+#         times:
+#           - start_time: '09:00'
+#             end_time:   '19:00'

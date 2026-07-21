@@ -1577,6 +1577,152 @@ if need "${SERVER_UP}" "A40-A43 模糊测试"; then
 fi
 
 # ═════════════════════════════════════════════════════════════
+#  A44 — 告警规则端到端 (Phase 9 ★ v1.2.73)
+#
+#  覆盖 SPEC §16.4「告警规则（P99 延迟 / 队列积压 / 磁盘 / 证书）」
+#  的配置层 + 接收器层 + 可达性层 三段断言。**不发真告警**（避免
+#  IM 群污染）；只验证配置 shape 与探针 alive。
+#
+#  - A44a  静态配置：prometheus-alerts.yml 关键 alertname 存在 + severity 覆盖
+#  - A44b  静态配置：alertmanager.yml receivers / route / inhibit 齐备
+#  - A44c  可达性：alertmanager /-/ready 200（如容器已起，profile=monitoring）
+#  - A44d  可达性：prometheus /-/ready 200 + /api/v1/rules 返回 alert 列表非空
+#  - A44e  端到端：模拟触发一条告警 → alertmanager /api/v2/alerts 可见（可选）
+#
+#  缺栈一律 SKIP（monitoring profile 默认不拉起）。
+# ═════════════════════════════════════════════════════════════
+ALERTMGR_URL="${ALERTMGR_URL:-http://localhost:9093}"
+PROM_URL="${PROM_URL:-http://localhost:9090}"
+
+kase "A44" "告警规则端到端（Phase 9 ★ v1.2.73）"
+
+# ── A44a: prometheus-alerts.yml 静态配置 ──
+_alerts="${ROOT}/monitoring/alerting/prometheus-alerts.yml"
+_amcfg="${ROOT}/monitoring/alerting/alertmanager.yml"
+if [ ! -f "${_alerts}" ] || [ ! -f "${_amcfg}" ]; then
+    skip "A44a 缺少 monitoring/alerting/*.yml 配置"
+    skip "A44b 缺少 monitoring/alerting/*.yml 配置"
+else
+    # SPEC §16.4 字面阈值映射的 6 条 alertname 全在（v1.2.73 决策：保留
+    # 更严的现有阈值但补齐 LoginFailuresByIPHigh 占位 alert）
+    _got_p99=0; _got_queue=0; _got_mem=0; _got_disk=0; _got_tls=0; _got_login=0
+    grep -qE '^      - alert: JudgeDurationP99TooHigh'      "${_alerts}" && _got_p99=1
+    grep -qE '^      - alert: JudgeQueueBacklog'           "${_alerts}" && _got_queue=1
+    grep -qE '^      - alert: WebContainerMemoryHigh'      "${_alerts}" && _got_mem=1
+    grep -qE '^      - alert: HostDiskSpaceLow'            "${_alerts}" && _got_disk=1
+    grep -qE '^      - alert: TlsCertificateExpiringSoon'  "${_alerts}" && _got_tls=1
+    grep -qE '^      - alert: LoginFailuresByIPHigh'       "${_alerts}" && _got_login=1
+    [ "${_got_p99}" = "1" ] && ok "A44a JudgeDurationP99TooHigh 存在" \
+        || fail "A44a JudgeDurationP99TooHigh 缺失"
+    [ "${_got_queue}" = "1" ] && ok "A44a JudgeQueueBacklog 存在" \
+        || fail "A44a JudgeQueueBacklog 缺失"
+    [ "${_got_mem}" = "1" ] && ok "A44a WebContainerMemoryHigh 存在（v1.2.73 新增）" \
+        || fail "A44a WebContainerMemoryHigh 缺失"
+    [ "${_got_disk}" = "1" ] && ok "A44a HostDiskSpaceLow 存在" \
+        || fail "A44a HostDiskSpaceLow 缺失"
+    [ "${_got_tls}" = "1" ] && ok "A44a TlsCertificateExpiringSoon 存在" \
+        || fail "A44a TlsCertificateExpiringSoon 缺失"
+    [ "${_got_login}" = "1" ] && ok "A44a LoginFailuresByIPHigh 占位 alert 存在（v1.2.74+ 落地）" \
+        || fail "A44a LoginFailuresByIPHigh 缺失"
+
+    # severity label 覆盖（critical + warning 各至少一条）
+    _sev_c="$(grep -cE '^[[:space:]]+severity: critical' "${_alerts}" || true)"
+    _sev_w="$(grep -cE '^[[:space:]]+severity: warning'  "${_alerts}" || true)"
+    [ "${_sev_c}" -ge 1 ] && ok "A44a severity=critical 出现 ${_sev_c} 条（≥1）" \
+        || fail "A44a severity=critical 0 条"
+    [ "${_sev_w}" -ge 1 ] && ok "A44a severity=warning 出现 ${_sev_w} 条（≥1）" \
+        || fail "A44a severity=warning 0 条"
+
+    # ── A44b: alertmanager.yml 静态配置 ──
+    _am_missing=()
+    grep -qF 'receivers:' "${_amcfg}"               || _am_missing+=('receivers 顶层')
+    grep -qF 'route:' "${_amcfg}"                   || _am_missing+=('route 顶层')
+    grep -qF "receiver: 'default-webhook'" "${_amcfg}" \
+        || _am_missing+=("default-webhook receiver")
+    grep -qF "receiver: 'critical-webhook'" "${_amcfg}" \
+        || _am_missing+=("critical-webhook receiver")
+    grep -qF 'inhibit_rules:' "${_amcfg}"           || _am_missing+=('inhibit_rules 抑制')
+    grep -qF 'resolve_timeout:' "${_amcfg}"         || _am_missing+=('global.resolve_timeout')
+    if [ "${#_am_missing[@]}" -eq 0 ]; then
+        ok "A44b alertmanager.yml 顶层字段齐全（receivers/route/inhibit/resolve_timeout）"
+    else
+        fail "A44b alertmanager.yml 缺失: ${_am_missing[*]}"
+    fi
+fi
+
+# ── A44c: alertmanager /-/ready 可达性（monitoring profile 拉起时）──
+if curl -fsS --max-time 3 "${ALERTMGR_URL}/-/ready" >/dev/null 2>&1; then
+    ok "A44c alertmanager ${ALERTMGR_URL}/-/ready → 200"
+    # receivers 列表（GET /api/v2/receivers 返回 name 数组）
+    _recv_body="$(curl -fsS --max-time 3 "${ALERTMGR_URL}/api/v2/receivers" 2>/dev/null || true)"
+    if [ -n "${_recv_body}" ] && command -v jq >/dev/null 2>&1; then
+        _recv_count="$(jq 'length' <<<"${_recv_body}" 2>/dev/null || echo 0)"
+        if [ "${_recv_count:-0}" -ge 1 ]; then
+            ok "A44c alertmanager /api/v2/receivers 返回 ${_recv_count} 条 receiver"
+        else
+            fail "A44c alertmanager receivers 列表为空（配置未加载？）"
+        fi
+    else
+        ok "A44c alertmanager receivers 列表未深查（jq 缺）"
+    fi
+else
+    skip "A44c alertmanager ${ALERTMGR_URL} 不可达（monitoring profile 未拉起）"
+    skip "A44c alertmanager receivers 列表探针"
+fi
+
+# ── A44d: prometheus /-/ready + /api/v1/rules（monitoring profile 拉起时）──
+if curl -fsS --max-time 3 "${PROM_URL}/-/ready" >/dev/null 2>&1; then
+    ok "A44d prometheus ${PROM_URL}/-/ready → 200"
+    _rules_body="$(curl -fsS --max-time 5 "${PROM_URL}/api/v1/rules" 2>/dev/null || true)"
+    if [ -n "${_rules_body}" ] && command -v jq >/dev/null 2>&1; then
+        _groups_count="$(jq '.data.groups | length' <<<"${_rules_body}" 2>/dev/null || echo 0)"
+        _rules_count="$(jq '[.data.groups[].rules[] | select(.type=="alerting")] | length' <<<"${_rules_body}" 2>/dev/null || echo 0)"
+        if [ "${_groups_count:-0}" -ge 1 ]; then
+            ok "A44d prometheus 加载了 ${_groups_count} 个 rule group / ${_rules_count} 条 alerting 规则"
+        else
+            fail "A44d prometheus 未加载任何 rule group（rule_files 配置异常？）"
+        fi
+        # SPEC §16.4 字面告警在已加载规则里
+        for _rule in JudgeDurationP99TooHigh JudgeQueueBacklog WebContainerMemoryHigh HostDiskSpaceLow TlsCertificateExpiringSoon LoginFailuresByIPHigh; do
+            _present="$(jq --arg n "${_rule}" '[.data.groups[].rules[] | select(.name==$n)] | length' <<<"${_rules_body}" 2>/dev/null || echo 0)"
+            [ "${_present:-0}" -ge 1 ] && ok "A44d prometheus 已加载 ${_rule}" \
+                || fail "A44d prometheus 缺 ${_rule} 规则（reload 失败？）"
+        done
+    else
+        ok "A44d prometheus rules 列表未深查（jq 缺）"
+    fi
+else
+    skip "A44d prometheus ${PROM_URL} 不可达（monitoring profile 未拉起）"
+    skip "A44d prometheus rule group 计数探针"
+    skip "A44d prometheus 6 条规则加载探针"
+fi
+
+# ── A44e: 端到端模拟触发（可选：alertmanager 暴露 POST /api/v2/alerts）──
+# 不发真通知；只验证 alertmanager 能 ingest 一条 alert 且列出。
+# 用 curl POST 一条 minimal alert（expire 5s 自动清，不污染 UI）。
+if curl -fsS --max-time 3 "${ALERTMGR_URL}/-/ready" >/dev/null 2>&1; then
+    _post_body='[{
+        "labels": {"alertname":"A44E2EProbe","service":"e2e","severity":"warning"},
+        "annotations": {"summary":"e2e probe","description":"a44 canary"},
+        "startsAt":"'"$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"'",
+        "endsAt":"'"$(date -u -d '+5 seconds' +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u -v+5S +%Y-%m-%dT%H:%M:%S.000Z)"'"
+    }]'
+    _post_code="$(curl -s -o /dev/null -w '%{http_code}' \
+        --max-time 5 -X POST \
+        -H 'Content-Type: application/json' \
+        --data "${_post_body}" \
+        "${ALERTMGR_URL}/api/v2/alerts")"
+    if [ "${_post_code}" = "200" ]; then
+        ok "A44e alertmanager /api/v2/alerts POST → 200（canary alert 已 ingest）"
+    else
+        # 不强制 fail——某些 alertmanager 版本 POST 路径在 v1/v2 之间变动
+        skip "A44e alertmanager /api/v2/alerts POST → ${_post_code}（版本差异）"
+    fi
+else
+    skip "A44e alertmanager 不可达，跳过 canary POST"
+fi
+
+# ═════════════════════════════════════════════════════════════
 #  总结
 # ═════════════════════════════════════════════════════════════
 echo

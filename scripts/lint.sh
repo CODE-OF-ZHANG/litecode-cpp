@@ -11,6 +11,7 @@
 #   3. docker compose config (5 个 profile)
 #   4. log rotation policy (all services: json-file + max-size/max-file)
 #   5. restore_drill.sh 自检（bash -n + 关键环节点 grep）
+#   6. alerting 配置自检（prometheus-alerts.yml + alertmanager.yml 关键环节点）
 #
 # 用法：
 #   ./scripts/lint.sh                # 全跑
@@ -19,6 +20,7 @@
 #   ./scripts/lint.sh compose        # 只 compose 校验
 #   ./scripts/lint.sh logrotate      # 只日志轮转策略校验
 #   ./scripts/lint.sh restore_drill  # 只恢复演练脚本自检
+#   ./scripts/lint.sh alerting       # 只告警配置自检（v1.2.73）
 #
 # 退出码：首个失败步骤的退出码（0 = 全过）
 # =============================================================
@@ -137,6 +139,123 @@ do_logrotate() {
     ok "${total} 个 service 均使用 json-file + max-size=10m + max-file=3"
 }
 
+do_alerting() {
+    info "[alerting] 校验 prometheus-alerts.yml + alertmanager.yml 关键环节点"
+    require_cmd jq
+
+    local alerts="${PROJECT_ROOT}/monitoring/alerting/prometheus-alerts.yml"
+    local amcfg="${PROJECT_ROOT}/monitoring/alerting/alertmanager.yml"
+
+    # 1. 文件存在性 + 行数 sanity
+    for f in "$alerts" "$amcfg"; do
+        if [ ! -f "$f" ]; then
+            err "缺少 ${f}（Phase 9 ★ 告警规则依赖）"
+            return 1
+        fi
+    done
+    local alerts_lines amcfg_lines
+    alerts_lines="$(wc -l < "$alerts")"
+    amcfg_lines="$(wc -l < "$amcfg")"
+    if [ "${alerts_lines}" -lt 80 ]; then
+        err "prometheus-alerts.yml 仅 ${alerts_lines} 行（预期 ≥ 80），疑似退化"
+        return 1
+    fi
+    if [ "${amcfg_lines}" -lt 50 ]; then
+        err "alertmanager.yml 仅 ${amcfg_lines} 行（预期 ≥ 50），疑似退化"
+        return 1
+    fi
+
+    # 2. prometheus-alerts.yml：jq 解析 + SPEC §16.4 11 条规则覆盖度
+    #    SPEC §16.4 列了 6 条（P95 延迟 / 队列 / 内存 / 失败登录 / 磁盘 / 证书），
+    #    我们落地为 11 条 alertname（web/judge/infra 三组，扩出 queue backlog、
+    #    失败率、warm pool、Web 5xx、容器 down、DB pool、磁盘预测线 等）。
+    #    这里只对 SPEC 字面提的 6 类做允许名集合检查 —— 防止某次 refactor
+    #    把核心 alertname 改掉而漏挂。
+    local missing_alerts=()
+    # v1.2.73 SPEC §16.4 字面阈值映射的 alertname（允许命名变体）
+    grep -qE '^      - alert: JudgeDurationP99TooHigh' "$alerts" \
+        || missing_alerts+=('JudgeDurationP99TooHigh (P99 延迟)')
+    grep -qE '^      - alert: JudgeQueueBacklog'        "$alerts" \
+        || missing_alerts+=('JudgeQueueBacklog (队列)')
+    grep -qE '^      - alert: WebContainerMemoryHigh'   "$alerts" \
+        || missing_alerts+=('WebContainerMemoryHigh (Web 内存)')
+    grep -qE '^      - alert: HostDiskSpaceLow'         "$alerts" \
+        || missing_alerts+=('HostDiskSpaceLow (磁盘)')
+    grep -qE '^      - alert: TlsCertificateExpiringSoon' "$alerts" \
+        || missing_alerts+=('TlsCertificateExpiringSoon (证书)')
+    # 失败登录单 IP > 100/小时（SPEC §16.4 写明）—— 当前 metrics.cpp 未暴露
+    # per-IP counter，标 `status="absent"` 占位 alert，等 v1.2.74+ 扩 metrics。
+    grep -qE '^      - alert: LoginFailuresByIPHigh'    "$alerts" \
+        || missing_alerts+=('LoginFailuresByIPHigh (失败登录, 占位)')
+    if [ "${#missing_alerts[@]}" -gt 0 ]; then
+        err "prometheus-alerts.yml 缺失 SPEC §16.4 关键 alertname：${missing_alerts[*]}"
+        return 1
+    fi
+
+    # 3. prometheus-alerts.yml：每条 alert 必带 severity + summary + description
+    #    jq 解析（Prometheus YAML 用 alert 字段做对象锚点；这里走 grep 是
+    #    防止有人手贱删 description 而 promtool 没装时漏检）
+    local no_sev
+    no_sev="$(grep -cE '^[[:space:]]+severity: (critical|warning)' "$alerts" || true)"
+    if [ "${no_sev}" -lt 6 ]; then
+        err "prometheus-alerts.yml 只有 ${no_sev} 条带 severity label（预期 ≥ 6）"
+        return 1
+    fi
+    local no_desc
+    no_desc="$(grep -cE '^[[:space:]]+description:' "$alerts" || true)"
+    if [ "${no_desc}" -lt 6 ]; then
+        err "prometheus-alerts.yml 只有 ${no_desc} 条带 description annotation（预期 ≥ 6）"
+        return 1
+    fi
+
+    # 4. alertmanager.yml：jq 解析 + 必备 receiver / route / inhibit
+    local parse_ok=0
+    if jq -e . "$amcfg" >/dev/null 2>&1; then
+        parse_ok=1
+    elif command -v yq >/dev/null 2>&1 && yq -e . "$amcfg" >/dev/null 2>&1; then
+        parse_ok=1
+    fi
+    if [ "$parse_ok" -eq 0 ]; then
+        # fallback：grep 强约束（jq / yq 都缺时退到字符串级）
+        info "[alerting] jq/yq 都不可用 YAML 深度解析；退到 grep 字符串级"
+    fi
+
+    local missing_amcfg=()
+    grep -qF 'receivers:' "$amcfg"     || missing_amcfg+=('receivers 顶层')
+    grep -qF 'route:' "$amcfg"          || missing_amcfg+=('route 顶层')
+    grep -qF "receiver: 'default-webhook'" "$amcfg" \
+        || missing_amcfg+=("default-webhook receiver")
+    grep -qF "receiver: 'critical-webhook'" "$amcfg" \
+        || missing_amcfg+=("critical-webhook receiver")
+    grep -qF 'inhibit_rules:' "$amcfg"  || missing_amcfg+=('inhibit_rules 抑制')
+    grep -qF 'resolve_timeout:' "$amcfg" \
+        || missing_amcfg+=('global.resolve_timeout')
+    if [ "${#missing_amcfg[@]}" -gt 0 ]; then
+        err "alertmanager.yml 缺失关键字段：${missing_amcfg[*]}"
+        return 1
+    fi
+
+    # 5. 可选：promtool / amtool 静态校验（CI runner apt 装的有）
+    if command -v promtool >/dev/null 2>&1; then
+        info "[alerting] promtool check rules prometheus-alerts.yml"
+        if ! promtool check rules "$alerts"; then
+            err "promtool check rules 失败"
+            return 1
+        fi
+        ok "promtool check rules 通过"
+    fi
+    if command -v amtool >/dev/null 2>&1; then
+        info "[alerting] amtool check-config alertmanager.yml"
+        if ! amtool check-config "$amcfg"; then
+            err "amtool check-config 失败"
+            return 1
+        fi
+        ok "amtool check-config 通过"
+    fi
+
+    ok "alerting 配置自检通过（alerts=${alerts_lines}行 / amcfg=${amcfg_lines}行 / severity≥6 / description≥6）"
+}
+
 do_restore_drill() {
     info "[restore_drill] scripts/restore_drill.sh bash -n + 关键环节点"
     local f="${PROJECT_ROOT}/scripts/restore_drill.sh"
@@ -201,6 +320,7 @@ case "$SUBCMD" in
         do_hadolint
         do_compose
         do_logrotate
+        do_alerting
         do_restore_drill
         echo ""
         ok "全部 lint 通过"
@@ -210,9 +330,10 @@ case "$SUBCMD" in
     dockerfile)    do_hadolint ;;
     compose)       do_compose ;;
     logrotate)     do_logrotate ;;
+    alerting)      do_alerting ;;
     restore_drill) do_restore_drill ;;
     *)
-        echo "用法: $0 {all|shellcheck|hadolint|compose|logrotate|restore_drill}" >&2
+        echo "用法: $0 {all|shellcheck|hadolint|compose|logrotate|alerting|restore_drill}" >&2
         exit 64
         ;;
 esac
