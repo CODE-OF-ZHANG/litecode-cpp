@@ -2,7 +2,9 @@
 # =============================================================
 # LiteCode-CPP — scripts/e2e_acceptance.sh
 # -------------------------------------------------------------
-# Phase 8 ★ E2E 验收脚本 —— 覆盖 SPEC §12.1 全部验收用例 A1–A35（含 A3b）。
+# Phase 8 ★ E2E 验收脚本 —— 覆盖 SPEC §12.1 全部验收用例 A1–A35（含 A3b）
+#                              + Phase 8 A36–A43（v1.2.64–v1.2.67）
+#                              + Phase 9 A44–A45（v1.2.73–v1.2.74）。
 #
 # 定位：在单测 / 集成测 / judge-e2e 之上再压一层「黑盒验收」。
 #       只走公开 HTTP 面（curl + jq）+ 对 web/ 源文件做静态断言，
@@ -1720,6 +1722,133 @@ if curl -fsS --max-time 3 "${ALERTMGR_URL}/-/ready" >/dev/null 2>&1; then
     fi
 else
     skip "A44e alertmanager 不可达，跳过 canary POST"
+fi
+
+# ═════════════════════════════════════════════════════════════
+#  A45 — 性能 Profile 端到端 (Phase 9 △ v1.2.74)
+#
+#  覆盖 SPEC §11 Phase 9「△ 性能 Profile（perf / flamegraph 跑一次
+#  判题热路径）」：把 scripts/perf_profile.sh 三段（HTTP 面 timing
+#  拆解 / Prometheus histogram 采样 / Linux perf + flamegraph）以
+#  委托 + 静态配置两层断言。
+#
+#  - A45a 静态配置：scripts/perf_profile.sh bash -n + 关键环节点
+#    （沿用 v1.2.65 / v1.2.67 / v1.2.72 委托模式：e2e 主体只跑轻
+#    校验，bulk 跑委托给子脚本）
+#  - A45b 静态配置：报告输出路径 docs/performance-profile.md 在仓
+#    + 性能 Profile runbook docs/runbooks/performance-profile.md 在仓
+#  - A45c 端到端：跑 scripts/perf_profile.sh，末行 `PROFILE_RESULT
+#    PASS=N FAIL=N SKIP=N` 反向汇入主计数器（与 v1.2.67 FUZZ_RESULT
+#    / v1.2.72 DRILL_RESULT 同款设计）
+#
+#  缺栈一律 SKIP（profile 是探索性工具，缺前置不应该 fail CI；
+#  PROFILE_STRICT=1 时升级 FAIL）。
+# ═════════════════════════════════════════════════════════════
+PERF_PROFILE_SH="${SCRIPT_DIR}/perf_profile.sh"
+PERF_PROFILE_DOC="${ROOT}/docs/performance-profile.md"
+PERF_PROFILE_RUNBOOK="${ROOT}/docs/runbooks/performance-profile.md"
+
+kase "A45" "性能 Profile 端到端（Phase 9 △ v1.2.74）"
+
+# ── A45a: scripts/perf_profile.sh 静态配置 ──
+if [ ! -f "${PERF_PROFILE_SH}" ]; then
+    skip "A45a 缺少 scripts/perf_profile.sh"
+    skip "A45b 缺少 scripts/perf_profile.sh"
+    skip "A45c 缺少 scripts/perf_profile.sh，无法委托运行"
+else
+    # bash -n
+    if bash -n "${PERF_PROFILE_SH}" 2>/dev/null; then
+        ok "A45a scripts/perf_profile.sh bash -n 通过"
+    else
+        fail "A45a scripts/perf_profile.sh bash -n 失败（语法错）"
+    fi
+
+    # 关键环节点 grep（与 lint.sh perf_profile 子任务同样的硬约束集合，
+    # 这里只 grep 关键 6 项作轻量校验，完整 22 项在 lint.sh 里）
+    _pp_missing=()
+    grep -qF 'PROFILE_RESULT PASS=' "${PERF_PROFILE_SH}" \
+        || _pp_missing+=('PROFILE_RESULT 汇总行')
+    grep -qF 'PROFILE_STRICT'        "${PERF_PROFILE_SH}" \
+        || _pp_missing+=('PROFILE_STRICT 开关')
+    grep -qF 'litecode_judge_duration_seconds' "${PERF_PROFILE_SH}" \
+        || _pp_missing+=('litecode_judge_duration_seconds histogram 引用')
+    grep -qF 'time_starttransfer'    "${PERF_PROFILE_SH}" \
+        || _pp_missing+=('curl -w time_starttransfer TTFB')
+    grep -qF 'perf record'            "${PERF_PROFILE_SH}" \
+        || _pp_missing+=('perf record 调用（Phase C）')
+    grep -qF 'flamegraph.pl'         "${PERF_PROFILE_SH}" \
+        || _pp_missing+=('flamegraph.pl 火焰图（Phase C）')
+    if [ "${#_pp_missing[@]}" -eq 0 ]; then
+        ok "A45a scripts/perf_profile.sh 关键环节点齐（6/6：PROFILE_RESULT + STRICT + histogram + TTFB + perf + flamegraph）"
+    else
+        fail "A45a scripts/perf_profile.sh 缺失关键环节点：${_pp_missing[*]}"
+    fi
+
+    # 行数 sanity
+    _pp_lines="$(wc -l < "${PERF_PROFILE_SH}")"
+    if [ "${_pp_lines}" -ge 250 ]; then
+        ok "A45a scripts/perf_profile.sh 行数=${_pp_lines}（≥ 250）"
+    else
+        fail "A45a scripts/perf_profile.sh 行数=${_pp_lines}（< 250，疑似退化）"
+    fi
+
+    # ── A45b: 输出文档在仓 ──
+    if [ -f "${PERF_PROFILE_RUNBOOK}" ]; then
+        ok "A45b docs/runbooks/performance-profile.md 存在（runbook 入仓）"
+        # runbook 必须含 SPEC §12.2 阈值对照表
+        if grep -qE 'HEALTH_MAX_MS|health.*<.*50ms|< 50ms' "${PERF_PROFILE_RUNBOOK}"; then
+            ok "A45b runbook 含 SPEC §12.2 健康检查 < 50ms 阈值引用"
+        else
+            fail "A45b runbook 缺 SPEC §12.2 健康检查阈值引用"
+        fi
+        if grep -qE 'SUBMIT.*<.*200ms|< 200ms' "${PERF_PROFILE_RUNBOOK}"; then
+            ok "A45b runbook 含 SPEC §12.2 提交 API < 200ms 阈值引用"
+        else
+            fail "A45b runbook 缺 SPEC §12.2 提交 API 阈值引用"
+        fi
+    else
+        fail "A45b docs/runbooks/performance-profile.md 缺失"
+    fi
+
+    # ── A45c: 委托运行 perf_profile.sh（live stack 时）──
+    if [ "${SERVER_UP}" != "1" ]; then
+        skip "A45c 委托 perf_profile.sh（栈缺失；live 时跑）"
+        skip "A45c PROFILE_RESULT 反向汇入（栈缺失）"
+    elif [ -z "${USER_TOK:-}" ] || [ -z "${PID:-}" ]; then
+        skip "A45c 委托 perf_profile.sh（provision 未成功：USER_TOK / PID 缺失）"
+        skip "A45c PROFILE_RESULT 反向汇入（provision 失败）"
+    else
+        # 调小采样避免 e2e 拖太久（默认 20，这里给 5；运行时可在脚本里覆盖）
+        _pp_out="${TMPD}/perf_profile.out"
+        PROFILE_SAMPLES="${PROFILE_SAMPLES:-5}" \
+        BASE_URL="${BASE_URL}" \
+        PROFILE_STRICT="${E2E_STRICT}" \
+        USER_TOK="${USER_TOK}" \
+        ADMIN_TOK="${ADMIN_TOK:-}" \
+        PID="${PID}" \
+        E2E_STRICT="${E2E_STRICT}" \
+        bash "${PERF_PROFILE_SH}" >"${_pp_out}" 2>&1 || true
+        # 透传子用例的 ok/fail 行（让 e2e 主体输出可见 A45 细粒度断言）
+        sed -n '/^── Phase A/,/^PROFILE_RESULT /p' "${_pp_out}" | head -40
+        # 反向汇入主计数器：parse 末行 PROFILE_RESULT 行
+        _pp_last="$(grep -E '^PROFILE_RESULT ' "${_pp_out}" | tail -1)"
+        _pp_pass="$(echo "${_pp_last}" | awk '{print $2}' | cut -d= -f2)"
+        _pp_fail="$(echo "${_pp_last}" | awk '{print $3}' | cut -d= -f2)"
+        _pp_skip="$(echo "${_pp_last}" | awk '{print $4}' | cut -d= -f2)"
+        _pp_pass=${_pp_pass:-0}; _pp_fail=${_pp_fail:-0}; _pp_skip=${_pp_skip:-0}
+        PASS=$((PASS + _pp_pass)); FAIL=$((FAIL + _pp_fail)); SKIP=$((SKIP + _pp_skip))
+        if [ "${_pp_fail}" = "0" ]; then
+            ok "A45c perf_profile.sh 整体无 FAIL（PASS=${_pp_pass} SKIP=${_pp_skip}）"
+        else
+            fail "A45c perf_profile.sh FAIL=${_pp_fail}（PASS=${_pp_pass} SKIP=${_pp_skip}）"
+        fi
+        # 报告再生断言
+        if [ -f "${PERF_PROFILE_DOC}" ]; then
+            ok "A45c docs/performance-profile.md 已再生（运行时产物）"
+        else
+            fail "A45c docs/performance-profile.md 未再生（write_report 失败？）"
+        fi
+    fi
 fi
 
 # ═════════════════════════════════════════════════════════════

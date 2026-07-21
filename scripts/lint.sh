@@ -12,6 +12,7 @@
 #   4. log rotation policy (all services: json-file + max-size/max-file)
 #   5. restore_drill.sh 自检（bash -n + 关键环节点 grep）
 #   6. alerting 配置自检（prometheus-alerts.yml + alertmanager.yml 关键环节点）
+#   7. perf_profile.sh 自检（bash -n + 关键环节点 grep，Phase 9 △ v1.2.74）
 #
 # 用法：
 #   ./scripts/lint.sh                # 全跑
@@ -21,6 +22,7 @@
 #   ./scripts/lint.sh logrotate      # 只日志轮转策略校验
 #   ./scripts/lint.sh restore_drill  # 只恢复演练脚本自检
 #   ./scripts/lint.sh alerting       # 只告警配置自检（v1.2.73）
+#   ./scripts/lint.sh perf_profile   # 只 perf_profile.sh 自检（v1.2.74）
 #
 # 退出码：首个失败步骤的退出码（0 = 全过）
 # =============================================================
@@ -256,6 +258,93 @@ do_alerting() {
     ok "alerting 配置自检通过（alerts=${alerts_lines}行 / amcfg=${amcfg_lines}行 / severity≥6 / description≥6）"
 }
 
+do_perf_profile() {
+    info "[perf_profile] scripts/perf_profile.sh bash -n + 关键环节点"
+    local f="${PROJECT_ROOT}/scripts/perf_profile.sh"
+    if [ ! -f "${f}" ]; then
+        err "缺少 ${f}（Phase 9 △ 性能 Profile 依赖）"
+        return 1
+    fi
+
+    # 1. bash 语法
+    if ! bash -n "${f}"; then
+        err "bash -n perf_profile.sh 失败"
+        return 1
+    fi
+
+    # 2. 关键环节点 grep（防止某次重构把核心骨架改掉）
+    # 每条都可独立 grep -F 匹配；缺一即 fail。
+    local missing=()
+    # PROFILE_RESULT 汇总行（v1.2.67 FUZZ_RESULT / v1.2.72 DRILL_RESULT 同款反向汇入设计）
+    grep -qF 'PROFILE_RESULT PASS=' "${f}" || missing+=('PROFILE_RESULT 汇总行')
+    # PROFILE_STRICT 开关
+    grep -qF 'PROFILE_STRICT'        "${f}" || missing+=('PROFILE_STRICT 开关')
+    # 三段 Phase 标题（A: HTTP timing / B: histogram / C: perf+flamegraph）
+    grep -qF 'run_phase_a'           "${f}" || missing+=('run_phase_a HTTP 面拆解')
+    grep -qF 'run_phase_b'           "${f}" || missing+=('run_phase_b Prometheus histogram')
+    grep -qF 'run_phase_c'           "${f}" || missing+=('run_phase_c Linux perf+flamegraph')
+    # 能力探测（capabilities: ... 行）
+    grep -qF 'capabilities:'         "${f}" || missing+=('capabilities 探测行')
+    # 报告再生（write_report）+ 末行反馈
+    grep -qF 'write_report'          "${f}" || missing+=('write_report 报告再生')
+    grep -qF 'docs/performance-profile.md' "${f}" \
+        || missing+=('docs/performance-profile.md 输出路径')
+    # Phase A：curl 6 阶段 timing 模板 + 分位数
+    grep -qF 'time_namelookup'       "${f}" || missing+=('curl -w time_namelookup 模板')
+    grep -qF 'time_starttransfer'    "${f}" || missing+=('curl -w time_starttransfer TTFB')
+    grep -qF 'percentile()'          "${f}" || missing+=('percentile 分位数 helper')
+    # Phase B：Prometheus histogram 闭环（scrape × 2 + 线性插值反推）
+    grep -qF 'litecode_judge_duration_seconds' "${f}" \
+        || missing+=('litecode_judge_duration_seconds 引用')
+    grep -qF 'histogram_pct'         "${f}" || missing+=('histogram_pct 分位数反推')
+    grep -qF 'scrape_metrics'        "${f}" || missing+=('scrape_metrics 抓取')
+    # Phase C：perf record + docker exec + flamegraph 闭环
+    grep -qF 'perf record'            "${f}" || missing+=('perf record 调用')
+    grep -qF 'docker exec'           "${f}" || missing+=('docker exec 容器内 perf')
+    grep -qF 'stackcollapse-perf.pl'  "${f}" || missing+=('FlameGraph stackcollapse')
+    grep -qF 'flamegraph.pl'         "${f}" || missing+=('FlameGraph flamegraph.pl')
+    grep -qF 'docs/perf-flamegraph.svg' "${f}" \
+        || missing+=('docs/perf-flamegraph.svg 输出')
+    # SPEC §12.2 阈值常量（防止有人改 perf_profile.sh 时把阈值搞丢）
+    grep -qF 'HEALTH_MAX_MS='         "${f}" || missing+=('HEALTH_MAX_MS 阈值常量')
+    grep -qF 'SUBMIT_MAX_MS='         "${f}" || missing+=('SUBMIT_MAX_MS 阈值常量')
+    grep -qF 'PROBLEMS_LIST_MAX_MS='  "${f}" || missing+=('PROBLEMS_LIST_MAX_MS 阈值常量')
+    # 收尾 trap + cleanup
+    grep -qF "trap cleanup EXIT"     "${f}" || missing+=('cleanup EXIT trap')
+    grep -qF 'cleanup()'             "${f}" || missing+=('cleanup 收尾函数')
+    # provision 流程
+    grep -qF '/auth/register'        "${f}" || missing+=('/auth/register 注册')
+    grep -qF '/admin/problems/import' "${f}" || missing+=('bulk-import two-sum')
+    grep -qF 'JUDGE_PROBLEM_SLUG'    "${f}" || missing+=('JUDGE_PROBLEM_SLUG 默认值')
+    grep -qF '/problems/${JUDGE_PROBLEM_SLUG}' "${f}" || missing+=('取 PID')
+    if [ "${#missing[@]}" -gt 0 ]; then
+        err "scripts/perf_profile.sh 缺失关键环节点：${missing[*]}"
+        return 1
+    fi
+
+    # 3. 行数 sanity（合规模的细节，本身不是真理；仅防止「不小心整段删空」类事故）
+    local lines
+    lines="$(wc -l < "${f}")"
+    if [ "${lines}" -lt 250 ]; then
+        err "scripts/perf_profile.sh 仅 ${lines} 行（预期 ≥ 250 行），疑似退化"
+        return 1
+    fi
+
+    # 4. 可选工具探测（不阻断，仅观察）
+    if command -v perf >/dev/null 2>&1; then
+        ok "perf 命令可用（Phase C 可跑）"
+    else
+        info "[perf_profile] perf 命令不可用——Phase C 默认会 skip（容器内有则仍可跑）"
+    fi
+    if [ -x "/opt/FlameGraph/stackcollapse-perf.pl" ] && [ -x "/opt/FlameGraph/flamegraph.pl" ]; then
+        ok "FlameGraph 在 /opt/FlameGraph（Phase C 可跑）"
+    else
+        info "[perf_profile] FlameGraph 不在 /opt/FlameGraph——Phase C 默认会 skip（FLAMEGRAPH_DIR 可覆盖）"
+    fi
+
+    ok "perf_profile.sh bash -n + 关键环节点 + 行数=${lines} 通过"
+}
+
 do_restore_drill() {
     info "[restore_drill] scripts/restore_drill.sh bash -n + 关键环节点"
     local f="${PROJECT_ROOT}/scripts/restore_drill.sh"
@@ -322,6 +411,7 @@ case "$SUBCMD" in
         do_logrotate
         do_alerting
         do_restore_drill
+        do_perf_profile
         echo ""
         ok "全部 lint 通过"
         ;;
@@ -332,8 +422,9 @@ case "$SUBCMD" in
     logrotate)     do_logrotate ;;
     alerting)      do_alerting ;;
     restore_drill) do_restore_drill ;;
+    perf_profile)  do_perf_profile ;;
     *)
-        echo "用法: $0 {all|shellcheck|hadolint|compose|logrotate|alerting|restore_drill}" >&2
+        echo "用法: $0 {all|shellcheck|hadolint|compose|logrotate|alerting|restore_drill|perf_profile}" >&2
         exit 64
         ;;
 esac
