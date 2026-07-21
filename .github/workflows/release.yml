@@ -161,7 +161,7 @@ jobs:
 
       - name: Create GitHub Release
         if: github.event_name == 'push' && !inputs.dry_run
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: ${{ github.ref_name }}
           body_path: changelog.md
