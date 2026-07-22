@@ -15,69 +15,27 @@
     <title>LiteCode · 系统概览</title>
 
     <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. -->
-    <script src="/js/theme-boot.js"></script>
-    <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/theme-boot.js?v=1.3.3.2"></script>
+    <link rel="stylesheet" href="/css/style.css?v=1.3.3.2">
 </head>
 <body>
     <div data-nav></div>
 
-    <main class="lc-container">
-        <!--
-          Page header. Phase 5 ★ 管理后台 - 系统概览页面 — admin
-          landing page. Five responsibilities:
-            1. Show the high-level site health at a glance.
-            2. Surface queue / warm-pool state so admins can spot
-               back-pressure before users start complaining.
-            3. Surface submission distribution so anomalies (sudden
-               CE / SE spike) are visible.
-            4. Show the most recent N submissions for fast triage.
-            5. Auto-refresh every 10s while the page is visible
-               (paused on document.hidden).
-
-          Header actions: a manual "刷新" button (no auto-refresh
-          spinner kept on — the auto-refresh indicator is the
-          small pulsing dot next to the "实时" label) and the
-          "实时/已暂停" status chip that reflects whether the
-          polling loop is active.
-
-          API contract (Phase 6 ★ 管理员系统统计 API + Phase 4
-          /api/v1/health already live):
-            GET /api/v1/admin/stats  → { data: { ... } }
-              problems      : { total, by_difficulty: { easy, medium, hard } }
-              users         : { total, admins }
-              submissions   : { total, last_24h,
-                                by_status: { ac, wa, tle, mle, re,
-                                             ole, pe, ce, se, pending, running } }
-              queue         : { size, max_size, max_concurrent, running }
-              warm_pool     : { size, max }
-              uptime_seconds: number
-              recent_submissions: [ SubmissionRow, ... ]   // last 8
-            GET /api/v1/health      → top-level: { status, db, docker,
-                                queue_size, warm_pool, uptime_seconds, checks }
-            GET /api/v1/submissions?limit=N
-                                → { data: { items: [...], total, limit, offset } }
-                                  (used as a fallback when /admin/stats
-                                   isn't implemented yet — Phase 6 still pending)
-
-          All three endpoints are admin-gated (Phase 6). When the
-          dedicated stats endpoint returns 404 the page gracefully
-          falls back to the live health endpoint + a recent-submissions
-          panel sourced from /api/v1/submissions, so the dashboard is
-          useful TODAY even before Phase 6 lands.
-        -->
-        <header class="lc-row lc-row--between"
-                style="margin-bottom: var(--lc-space-5);">
-            <div class="lc-stack-sm">
-                <p class="lc-hero__eyebrow">管 理 台 · ADMIN</p>
-                <h1>系统概览</h1>
-                <p class="lc-form-help" id="header-summary">
-                    服务健康、判题队列、提交分布 — 一屏看全。
-                </p>
-            </div>
-            <div class="lc-row" style="gap: var(--lc-space-2);">
-                <!-- Auto-refresh status chip. Pulses green while the
-                     polling loop is running, sits idle (gray dot)
-                     when the tab is hidden or polling was paused. -->
+    <div class="lc-v4-page">
+        <!-- v1.3.3.5: admin 5 页统一 v4 chrome -->
+        <header class="lc-v4-page-header">
+            <nav class="lc-v4-breadcrumb" aria-label="breadcrumb">
+                <a href="/index.html">首页</a>
+                <li aria-current="page">管理后台</li>
+            </nav>
+            <nav class="lc-v4-admin-nav" aria-label="admin">
+                <a href="/admin/dashboard.html"  aria-current="page">系统概览</a>
+                <a href="/admin/problems.html">题目管理</a>
+                <a href="/admin/users.html">用户管理</a>
+                <a href="/admin/audit-logs.html">审计日志</a>
+            </nav>
+            <div class="lc-v4-page-header__row">
+                <h1 class="lc-v4-page-header__title">系统<em>概览</em></h1>
                 <span class="lc-sse-status"
                       id="auto-refresh-chip"
                       data-mode="polling"
@@ -86,13 +44,18 @@
                           aria-hidden="true"></span>
                     <span id="auto-refresh-label">实时</span>
                 </span>
-                <button type="button" class="lc-btn"
+                <button type="button" class="lc-v4-btn lc-v4-btn--ghost lc-v4-btn--lg"
                         id="reload-btn"
-                        title="立即刷新一次">
+                        title="立即刷新一次"
+                        style="margin-left: auto;">
                     刷新
                 </button>
             </div>
+            <p class="lc-v4-page-header__lede" id="header-summary">
+                服务健康、判题队列、提交分布 — 一屏看全。
+            </p>
         </header>
+
 
         <!--
           Container that swaps between four top-level states:
@@ -379,9 +342,9 @@
     </main>
 
     <!-- Load order is mandatory: csp.js → api.js → app.js. -->
-    <script src="/js/csp.js" defer></script>
-    <script src="/js/api.js" defer></script>
-    <script src="/js/app.js" defer></script>
+    <script src="/js/csp.js?v=1.3.3.2" defer></script>
+    <script src="/js/api.js?v=1.3.3.2" defer></script>
+    <script src="/js/app.js?v=1.3.3.2" defer></script>
 
     <script>
     // ────────────────────────────────────────────────────────────────────

@@ -16,33 +16,33 @@
     <title>LiteCode · 编辑题目</title>
 
     <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. -->
-    <script src="/js/theme-boot.js"></script>
-    <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/theme-boot.js?v=1.3.3.2"></script>
+    <link rel="stylesheet" href="/css/style.css?v=1.3.3.2">
 </head>
 <body>
     <div data-nav></div>
 
-    <main class="lc-container">
-        <!--
-          Page header is mode-aware: "新建题目" vs "编辑题目 <slug>".
-          We update the title from JS once we know whether we're in
-          create or edit mode (URL slug param present).
-        -->
-        <header class="lc-row lc-row--between"
-                style="margin-bottom: var(--lc-space-5);">
-            <div class="lc-stack-sm">
-                <p class="lc-hero__eyebrow">管 理 台 · ADMIN</p>
-                <h1 id="page-title">题目</h1>
-                <p class="lc-form-help" id="page-subtitle">…</p>
-            </div>
-            <div class="lc-row" style="gap: var(--lc-space-2);">
-                <a href="/admin/problems.html"
-                   class="lc-btn lc-btn--ghost">返回列表</a>
-                <button type="submit" form="problem-form"
-                        class="lc-btn lc-btn--primary"
-                        id="submit-btn">保存</button>
-            </div>
+    <main class="lc-v4-page">
+        <header class="lc-v4-page-header">
+            <nav class="lc-v4-breadcrumb" aria-label="breadcrumb">
+                <a href="/index.html">首页</a>
+                <a href="/admin/problems.html">题目管理</a>
+                <li aria-current="page">编辑题目</li>
+            </nav>
+            <nav class="lc-v4-admin-nav" aria-label="admin">
+                <a href="/admin/dashboard.html">系统概览</a>
+                <a href="/admin/problems.html"  aria-current="page">题目管理</a>
+                <a href="/admin/users.html">用户管理</a>
+                <a href="/admin/audit-logs.html">审计日志</a>
+            </nav>
+            <h1 class="lc-v4-page-header__title" id="page-title">题目<em>管理</em></h1>
+            <p class="lc-v4-page-header__lede" id="page-subtitle">…</p>
         </header>
+        <!--
+          v1.3.3.5: 把表单顶部的 toolbar 搬到 v4-page-header__toolbar
+          (顶部已合并 breadcrumb + admin nav + title + actions) —
+          见第 22-39 行。下方只保留 form 本体与表单级 error envelope。
+        -->
 
         <!--
           Form-level error envelope. We surface the most recent
@@ -309,10 +309,10 @@
       The Markdown prewarm kicks off as soon as the page loads so the
       first keystroke's preview doesn't wait on a CDN round-trip.
     -->
-    <script src="/js/csp.js" defer></script>
-    <script src="/js/markdown.js" defer></script>
-    <script src="/js/api.js" defer></script>
-    <script src="/js/app.js" defer></script>
+    <script src="/js/csp.js?v=1.3.3.2" defer></script>
+    <script src="/js/markdown.js?v=1.3.3.2" defer></script>
+    <script src="/js/api.js?v=1.3.3.2" defer></script>
+    <script src="/js/app.js?v=1.3.3.2" defer></script>
 
     <script>
     // ────────────────────────────────────────────────────────────────────

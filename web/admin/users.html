@@ -15,38 +15,41 @@
     <title>LiteCode · 用户管理</title>
 
     <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. -->
-    <script src="/js/theme-boot.js"></script>
-    <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/theme-boot.js?v=1.3.3.2"></script>
+    <link rel="stylesheet" href="/css/style.css?v=1.3.3.2">
 </head>
 <body>
     <div data-nav></div>
 
-    <main class="lc-container">
-        <!--
-          Page header: title + summary stats (total / admins) +
-          one primary action (refresh). Phase 5 ★ 管理后台 - 用户管理页面
-          does NOT have a "create user" button — registration is on the
-          public /register.html page (Phase 2 ★). Admin power here is
-          limited to role mutation + viewing.
-        -->
-        <header class="lc-row lc-row--between"
-                style="margin-bottom: var(--lc-space-5);">
-            <div class="lc-stack-sm">
-                <p class="lc-hero__eyebrow">管 理 台 · ADMIN</p>
-                <h1>用户管理</h1>
-                <p class="lc-form-help" id="header-summary">
-                    浏览全部用户、调整角色与查看最近登录活动。
-                    所有角色变更均会写入 audit_logs。
-                </p>
-            </div>
-            <div class="lc-row" style="gap: var(--lc-space-2);">
-                <button type="button" class="lc-btn"
+    <main class="lc-v4-page">
+        <header class="lc-v4-page-header">
+            <nav class="lc-v4-breadcrumb" aria-label="breadcrumb">
+                <a href="/index.html">首页</a>
+                <li aria-current="page">管理后台</li>
+            </nav>
+            <nav class="lc-v4-admin-nav" aria-label="admin">
+                <a href="/admin/dashboard.html">系统概览</a>
+                <a href="/admin/problems.html">题目管理</a>
+                <a href="/admin/users.html"     aria-current="page">用户管理</a>
+                <a href="/admin/audit-logs.html">审计日志</a>
+            </nav>
+            <h1 class="lc-v4-page-header__title">用户<em>管理</em></h1>
+            <p class="lc-v4-page-header__lede" id="header-summary">
+                浏览全部用户、调整角色与查看最近登录活动。所有角色变更均会写入 audit_logs。
+            </p>
+            <div class="lc-v4-page-header__toolbar">
+                <button type="button" class="lc-v4-btn lc-v4-btn--ghost"
                         id="reload-btn"
                         title="刷新列表">
                     刷新
                 </button>
             </div>
         </header>
+
+        <!--
+          Page header 为新版本(顶部已迁到 lc-v4-page-header__toolbar)，
+          这里删除老的副本避免与 breadcrumb / admin nav 重复显示。
+        -->
 
         <!--
           Filter card. Mirrors /admin/problems.html's filter card so
@@ -185,9 +188,9 @@
     </main>
 
     <!-- Load order is mandatory: csp.js → api.js → app.js. -->
-    <script src="/js/csp.js" defer></script>
-    <script src="/js/api.js" defer></script>
-    <script src="/js/app.js" defer></script>
+    <script src="/js/csp.js?v=1.3.3.2" defer></script>
+    <script src="/js/api.js?v=1.3.3.2" defer></script>
+    <script src="/js/app.js?v=1.3.3.2" defer></script>
 
     <script>
     // ────────────────────────────────────────────────────────────────────

@@ -15,66 +15,28 @@
     <title>LiteCode · 审计日志</title>
 
     <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. -->
-    <script src="/js/theme-boot.js"></script>
-    <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/theme-boot.js?v=1.3.3.2"></script>
+    <link rel="stylesheet" href="/css/style.css?v=1.3.3.2">
 </head>
 <body>
     <div data-nav></div>
 
-    <main class="lc-container">
-        <!--
-          Page header. Phase 5 ★ 管理后台 - 审计日志页面 — the
-          compliance-facing page that answers "what did admins do,
-          and when, and from where?" for the audit_logs table
-          (SPEC §4.2d / §15.6 / A17 / A18 / A20 / A27).
-
-          Three responsibilities live at the header:
-            1) Title + one-line summary ("X 条审计记录").
-            2) Manual "刷新" button — auto-refresh runs on a 30s
-               timer below (matches the dashboard's pause-on-hidden
-               pattern).
-            3) Auto-refresh chip ("实时" / "已暂停") so the admin
-               can see whether the polling loop is active.
-
-          API contract (Phase 6 ★ 审计日志 API):
-            GET /api/v1/admin/audit-logs
-                ?limit=N&offset=N
-                &admin_id=N           (optional, filter to one admin)
-                &action=str           (optional, e.g. "problem.delete")
-                &target_type=str      (optional, e.g. "problem")
-                &target_id=str        (optional, e.g. slug or user id)
-                &since=YYYY-MM-DD     (optional, created_at >= since)
-                &until=YYYY-MM-DD     (optional, created_at <  until)
-              → { data: { items: [AuditRow, ...], total, limit, offset } }
-            AuditRow = { id, admin_id?, action, target_type?, target_id?,
-                         payload?, ip?, created_at }
-
-          No write endpoints — audit_logs is append-only. The detail
-          drawer reads the row's full payload from the same response
-          (we already have it, no second round-trip needed).
-        -->
-        <header class="lc-row lc-row--between"
-                style="margin-bottom: var(--lc-space-5);">
-            <div class="lc-stack-sm">
-                <p class="lc-hero__eyebrow">管 理 台 · ADMIN</p>
-                <h1>审计日志</h1>
-                <p class="lc-form-help" id="header-summary">
-                    浏览管理员的关键操作记录（删题 / 改角色 / 批量导入 / 登录失败等）。
-                </p>
-            </div>
-            <div class="lc-row" style="gap: var(--lc-space-2);">
-                <span class="lc-sse-status"
-                      id="auto-refresh-chip"
-                      data-mode="polling"
-                      title="每 30 秒自动刷新；切到后台标签时自动暂停">
-                    <span class="lc-sse-status__dot lc-sse-status__dot--polling"
-                          aria-hidden="true"></span>
-                    <span id="auto-refresh-label">实时</span>
-                </span>
-                <button type="button" class="lc-btn"
-                        id="reload-btn"
-                        title="立即刷新一次">刷新</button>
-            </div>
+    <div class="lc-v4-page">
+        <header class="lc-v4-page-header">
+            <nav class="lc-v4-breadcrumb" aria-label="breadcrumb">
+                <a href="/index.html">首页</a>
+                <li aria-current="page">管理后台</li>
+            </nav>
+            <nav class="lc-v4-admin-nav" aria-label="admin">
+                <a href="/admin/dashboard.html">系统概览</a>
+                <a href="/admin/problems.html">题目管理</a>
+                <a href="/admin/users.html">用户管理</a>
+                <a href="/admin/audit-logs.html" aria-current="page">审计日志</a>
+            </nav>
+            <h1 class="lc-v4-page-header__title">审计<em>日志</em></h1>
+            <p class="lc-v4-page-header__lede" id="header-summary">
+                浏览管理员的关键操作记录（删题 / 改角色 / 批量导入 / 登录失败等）。
+            </p>
         </header>
 
         <!--
@@ -299,9 +261,9 @@
     </div>
 
     <!-- Load order is mandatory: csp.js → api.js → app.js. -->
-    <script src="/js/csp.js" defer></script>
-    <script src="/js/api.js" defer></script>
-    <script src="/js/app.js" defer></script>
+    <script src="/js/csp.js?v=1.3.3.2" defer></script>
+    <script src="/js/api.js?v=1.3.3.2" defer></script>
+    <script src="/js/app.js?v=1.3.3.2" defer></script>
 
     <script>
     // ────────────────────────────────────────────────────────────────────

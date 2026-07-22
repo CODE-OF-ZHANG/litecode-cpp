@@ -7,8 +7,8 @@
           content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
     <title>LiteCode · 个人主页</title>
     <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. -->
-    <script src="/js/theme-boot.js"></script>
-    <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/theme-boot.js?v=1.3.3.2"></script>
+    <link rel="stylesheet" href="/css/style.css?v=1.3.3.2">
 </head>
 <body>
     <!--
@@ -45,57 +45,64 @@
     -->
     <div data-nav></div>
 
-    <main class="lc-container">
-        <header class="lc-stack" style="margin-bottom: var(--lc-space-6);">
-            <p class="lc-hero__eyebrow">个 人 · PROFILE</p>
-            <h1 id="page-title">个人主页</h1>
-            <p id="page-subtitle" class="lc-form-help" aria-live="polite">正在加载做题统计…</p>
+    <div class="lc-v4-page">
+        <header class="lc-v4-page-header">
+            <nav class="lc-v4-breadcrumb" aria-label="breadcrumb">
+                <a href="/index.html">首页</a>
+                <li aria-current="page">个人主页</li>
+            </nav>
+            <h1 class="lc-v4-page-header__title" id="page-title">个人<em>主页</em></h1>
+            <p id="page-subtitle" class="lc-v4-page-header__lede" aria-live="polite">正在加载做题统计…</p>
         </header>
 
         <!-- Loading -->
-        <div class="lc-loading" id="loading-state">
-            <span class="lc-spinner" aria-hidden="true"></span>
-            <span>加载中…</span>
+        <div class="lc-v4-state" id="loading-state">
+            <div class="lc-v4-state__icon" aria-hidden="true">⟳</div>
+            <p class="lc-v4-state__title">加载中…</p>
+            <p class="lc-v4-state__lede">正在读取你的做题统计。</p>
         </div>
 
         <!-- Error -->
-        <section class="lc-error" id="error-state" hidden>
-            <div class="lc-error__title">加载失败</div>
-            <p class="lc-form-help" id="error-message"></p>
-            <div class="lc-row" style="gap: 8px; margin-top: 12px;">
-                <button type="button" class="lc-btn lc-btn--primary" id="retry-btn">重试</button>
-                <a href="/login.html" class="lc-btn lc-btn--ghost">前往登录</a>
+        <div class="lc-v4-state" id="error-state" hidden>
+            <div class="lc-v4-state__icon" aria-hidden="true">⚠</div>
+            <p class="lc-v4-state__title">加载失败</p>
+            <p class="lc-v4-state__lede" id="error-message"></p>
+            <div class="lc-v4-page-header__toolbar" style="margin-top: 18px;">
+                <button type="button" class="lc-v4-btn lc-v4-btn--primary" id="retry-btn">重试</button>
+                <a href="/login.html" class="lc-v4-btn lc-v4-btn--ghost">前往登录</a>
             </div>
-        </section>
+        </div>
 
         <!-- Cross-user notice (viewing someone else's profile) -->
-        <section class="lc-card" id="foreign-state" hidden>
-            <h2 style="margin-top:0;">查看他人主页</h2>
-            <p class="lc-profile-notice" id="foreign-message"></p>
-            <a class="lc-btn lc-btn--primary" id="foreign-self-link" href="/profile.html">查看我的主页</a>
+        <section class="lc-v4-card" id="foreign-state" hidden style="padding: 28px;">
+            <span class="lc-v4-eyebrow">查看他人</span>
+            <h2 style="margin: 12px 0 8px; font-size: 22px;">查看他人主页</h2>
+            <p class="lc-v4-lede" id="foreign-message"></p>
+            <a class="lc-v4-btn lc-v4-btn--primary" id="foreign-self-link" href="/profile.html" style="margin-top: 16px;">查看我的主页</a>
         </section>
 
         <!-- Profile content -->
         <div id="profile-content" hidden>
-            <section class="lc-card">
-                <div class="lc-profile-head">
-                    <div class="lc-avatar lc-avatar--lg" id="avatar"></div>
-                    <div class="lc-profile-head__body">
-                        <h2 class="lc-profile-head__name" id="display-name"></h2>
-                        <div class="lc-profile-head__meta">
-                            <span id="role-badge"></span>
-                            <span id="joined-at"></span>
-                            <span id="last-login" class="lc-form-help"></span>
-                        </div>
+            <section class="lc-v4-card lc-v4-identity-card">
+                <div class="lc-v4-avatar-xl" id="avatar">?</div>
+                <div>
+                    <h2 class="lc-v4-identity__name" id="display-name"></h2>
+                    <div class="lc-v4-identity__meta">
+                        <span id="role-badge"></span>
+                        <span id="joined-at"></span>
+                        <span id="last-login"></span>
                     </div>
                 </div>
-
-                <div class="lc-stat-grid" id="stat-grid"></div>
             </section>
 
-            <section class="lc-card">
-                <h3 class="lc-section-title" style="margin-top:0;">难度分布（已解决 / 题目总数）</h3>
-                <div class="lc-breakdown" id="difficulty-breakdown"></div>
+            <section class="lc-v4-card" style="padding: 28px; margin-bottom: 20px;">
+                <h3 style="margin-top:0; font-size: 18px; font-weight: 700; color: var(--lc-v4-slate-900);">关键指标</h3>
+                <div class="lc-v4-kpi-grid" id="stat-grid" style="margin: 16px 0 0;"></div>
+            </section>
+
+            <section class="lc-v4-card" style="padding: 28px; margin-bottom: 20px;">
+                <h3 style="margin-top:0; font-size: 18px; font-weight: 700; color: var(--lc-v4-slate-900);">难度分布（已解决 / 题目总数）</h3>
+                <div id="difficulty-breakdown" style="margin-top: 16px;"></div>
             </section>
 
             <section class="lc-card">
@@ -159,12 +166,12 @@
                 <p class="lc-form-help" id="stats-note" hidden></p>
             </section>
         </div>
-    </main>
+    </div> <!-- /.lc-v4-page -->
 
     <!-- Load order is mandatory: csp.js → api.js → app.js. -->
-    <script src="/js/csp.js" defer></script>
-    <script src="/js/api.js" defer></script>
-    <script src="/js/app.js" defer></script>
+    <script src="/js/csp.js?v=1.3.3.2" defer></script>
+    <script src="/js/api.js?v=1.3.3.2" defer></script>
+    <script src="/js/app.js?v=1.3.3.2" defer></script>
 
     <script>
     (function () {
