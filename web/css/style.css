@@ -1621,7 +1621,16 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     padding: 0 var(--lc-space-2);
 }
 .lc-editor-shell .CodeMirror-cursor {
-    border-left: 1px solid var(--lc-color-text);
+    border-left: 2px solid var(--lc-color-text) !important;
+    border-right: none !important;
+    width: 0 !important;
+    margin-left: -1px;
+    background: transparent !important;
+    /* CM hides the multi-cursor container until the editor is focused,
+       but the cursor itself is always painted by its own border. The
+       visibility guard below keeps CM's :focus visibility logic
+       intact while ensuring the bar is never pushed off-screen. */
+    visibility: visible;
 }
 .lc-editor-shell .CodeMirror-selected {
     background: rgba(15, 23, 42, 0.10) !important;
@@ -1645,7 +1654,12 @@ html.dark .lc-editor-shell .CodeMirror-gutters {
     color: var(--lc-color-text-muted);
 }
 html.dark .lc-editor-shell .CodeMirror-cursor {
-    border-left: 1px solid var(--lc-color-text);
+    border-left: 2px solid var(--lc-color-text) !important;
+    border-right: none !important;
+    width: 0 !important;
+    margin-left: -1px;
+    background: transparent !important;
+    visibility: visible;
 }
 html.dark .lc-editor-shell .CodeMirror-linenumber {
     color: var(--lc-color-text-muted);
@@ -1671,6 +1685,11 @@ html.dark .lc-editor-shell .CodeMirror-activeline-background {
     line-height: 1.55;
     background: var(--lc-color-surface);
     color: var(--lc-color-text);
+    /* v1.3.3.7: explicit caret color so the native textarea's blink
+       is visible — CM cursor rule above doesn't cover the fallback
+       (no CM at all on the page) and a missing caret-color tokens
+       to some browsers rendering the native caret invisible. */
+    caret-color: var(--lc-color-text);
     tab-size: 4;
 }
 .lc-editor-shell textarea#code-textarea:focus {
