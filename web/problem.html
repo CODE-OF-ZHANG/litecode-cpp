@@ -461,6 +461,14 @@
         // Status badge mapping (matches the existing .lc-status--* tokens
         // in style.css; kept in lock-step here so a server-side status
         // string always maps to a defined class).
+        // v1.3.3.6 (user bug report "加载失败 initialHash is not defined"):
+        // hoist `initialHash` to the IIFE top so any early reference
+        // (e.g. loadProblem's .then at line ~1443 before the DOMContentLoaded
+        // listener runs the actual `tabHistoryParseHash()` assignment) sees
+        // `null` instead of throwing a ReferenceError. The real value is
+        // assigned later inside the listener; until then, the hash deep-link
+        // is silently skipped (it was optional UX, not a critical path).
+        var initialHash = null;
         var STATUS_LABEL = {
             pending: '排队中',
             running: '运行中',
@@ -2213,7 +2221,12 @@
             // Hash → initial tab. If the URL is `…#history` or
             // `…#history&status=ac&page=2`, jump straight into the
             // history view with that filter+pagination restored.
-            var initialHash = tabHistoryParseHash();
+            // v1.3.3.6: assignment only — declaration is hoisted to
+            // the IIFE top (see STATUS_LABEL area). Without that,
+            // a ReferenceError on the first loadProblem() call's
+            // .then() handler would flip the page into the error
+            // state with "initialHash is not defined" as the message.
+            initialHash = tabHistoryParseHash();
             if (initialHash && initialHash.open) {
                 tabHistoryState.status = initialHash.status || '';
                 tabHistoryState.page   = initialHash.page   || 0;
