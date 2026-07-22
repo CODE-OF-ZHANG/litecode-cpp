@@ -24,8 +24,8 @@
     <title>LiteCode · 刷题</title>
 
     <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. -->
-    <script src="/js/theme-boot.js"></script>
-    <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/theme-boot.js?v=1.3.3.2"></script>
+    <link rel="stylesheet" href="/css/style.css?v=1.3.3.2">
 </head>
 <body>
     <div data-nav></div>
@@ -399,17 +399,17 @@
       csp.js is loaded first so api.js / app.js / markdown.js can
       reference the SRI registry (litecode.csp.SCRIPTS) at boot.
     -->
-    <script src="/js/csp.js" defer></script>
-    <script src="/js/markdown.js" defer></script>
-    <script src="/js/api.js" defer></script>
-    <script src="/js/app.js" defer></script>
+    <script src="/js/csp.js?v=1.3.3.2" defer></script>
+    <script src="/js/markdown.js?v=1.3.3.2" defer></script>
+    <script src="/js/api.js?v=1.3.3.2" defer></script>
+    <script src="/js/app.js?v=1.3.3.2" defer></script>
     <!--
       v1.3.2 — web/js/editor.js module (litecode.editor.*). Loaded
       after app.js so its IIFE registers `window.litecode.editor`
       for the inline IIFE below; consumes SRI-pinned CodeMirror +
       clike mode from csp.js like the previous in-page bootstrap.
     -->
-    <script src="/js/editor.js" defer></script>
+    <script src="/js/editor.js?v=1.3.3.2" defer></script>
 
     <script>
     // ────────────────────────────────────────────────────────────────────
@@ -2230,7 +2230,7 @@
             litecode.editor.loadCodemirror().then(function (ok) {
                 // Mount the editor with an empty default; it gets
                 // replaced once the problem (and its draft) loads.
-                litecode.editor.mountEditor(litecode.editor.templateForLang(state.lang] || '', state.lang);
+                litecode.editor.mountEditor(litecode.editor.templateForLang(state.lang || '', state.lang));
             });
             loadProblem();
         });
