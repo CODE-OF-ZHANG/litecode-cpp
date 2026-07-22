@@ -112,20 +112,30 @@
     // can't swap the bytes. All sha384 values were generated from
     // the bytes served by cdn.jsdelivr.net on the pinned version;
     // see the comment at the top of this file for the recompute steps.
+    //
+    // v1.3.3 perf: CodeMirror 5.65.16 (3 files: lib + mode/clike +
+    // stylesheet) was MOVED to /vendor/codemirror/ to avoid a
+    // cold-cache 5×3s CDN penalty on first problem.html visit in
+    // dev (Windows + cdnjs occasionally returns SSL reset; the
+    // CDN round-trip also saturates the critical-path network
+    // bandwidth for any user behind a slow uplink). Integrity
+    // hashes are KEPT — the local bytes are byte-identical to
+    // the cdnjs ones, so the browser still validates and the load
+    // fails closed if the asset ever drifts.
     var SCRIPTS = {
         marked: {
-            url:        'https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js',
+            url:        '/vendor/marked/marked.min.js',
             integrity:  'sha384-/TQbtLCAerC3jgaim+N78RZSDYV7ryeoBCVqTuzRrFec2akfBkHS7ACQ3PQhvMVi',
-            crossOrigin:'anonymous',
+            // same-origin after v1.3.3 CDN-local move; integrity still
+            // validated by the browser.
             // sha256 is also accepted but kept out of the registry — a
             // CSP-relevant answer is "which hash did the browser use?":
             // it's always the FIRST valid one in `integrity`.
             size:       35479,
         },
         dompurify: {
-            url:        'https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js',
+            url:        '/vendor/dompurify/purify.min.js',
             integrity:  'sha384-+VfUPEb0PdtChMwmBcBmykRMDd+v6D/oFmB3rZM/puCMDYcIvF968OimRh4KQY9a',
-            crossOrigin:'anonymous',
             size:       21496,
         },
         // CodeMirror 5.65.16 — problem.html loads it dynamically so
@@ -135,18 +145,21 @@
         // ES-module shenanigans, (b) 6.x's split bundles don't have
         // a single canonical sha384 to pin. See problem.html /
         // editor-bootstrap for the load sequence.
+        //
+        // v1.3.3 perf: served from /vendor/codemirror/ — see top
+        // of this section.
         codemirror: {
-            url:        'https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.js',
+            url:        '/vendor/codemirror/lib/codemirror.min.js',
             integrity:  'sha384-CtBuRlcKITyrd+aBeTPNFB1/T8+kvtNQiWMCLtiGvD6NpLOJAdt8e8PpJJ2Gn1D0',
-            crossOrigin:'anonymous',
+            // same-origin so crossOrigin would be 'same-origin' or omit;
+            // we still leave integrity so a wrong byte fails closed.
             size:       173953,
         },
         // C/C++ mode for CodeMirror 5. 'clike' is the upstream name
         // for the C-like-family tokenizer (C / C++ / Java / JS / etc.).
         'codemirror-clike': {
-            url:        'https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/clike/clike.min.js',
+            url:        '/vendor/codemirror/mode/clike/clike.min.js',
             integrity:  'sha384-ZS86VwH8VodbCs4EeYNX2wCKSJpCZfGlrTWe2cFgaqyafruHBCCuZcP2vfCz+V9Q',
-            crossOrigin:'anonymous',
             size:       21368,
         },
     };
@@ -161,11 +174,12 @@
     // csp.js change can rotate the hash without touching every page.
     // Browsers DO honor `integrity` on <link> elements; the load
     // fails closed if the bytes drift.
+    //
+    // v1.3.3 perf: codemirror stylesheet moved to /vendor too.
     var STYLESHEETS = {
         codemirror: {
-            url:        'https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.css',
+            url:        '/vendor/codemirror/lib/codemirror.min.css',
             integrity:  'sha384-phfEUVAmRZV1Pzn/Xgxc3NH6zPMDuer0wHU9jRQKhNBBLyV4MP1gaBY1sxfxxPRT',
-            crossOrigin:'anonymous',
             size:       6378,
         },
     };
