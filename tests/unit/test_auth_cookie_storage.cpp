@@ -616,20 +616,49 @@ TEST_F(AuthCookieStorageLiveFixture, RefreshFromCookieHeaderRotatesTheCookie) {
 }
 
 TEST_F(AuthCookieStorageLiveFixture, LogoutClearsCookieWithMaxAgeZero) {
+    // v1.3.3.8 ★ — strengthened Phase 5 cookie-aware assertion.
+    //
+    // Pre-v1.3.3.8 this test only verified the Set-Cookie wire shape
+    // after a Bearer-only logout (no cookie presented). That was a
+    // half-truth: the handler was returning 200 *without* actually
+    // consulting the cookie (cookie was registered, not parsed) so
+    // production logout never revoked anything via the cookie
+    // refresh-token path.
+    //
+    // v1.3.3.8 makes the cookie the canonical refresh source. This
+    // test now drives the full Phase 5 round-trip: login → refresh
+    // token in `lc_refresh` cookie → Bearer logout → 200 with
+    // `revoked=true` AND the jti lands on the blacklist AND the
+    // Set-Cookie clears the cookie on the wire.
     StdoutSilencer silencer;
     const std::string username = create_user_with_password("hunter22", "lo");
     const auto login = login_and_get_tokens(username, "hunter22");
     const std::string access_token = login["access_token"].get<std::string>();
+    const std::string refresh     = login["refresh_token"].get<std::string>();
 
-    // /auth/logout requires a Bearer access token; cookie alone is not
-    // sufficient because the cookie is only consulted by /auth/refresh
-    // (not /auth/logout, per SPEC §15.1 "Bearer gates logout").
-    httplib::Headers hdrs = {{"Authorization", "Bearer " + access_token}};
+    // Pre-flight: refresh should NOT be on the blacklist yet.
+    const litecode::Claims pre_claims = litecode::verify(
+        refresh, dev_jwt().secret, dev_jwt().issuer, litecode::TokenKind::Refresh);
+    EXPECT_FALSE(store->is_revoked(pre_claims.jti));
+
+    // /auth/logout requires a Bearer access token (SPEC §5.1 "已登录");
+    // v1.3.3.8 makes the refresh token sourced from the `lc_refresh`
+    // cookie when present (Phase 5 ★ HttpOnly).
+    httplib::Headers hdrs = {
+        {"Authorization", "Bearer " + access_token},
+        {"Cookie",        "lc_refresh=" + refresh},
+    };
     const auto r = handle.client->Post(
         "/api/v1/auth/logout", hdrs, std::string{}, "application/json");
     ASSERT_TRUE(r) << "logout failed: " << r.error();
     ASSERT_EQ(r->status, 200) << "body=" << r->body;
 
+    // 1. Response envelope — revoked=true because we did present a cookie.
+    const auto body = nlohmann::json::parse(r->body);
+    EXPECT_EQ(body["data"]["logged_out"], true);
+    EXPECT_EQ(body["data"]["revoked"],    true);
+
+    // 2. Set-Cookie clears the cookie (Max-Age=0, same name + path).
     const std::string set_cookie = r->get_header_value("Set-Cookie");
     EXPECT_NE(set_cookie.find("lc_refresh="), std::string::npos)
         << "logout must clear the cookie; got: " << set_cookie;
@@ -637,6 +666,50 @@ TEST_F(AuthCookieStorageLiveFixture, LogoutClearsCookieWithMaxAgeZero) {
         << "clear cookie must have Max-Age=0; got: " << set_cookie;
     EXPECT_NE(set_cookie.find("Path=/api/v1/auth"), std::string::npos)
         << "clear cookie must carry the same Path; got: " << set_cookie;
+
+    // 3. The refresh's jti is actually on the blacklist — proves
+    //    the handler's extract_refresh_token + revoke_refresh_token
+    //    chain went end-to-end via the cookie path.
+    EXPECT_TRUE(store->is_revoked(pre_claims.jti))
+        << "refresh jti should be blacklisted after cookie logout";
+
+    // 4. /auth/refresh reusing the same cookie → 401 (reuse detection).
+    const httplib::Headers refresh_reuse_hdrs = {
+        {"Cookie", "lc_refresh=" + refresh},
+    };
+    const auto reuse = handle.client->Post(
+        "/api/v1/auth/refresh", refresh_reuse_hdrs,
+        std::string{}, "application/json");
+    ASSERT_TRUE(reuse);
+    EXPECT_EQ(reuse->status, 401);
+}
+
+TEST_F(AuthCookieStorageLiveFixture, LogoutClearsCookieEvenWithoutCookiePresented) {
+    // v1.3.3.8 ★ — the defensive contract: even when the browser
+    // sends NO cookie at all (e.g. cleared manually earlier), the
+    // logout response STILL emits Set-Cookie Max-Age=0. Pre-v1.3.3.8
+    // this was the only path that ever emitted the clear cookie
+    // header because the cookie-presented path returned 400 before
+    // reaching clear_refresh_cookie. Now both paths emit the clear.
+    StdoutSilencer silencer;
+    const std::string username = create_user_with_password("hunter22", "lc");
+    const auto login = login_and_get_tokens(username, "hunter22");
+    const std::string access_token = login["access_token"].get<std::string>();
+
+    httplib::Headers hdrs = {{"Authorization", "Bearer " + access_token}};
+    // NO Cookie header — simulate "browser already cleared it" / "no
+    // cookie support" client.
+    const auto r = handle.client->Post(
+        "/api/v1/auth/logout", hdrs, std::string{}, "application/json");
+    ASSERT_TRUE(r);
+    EXPECT_EQ(r->status, 200);
+    const auto body = nlohmann::json::parse(r->body);
+    EXPECT_EQ(body["data"]["logged_out"], true);
+    EXPECT_EQ(body["data"]["revoked"],    false);   // nothing to revoke
+
+    const std::string set_cookie = r->get_header_value("Set-Cookie");
+    EXPECT_NE(set_cookie.find("lc_refresh="), std::string::npos);
+    EXPECT_NE(set_cookie.find("Max-Age=0"),   std::string::npos);
 }
 
 TEST_F(AuthCookieStorageLiveFixture, RefreshBodyFallbackStillWorksWhenCookieAbsent) {

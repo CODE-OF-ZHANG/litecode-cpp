@@ -19,45 +19,52 @@
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
 
-    <meta name="description" content="LiteCode · 自部署 C++ 在线判题平台。20 道题 · 6 种判题模式 · Special Judge 支持 · Docker 一键起。">
-    <meta name="theme-color" content="#1f4ed8">
+    <meta name="description" content="LiteCode · 自部署 C++ 在线判题平台 · 终端美学 + 霓虹科技风。20 道题 · 6 种判题模式 · Special Judge 支持 · Docker 一键起。">
+    <meta name="theme-color" content="#0a0e14">
 
-    <title>LiteCode · 题库</title>
+    <title>LiteCode · 首页</title>
 
     <!--
       Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap.
+      v1.3.4: 默认走 cyber dark 主题(详见 theme-boot.js)。
       Loaded synchronously BEFORE the stylesheet so the first paint
-      already reflects the user's stored preference (or the system
-      preference if they haven't chosen). See web/js/theme-boot.js
-      for the contract. External script keeps CSP strict (no
+      already reflects the user's stored preference (defaulting to
+      dark on first visit). External script keeps CSP strict (no
       'unsafe-inline' needed).
     -->
-    <script src="/js/theme-boot.js?v=1.3.3.2"></script>
+    <script src="/js/theme-boot.js?v=1.3.4"></script>
     <!-- preload 让浏览器并发抓 CSS,避免 headless screenshot 截在 CSS 到达前 -->
-    <link rel="preload" href="/css/style.css?v=1.3.3.2" as="style">
-    <link rel="stylesheet" href="/css/style.css?v=1.3.3.2">
+    <link rel="preload" href="/css/style.css?v=1.3.4" as="style">
+    <link rel="stylesheet" href="/css/style.css?v=1.3.4">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230a0e14'/%3E%3Cpath d='M22 18 L42 32 L22 46' stroke='%2322d3ee' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 </head>
-<body>
+<body class="lc-cyber">
+    <!--
+      v1.3.4 — 顶部 cyber ribbon(深色模式专属装饰)
+      装饰性元素,无障碍上 hidden。绿色心跳点 + cyan 渐变条。
+    -->
+    <div class="lc-cyber-grid-strip" aria-hidden="true"></div>
+
     <!-- Navigation slot — app.js injects the shared nav here. -->
     <div data-nav></div>
 
     <!--
-      v1.3.1+ · frontend-design pass:
-        - Hero 用 split layout (文案左 / stat 卡片右),
-          桌面 grid-template-columns 1.05fr 0.95fr,移动端单列堆叠。
-        - 装饰元素用 ::before / ::after (单元素、双图层),不靠位图。
-        - CTA 直接锚到 #problem-list,不再把用户迷在 hero。
-        - 加"快速入口"四块,把 hero 视觉锤落到可点的东西上。
+      v1.3.4 — Hero 重做:保留 v4 chrome (lc-v4-hero) 让现有 JS / CSS
+      完全兼容,但通过 body.lc-cyber + html.dark 触发 §6 cyber dark
+      主题。视觉升级点:
+        - 终端 prompt 装饰 (lc-cyber-terminal)
+        - status ribbon (lc-cyber-ribbon)
+        - hero facts 用霓虹数字 + glow
+        - sample card 改为玻璃拟态 + 等宽代码配色
     -->
     <main class="lc-container">
-
-        <!--
-          v1.3.3.4 — Hero 重做(蓝白卡密型):深蓝渐变 + 大字 + 浮动代码 + 右栏 sample 卡片。
-          重用 id="hero-stat-total" 保持原 JS 兼容。CTA 填充保留 #hero-cta 容器。
-        -->
         <section class="lc-v4-hero" id="hero" aria-label="欢迎">
             <div class="lc-v4-hero__inner">
                 <div class="lc-v4-hero__copy">
+                    <div class="lc-cyber-terminal" aria-hidden="true">
+                        <span class="lc-cyber-terminal__dot"></span>
+                        <span>$ litecode --judge --online</span>
+                    </div>
                     <span class="lc-v4-eyebrow lc-v4-eyebrow--dark">
                         ⌘ 自部署 C++ 在线判题
                     </span>
@@ -114,7 +121,7 @@ cout <span class="tok-key">&lt;&lt;</span> ans <span class="tok-key">&lt;&lt;</s
                 </aside>
             </div>
 
-            <!-- 浮动代码片段装饰(deep 蓝底上加亮版,opacity 0.32) -->
+            <!-- 浮动代码片段装饰(deep cyber 底上加亮版,opacity 0.32) -->
             <div class="lc-v4-hero__code-bg" aria-hidden="true">
                 <code>#include &lt;bits/stdc++.h&gt;</code>
                 <code>using namespace std;</code>
@@ -128,8 +135,8 @@ cout <span class="tok-key">&lt;&lt;</span> ans <span class="tok-key">&lt;&lt;</s
         </section>
 
         <!--
-          v1.3.3.4 — 6 status grid 用 v4 stat-card 风格重做。
-          hover 时浮起 + 边框着色 + 数字色更醒目,屏幕左侧外缘带颜色。
+          v1.3.4 — 6 status grid v4 chrome 保留, cyber dark 主题下边框
+          发光 + hover 浮起。所有 lc-v4-stat-card 名称不变,JS / API 不动。
         -->
         <section class="lc-v4-stat-grid" aria-label="判题结果一览" style="margin: 64px 0;">
             <a href="/?status=ac"  class="lc-v4-stat-card lc-v4-stat-card--ac">
@@ -164,121 +171,27 @@ cout <span class="tok-key">&lt;&lt;</span> ans <span class="tok-key">&lt;&lt;</s
             </a>
         </section>
 
-        <header class="lc-stack lc-section-head">
-            <div>
-                <h1>题库</h1>
-                <p class="lc-form-help">浏览所有已发布题目;登录后可提交代码。</p>
-            </div>
-            <button type="button"
-                    class="lc-btn lc-btn--ghost lc-btn--sm"
-                    id="retry-btn-top"
-                    aria-label="刷新题库">
-                <span aria-hidden="true">↻</span> 刷新
-            </button>
-        </header>
-
         <!--
-          Filter bar — controls the GET /api/v1/problems query string.
-          Inputs:
-            - search       — client-side title filter (debounced 250ms)
-            - difficulty   — server-side filter: '' | 'easy' | 'medium' | 'hard'
-            - tag chips    — server-side filter: ?tag_id=N (only one at a time)
-          Every change pushes a new ?... state to history.replaceState so
-          deep-links round-trip cleanly; popstate re-runs load() with the
-          params the user came back to.
+          v1.3.3.9 — Landing page is now a pure marketing surface.
+          The problem list itself moved to /problems_list.html, so
+          the work surface (filters, list, pagination) lives there.
+          This page only owns hero + 6 verdict grid + use-cases +
+          how-it-works. The CTA below routes to /problems_list.html.
         -->
-        <section class="lc-card lc-problem-filters" aria-label="题目筛选">
-            <div class="lc-problem-filters__row">
-                <label class="lc-form-row lc-problem-filters__search">
-                    <span class="lc-form-label" for="search-input">搜索</span>
-                    <input
-                        type="search"
-                        id="search-input"
-                        class="lc-input"
-                        placeholder="按标题筛选（仅当前页内生效）"
-                        autocomplete="off"
-                        aria-describedby="search-help">
-                    <span id="search-help" class="lc-form-help">
-                        筛选当前已加载页内的标题；切换页或筛选条件后将重新拉取。
-                    </span>
-                </label>
+        <section class="lc-v4-section" aria-label="立即开始">
+            <div class="lc-v4-section-header">
+                <span class="lc-v4-eyebrow">立即开始 · JUMP IN</span>
+                <h2>准备好了?<em>开刷</em>。</h2>
+                <p>题库已就绪,挑一道你喜欢的难度,开始第一行代码。</p>
             </div>
-
-            <div class="lc-problem-filters__row"
-                 role="group" aria-label="难度筛选">
-                <span class="lc-form-label">难度</span>
-                <div class="lc-seg" id="difficulty-seg" role="tablist">
-                    <button type="button" class="lc-seg__btn lc-seg__btn--active"
-                            data-difficulty="" role="tab" aria-selected="true">全部</button>
-                    <button type="button" class="lc-seg__btn"
-                            data-difficulty="easy" role="tab" aria-selected="false">简单</button>
-                    <button type="button" class="lc-seg__btn"
-                            data-difficulty="medium" role="tab" aria-selected="false">中等</button>
-                    <button type="button" class="lc-seg__btn"
-                            data-difficulty="hard" role="tab" aria-selected="false">困难</button>
-                </div>
+            <div class="lc-row" style="justify-content: center; gap: 16px;">
+                <a href="/problems_list.html" class="lc-btn lc-btn--primary">
+                    浏览全部题目
+                </a>
+                <a href="/ranking.html" class="lc-btn lc-btn--ghost">
+                    查看排行榜
+                </a>
             </div>
-
-            <div class="lc-problem-filters__row" id="tag-row" hidden>
-                <span class="lc-form-label">标签</span>
-                <div class="lc-tag-chips" id="tag-chips" role="group" aria-label="标签筛选">
-                    <!-- Filled by renderTagChips() at load time. -->
-                </div>
-            </div>
-
-            <div class="lc-problem-filters__row lc-row lc-row--between">
-                <span class="lc-form-help" id="filter-summary" aria-live="polite">共 0 题</span>
-                <button type="button" class="lc-btn lc-btn--ghost lc-btn--sm"
-                        id="reset-filters-btn">重置筛选</button>
-            </div>
-        </section>
-
-        <!-- Result list / states. Exactly one of these is visible at a time. -->
-        <section class="lc-stack-lg" id="problem-list-wrap" aria-label="题目列表">
-            <div class="lc-problem-list" id="problem-list" role="list">
-                <!--
-                  Server-rendered skeleton hint — visible only while JS is
-                  still loading OR if the JS bundle fails entirely. Once
-                  `litecode.api` is defined, renderRows() replaces this
-                  with the real list or hides it (showing empty/error).
-                  Purpose: even with broken JS, users can SEE that there
-                  ARE problems below the fold — and the visible anchor
-                  `id="problem-list"` lets the "浏览题库" chip jump here
-                  before renderRows finishes.
-                -->
-                <div class="lc-problem-row lc-problem-row--skeleton" aria-hidden="true">
-                    <div class="lc-problem-row__main">
-                        <div class="lc-problem-row__head">
-                            <span class="lc-pill">…</span>
-                            <span class="lc-problem-row__title">正在加载题库…</span>
-                        </div>
-                    </div>
-                    <div class="lc-problem-row__meta">
-                        <span class="lc-problem-row__metric">— / —</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="lc-empty" id="empty-state" hidden>
-                <p class="lc-empty__title">没有符合条件的题目</p>
-                <p class="lc-form-help">试试调整筛选条件，或清空搜索框。</p>
-            </div>
-
-            <div class="lc-error" id="error-state" hidden role="alert">
-                <p class="lc-error__title">加载失败</p>
-                <p class="lc-form-help" id="error-message"></p>
-                <button type="button" class="lc-btn lc-btn--primary lc-btn--sm"
-                        id="retry-btn">重试</button>
-            </div>
-
-            <div class="lc-loading" id="loading-state" hidden aria-live="polite">
-                <span class="lc-spinner" aria-hidden="true"></span>
-                <span>加载中…</span>
-            </div>
-
-            <!-- Pagination. Hidden when total ≤ 1 page. -->
-            <nav class="lc-pagination" id="pagination"
-                 aria-label="分页" hidden></nav>
         </section>
 
         <!--
@@ -289,7 +202,8 @@ cout <span class="tok-key">&lt;&lt;</span> ans <span class="tok-key">&lt;&lt;</s
           (not copied); only the grid + step-card pattern is.
         -->
         <!--
-          v1.3.3.4 — Use Cases v4 card(图标 + 大字 + hover 浮起)
+          v1.3.4 — Use Cases 改为 SVG lucide 图标 (无 emoji),cyber dark
+          主题下图标带渐变发光;hover 浮起 + 边框变 cyan。
         -->
         <section class="lc-v4-section" aria-label="适用场景">
             <div class="lc-v4-section-header">
@@ -299,22 +213,30 @@ cout <span class="tok-key">&lt;&lt;</span> ans <span class="tok-key">&lt;&lt;</s
             </div>
             <div class="lc-v4-usecases">
                 <article class="lc-v4-usecase">
-                    <div class="lc-v4-usecase__icon">🌱</div>
+                    <div class="lc-v4-usecase__icon">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 20h10"/><path d="M10 20c5.5-2.5.8-6.4 3-10"/><path d="M9.5 9.4c1.1.8 1.8 2.2 2.3 3.7-2 .4-3.5.4-4.8-.3-1.2-.6-2.3-1.9-3-4.2 2.8-.5 4.4 0 5.5.8z"/><path d="M14.1 6a7 7 0 0 0-1.1 4c1.9-.1 3.3-.6 4.3-1.4 1-1 1.6-2.3 1.7-4.6-2.7.1-4 1-4.9 2z"/></svg>
+                    </div>
                     <h3 class="lc-v4-usecase__title">初学者</h3>
                     <p class="lc-v4-usecase__desc">第一次写代码?从 FizzBuzz 起步,看判题给反馈 — 不是对错,而是哪里错了。</p>
                 </article>
                 <article class="lc-v4-usecase">
-                    <div class="lc-v4-usecase__icon lc-v4-usecase__icon--indigo">🎓</div>
+                    <div class="lc-v4-usecase__icon lc-v4-usecase__icon--indigo">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 10 3 12 0v-5"/></svg>
+                    </div>
                     <h3 class="lc-v4-usecase__title">计科学生</h3>
                     <p class="lc-v4-usecase__desc">课内作业 / 数据结构练习,刷题记录自动归档,作业也能看清自己进步。</p>
                 </article>
                 <article class="lc-v4-usecase">
-                    <div class="lc-v4-usecase__icon lc-v4-usecase__icon--cyan">👩‍🏫</div>
+                    <div class="lc-v4-usecase__icon lc-v4-usecase__icon--cyan">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    </div>
                     <h3 class="lc-v4-usecase__title">在线授课</h3>
                     <p class="lc-v4-usecase__desc">出题 + 一键批量导入(JSON),学生提交后立刻看到判词与耗时,作业批改交给平台。</p>
                 </article>
                 <article class="lc-v4-usecase">
-                    <div class="lc-v4-usecase__icon lc-v4-usecase__icon--violet">🏆</div>
+                    <div class="lc-v4-usecase__icon lc-v4-usecase__icon--violet">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
+                    </div>
                     <h3 class="lc-v4-usecase__title">算法竞赛</h3>
                     <p class="lc-v4-usecase__desc">Special Judge + 浮点容差 + 行末空格 + 大小写归一 + 行内多空格折叠,贴近 ICPC 风格。</p>
                 </article>
@@ -322,7 +244,7 @@ cout <span class="tok-key">&lt;&lt;</span> ans <span class="tok-key">&lt;&lt;</s
         </section>
 
         <!--
-          v1.3.3.4 — How it works v4(数字 + 大字 + 步骤卡)
+          v1.3.4 — How it works 数字步骤,cyber dark 主题下数字带渐变 glow。
         -->
         <section class="lc-v4-section" aria-label="使用流程" style="background: var(--lc-v4-slate-50);">
             <div class="lc-v4-section-header">
@@ -357,16 +279,17 @@ cout <span class="tok-key">&lt;&lt;</span> ans <span class="tok-key">&lt;&lt;</s
 
     <!--
       No-JS fallback — shown when the browser has scripts disabled.
-      Without this the user sees the skeleton hint and nothing else,
-      which looks like the page is broken. Lists the basics so they
-      know what to do (enable JS, or browse problem slugs directly).
+      v1.3.3.9: problem list moved to /problems_list.html, so the
+      fallback points users there (or at the raw API).
     -->
     <noscript>
         <div style="max-width:680px;margin:32px auto;padding:16px;border:1px solid #d33;border-radius:8px;color:#222;background:#fff8f8;font:14px/1.5 system-ui;">
-            <strong>LiteCode 需要 JavaScript 才能加载题目。</strong>
-            请在浏览器启用脚本后刷新本页。如需离线查看,直接访问
-            <a href="/problems">/problems</a> API 或
-            <a href="/api/v1/problems">/api/v1/problems</a>。
+            <strong>LiteCode 需要 JavaScript 才能展示完整功能。</strong>
+            请在浏览器启用脚本后刷新本页。
+            题库列表请访问
+            <a href="/problems_list.html">/problems_list.html</a>,
+            或调用
+            <a href="/api/v1/problems">/api/v1/problems</a> API。
         </div>
     </noscript>
 
@@ -378,12 +301,12 @@ cout <span class="tok-key">&lt;&lt;</span> ans <span class="tok-key">&lt;&lt;</s
                   on both above; markdown loader reads integrity hashes
                   from litecode.csp.SCRIPTS)
       All script tags use `defer` so none runs until the DOM has parsed
-      the [data-nav] slot. `?v=20260722-1` cache-busts the cached
+      the [data-nav] slot. `?v=1.3.4` cache-busts the cached
       old (buggy) versions on clients that previously loaded.
     -->
-    <script src="/js/csp.js?v=1.3.3.2" defer></script>
-    <script src="/js/api.js?v=1.3.3.2" defer></script>
-    <script src="/js/app.js?v=1.3.3.2" defer></script>
+    <script src="/js/csp.js?v=1.3.4" defer></script>
+    <script src="/js/api.js?v=1.3.4" defer></script>
+    <script src="/js/app.js?v=1.3.4" defer></script>
 
     <!--
       Boot sentinel — diagnostics if the framework didn't load.
@@ -421,111 +344,37 @@ cout <span class="tok-key">&lt;&lt;</span> ans <span class="tok-key">&lt;&lt;</s
 
     <script>
     // ────────────────────────────────────────────────────────────────────
-    //  Problem list page (Phase 5 ★ 题目列表页面 — /)
+    //  Landing page (v1.3.3.9 ★ landing-only IIFE)
     //
-    //  Responsibilities:
-    //    1) Read filter + pagination state from the URL on load so deep
-    //       links round-trip (e.g. ?difficulty=easy&tag_id=2&page=3).
-    //    2) Render a search box + segmented difficulty control + tag
-    //       chips, driven by GET /api/v1/tags (one network call).
-    //    3) Fetch GET /api/v1/problems on every state change, render
-    //       the rows, and update the URL via history.replaceState so
-    //       browser back/forward keeps working without flooding history.
-    //    4) Render a paginator with first / prev / page numbers (with
-    //       ellipsis for many pages) / next / last.
-    //    5) Show loading / empty / error states and surface API failures
-    //       through the standard `litecode:api-error` channel (app.js
-    //       toast layer picks it up).
+    //  Responsibilities (much smaller than before — the list moved
+    //  to /problems_list.html):
+    //    1) Render the hero CTA cluster based on auth state
+    //       (logged-in → "继续刷题" → /problems_list.html;
+    //        guest → "开始刷题" → /problems_list.html).
+    //    2) Pull the total problem count from GET /api/v1/problems
+    //       so the hero "道题" stat reflects the live question bank.
+    //       Same call the list page makes; the response payload
+    //       includes a `total` field.
     //
-    //  v1.3.1+ frontend-polish changes:
-    //    - Hooked retry button at the top of the list to `load()` so
-    //      users don't have to scroll down to retry on slow networks.
-    //    - "只看简单" quick chip → clicks the easy seg tab and
-    //      scrolls the list into view.
-    //    - Skeleton row shows immediately so users see something is
-    //      coming (instead of "empty list" before the first response).
-    //
-    //  Out of scope (later commits):
-    //    - Per-problem tag chips on the list rows (the public list API
-    //      omits tags — see serialize_problem_row comment in
-    //      src/routes/problem_routes.h. We'd need to call detail per
-    //      row, which is N+1; not worth it for a list page).
-    //    - Server-side title search (no backend param exists; today
-    //      search filters within the current page client-side).
+    //  Out of scope:
+    //    - Filtering, pagination, search input, difficulty seg
+    //      buttons — all moved to /problems_list.html.
     // ────────────────────────────────────────────────────────────────────
     (function () {
         'use strict';
 
-        // ── Constants ────────────────────────────────────────────────
-        var DEFAULT_LIMIT    = 20;        // matches backend default
-        var SEARCH_DEBOUNCE  = 250;       // ms
-        var PROBLEM_DETAIL   = '/problem.html?slug=';
-
-        // Allowed values per filter — kept in lock-step with backend
-        // validation in problem_routes.h::detail::parse_difficulty_param.
-        var DIFFICULTIES = ['', 'easy', 'medium', 'hard'];
-        var DIFFICULTY_LABELS = { '': '全部', easy: '简单', medium: '中等', hard: '困难' };
-
-        // ── Page state ──────────────────────────────────────────────
-        var state = {
-            difficulty: '',
-            tagId:      null,
-            tagName:    '',   // resolved from /tags list (for chip highlight)
-            page:       1,
-            limit:      DEFAULT_LIMIT,
-            search:     '',   // client-side filter on loaded rows
-        };
-
-        var allTags = [];                 // cached /api/v1/tags items
-        var lastPayload = null;           // { items, total, limit, offset }
-        var searchTimer = null;
-        var inflightToken = 0;            // monotonic; only the latest request renders
-
-        // ── DOM refs ────────────────────────────────────────────────
         function $(id) { return document.getElementById(id); }
 
-        var els = {};
-
-        // ── URL state ───────────────────────────────────────────────
-        function readUrl() {
-            var sp = new URLSearchParams(window.location.search);
-            var d = sp.get('difficulty') || '';
-            if (DIFFICULTIES.indexOf(d) === -1) d = '';
-            var tag = sp.get('tag_id');
-            var tagId = tag && /^\d+$/.test(tag) ? parseInt(tag, 10) : null;
-            var page = parseInt(sp.get('page') || '1', 10);
-            if (!Number.isFinite(page) || page < 1) page = 1;
-            var limit = parseInt(sp.get('limit') || String(DEFAULT_LIMIT), 10);
-            if (!Number.isFinite(limit) || limit < 1) limit = DEFAULT_LIMIT;
-            var q = sp.get('q') || '';
-            return { difficulty: d, tagId: tagId, page: page, limit: limit, search: q };
-        }
-
-        function writeUrl(replace) {
-            var sp = new URLSearchParams();
-            if (state.difficulty) sp.set('difficulty', state.difficulty);
-            if (state.tagId)      sp.set('tag_id', String(state.tagId));
-            if (state.page > 1)   sp.set('page', String(state.page));
-            if (state.limit !== DEFAULT_LIMIT) sp.set('limit', String(state.limit));
-            if (state.search)     sp.set('q', state.search);
-            var qs = sp.toString();
-            var url = window.location.pathname + (qs ? '?' + qs : '');
-            if (replace) window.history.replaceState(null, '', url);
-            else         window.history.pushState(null, '', url);
-        }
-
-        // ── Rendering ───────────────────────────────────────────────
+        // Tiny el() helper — same shape the list page uses, kept
+        // local because the landing IIFE has no other DOM building
+        // needs beyond the CTA cluster.
         function el(tag, attrs, children) {
             var node = document.createElement(tag);
             if (attrs) {
                 Object.keys(attrs).forEach(function (k) {
                     if (k === 'class') node.className = attrs[k];
                     else if (k === 'text') node.textContent = attrs[k];
-                    else if (k === 'dataset') {
-                        Object.keys(attrs[k]).forEach(function (dk) {
-                            node.dataset[dk] = attrs[k][dk];
-                        });
-                    } else if (k.charAt(0) === 'o' && k.charAt(1) === 'n') {
+                    else if (k.charAt(0) === 'o' && k.charAt(1) === 'n') {
                         node.addEventListener(k.slice(2).toLowerCase(), attrs[k]);
                     } else {
                         node.setAttribute(k, attrs[k]);
@@ -542,358 +391,15 @@ cout <span class="tok-key">&lt;&lt;</span> ans <span class="tok-key">&lt;&lt;</s
             return node;
         }
 
-        function renderDifficultySeg() {
-            var seg = $('difficulty-seg');
-            while (seg.firstChild) seg.removeChild(seg.firstChild);
-            DIFFICULTIES.forEach(function (d) {
-                var active = (state.difficulty === d);
-                var btn = el('button', {
-                    type: 'button',
-                    class: 'lc-seg__btn' + (active ? ' lc-seg__btn--active' : ''),
-                    dataset: { difficulty: d },
-                    text: DIFFICULTY_LABELS[d],
-                    role: 'tab',
-                    'aria-selected': active ? 'true' : 'false',
-                    onClick: function () { onDifficultyChange(d); },
-                });
-                seg.appendChild(btn);
-            });
-        }
-
-        function renderTagChips() {
-            var row = $('tag-row');
-            var wrap = $('tag-chips');
-            while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
-            if (!allTags.length) {
-                row.hidden = true;
-                return;
-            }
-            row.hidden = false;
-
-            // "全部" pill — clears tag filter
-            var clearActive = (state.tagId === null);
-            wrap.appendChild(el('button', {
-                type: 'button',
-                class: 'lc-tag-chip' + (clearActive ? ' lc-tag-chip--active' : ''),
-                dataset: { tagId: '' },
-                text: '全部',
-                onClick: function () { onTagChange(null); },
-            }));
-
-            allTags.forEach(function (t) {
-                if (!t || typeof t.id !== 'number' || !t.name) return;
-                var active = (state.tagId === t.id);
-                var chip = el('button', {
-                    type: 'button',
-                    class: 'lc-tag-chip' + (active ? ' lc-tag-chip--active' : ''),
-                    dataset: { tagId: String(t.id), tagName: t.name },
-                    text: t.name + ' (' + (t.problem_count || 0) + ')',
-                    title: t.name,
-                    onClick: function () { onTagChange(t.id); },
-                });
-                wrap.appendChild(chip);
-            });
-        }
-
-        function acRate(p) {
-            var sub = Number(p.submission_count) || 0;
-            var ac  = Number(p.accepted_count)   || 0;
-            if (sub <= 0) return '—';
-            return ((ac / sub) * 100).toFixed(1) + '%';
-        }
-
-        function escapeText(s) {
-            return String(s == null ? '' : s)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;');
-        }
-
-        function renderProblemRow(p) {
-            // XSS safety: build via textContent + createElement, NOT
-            // innerHTML. The slug/title/difficulty all originate from
-            // the server but defense-in-depth means we never inject
-            // untrusted strings into HTML.
-            var slug  = escapeText(p.slug);
-            var title = escapeText(p.title);
-            var diff  = escapeText(p.difficulty);
-            var diffClass = ['easy', 'medium', 'hard'].indexOf(diff) !== -1
-                ? 'lc-pill lc-pill--' + diff
-                : 'lc-pill';
-
-            var row = el('a', {
-                href: PROBLEM_DETAIL + encodeURIComponent(p.slug),
-                class: 'lc-problem-row',
-                role: 'listitem',
-                dataset: { slug: p.slug },
-            });
-
-            var main = el('div', { class: 'lc-problem-row__main' });
-            var head = el('div', { class: 'lc-problem-row__head' });
-            head.appendChild(el('span', { class: diffClass, text: DIFFICULTY_LABELS[diff] || diff }));
-            head.appendChild(el('span', { class: 'lc-problem-row__title', text: p.title || '' }));
-            main.appendChild(head);
-
-            row.appendChild(main);
-
-            var meta = el('div', { class: 'lc-problem-row__meta' });
-            meta.appendChild(el('span', {
-                class: 'lc-problem-row__metric',
-                text: '通过率 ' + acRate(p),
-            }));
-            meta.appendChild(el('span', {
-                class: 'lc-problem-row__metric',
-                text: (p.accepted_count || 0) + ' / ' + (p.submission_count || 0),
-                title: '通过数 / 提交数',
-            }));
-            row.appendChild(meta);
-
-            return row;
-        }
-
-        function renderRows() {
-            var list = $('problem-list');
-            // Remove skeleton placeholder rows (lc-problem-row--skeleton)
-            // AND any stale content. Then either render rows or fall
-            // through to the empty-state below.
-            var nodes = Array.prototype.slice.call(list.children);
-            nodes.forEach(function (n) { list.removeChild(n); });
-
-            var items = (lastPayload && Array.isArray(lastPayload.items)) ? lastPayload.items : [];
-
-            // Client-side title filter — narrow the visible rows but
-            // DO NOT touch pagination math (the server's `total` is
-            // authoritative for page count).
-            var q = state.search.trim().toLowerCase();
-            var filtered = q
-                ? items.filter(function (p) {
-                    return p && typeof p.title === 'string'
-                        && p.title.toLowerCase().indexOf(q) !== -1;
-                })
-                : items;
-
-            if (!filtered.length) {
-                list.hidden = true;
-                $('empty-state').hidden = false;
-                return;
-            }
-            $('empty-state').hidden = true;
-            list.hidden = false;
-            filtered.forEach(function (p) {
-                list.appendChild(renderProblemRow(p));
-            });
-        }
-
-        function renderSummary() {
-            var total = (lastPayload && typeof lastPayload.total === 'number') ? lastPayload.total : 0;
-            var parts = ['共 ' + total + ' 题'];
-            if (state.difficulty) parts.push('难度=' + DIFFICULTY_LABELS[state.difficulty]);
-            if (state.tagId && state.tagName) parts.push('标签=' + state.tagName);
-            if (state.search) parts.push('搜索="' + state.search + '"');
-            $('filter-summary').textContent = parts.join(' · ');
-        }
-
-        function totalPages() {
-            var t = (lastPayload && typeof lastPayload.total === 'number') ? lastPayload.total : 0;
-            if (t <= 0) return 1;
-            return Math.max(1, Math.ceil(t / state.limit));
-        }
-
-        function renderPagination() {
-            var nav = $('pagination');
-            while (nav.firstChild) nav.removeChild(nav.firstChild);
-            var tp = totalPages();
-            if (tp <= 1) {
-                nav.hidden = true;
-                return;
-            }
-            nav.hidden = false;
-
-            var cur = state.page;
-
-            function pageBtn(label, target, opts) {
-                opts = opts || {};
-                var attrs = {
-                    type: 'button',
-                    class: 'lc-page-btn'
-                        + (opts.active ? ' lc-page-btn--active' : '')
-                        + (opts.disabled ? ' lc-page-btn--disabled' : ''),
-                    text: label,
-                    dataset: { page: String(target) },
-                    'aria-label': opts.ariaLabel || ('第 ' + target + ' 页'),
-                    'aria-current': opts.active ? 'page' : null,
-                };
-                if (opts.disabled) {
-                    attrs.disabled = true;
-                } else {
-                    attrs.onClick = function () { goToPage(target); };
-                }
-                return el('button', attrs);
-            }
-
-            function ellipsis() {
-                return el('span', { class: 'lc-page-ellipsis', text: '…', 'aria-hidden': 'true' });
-            }
-
-            // First + prev
-            nav.appendChild(pageBtn('« 首页', 1, {
-                disabled: cur === 1,
-                ariaLabel: '首页',
-            }));
-            nav.appendChild(pageBtn('‹ 上一页', cur - 1, {
-                disabled: cur === 1,
-                ariaLabel: '上一页',
-            }));
-
-            // Window of page numbers around current. Spec §11 expects a
-            // compact control — show 1 ... (cur-1) cur (cur+1) ... tp
-            // when tp > 7, otherwise show every page.
-            var pages = [];
-            if (tp <= 7) {
-                for (var i = 1; i <= tp; i++) pages.push(i);
-            } else {
-                pages.push(1);
-                if (cur > 3) pages.push('…');
-                var from = Math.max(2, cur - 1);
-                var to   = Math.min(tp - 1, cur + 1);
-                for (var j = from; j <= to; j++) pages.push(j);
-                if (cur < tp - 2) pages.push('…');
-                pages.push(tp);
-            }
-
-            pages.forEach(function (p) {
-                if (p === '…') nav.appendChild(ellipsis());
-                else nav.appendChild(pageBtn(String(p), p, { active: p === cur }));
-            });
-
-            // Next + last
-            nav.appendChild(pageBtn('下一页 ›', cur + 1, {
-                disabled: cur === tp,
-                ariaLabel: '下一页',
-            }));
-            nav.appendChild(pageBtn('末页 »', tp, {
-                disabled: cur === tp,
-                ariaLabel: '末页',
-            }));
-        }
-
-        // ── State transitions ───────────────────────────────────────
-        function onDifficultyChange(d) {
-            state.difficulty = d;
-            state.page = 1;
-            writeUrl(true);
-            renderDifficultySeg();
-            load();
-        }
-
-        function onTagChange(tagId) {
-            state.tagId = (typeof tagId === 'number') ? tagId : null;
-            state.tagName = '';
-            if (state.tagId !== null) {
-                var t = allTags.find(function (x) { return x && x.id === state.tagId; });
-                if (t) state.tagName = t.name;
-            }
-            state.page = 1;
-            writeUrl(true);
-            renderTagChips();
-            load();
-        }
-
-        function goToPage(p) {
-            var tp = totalPages();
-            if (p < 1) p = 1;
-            if (p > tp) p = tp;
-            if (p === state.page) return;
-            state.page = p;
-            writeUrl(true);
-            // Scroll back to the top of the list so the user sees the
-            // new page; cheap UX win that matches GitHub / LeetCode.
-            var list = $('problem-list');
-            if (list && list.scrollIntoView) list.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            load();
-        }
-
-        function onSearchInput() {
-            if (searchTimer) clearTimeout(searchTimer);
-            searchTimer = setTimeout(function () {
-                state.search = els.searchInput.value || '';
-                writeUrl(true);
-                renderRows();
-                renderSummary();
-            }, SEARCH_DEBOUNCE);
-        }
-
-        function resetFilters() {
-            state.difficulty = '';
-            state.tagId = null;
-            state.tagName = '';
-            state.page = 1;
-            state.search = '';
-            els.searchInput.value = '';
-            writeUrl(true);
-            renderDifficultySeg();
-            renderTagChips();
-            load();
-        }
-
-        // ── Loading ──────────────────────────────────────────────────
-        function showState(name) {
-            ['loading-state', 'empty-state', 'error-state'].forEach(function (id) {
-                $(id).hidden = true;
-            });
-            $('problem-list').hidden = true;
-            if (name) $(name + '-state').hidden = false;
-        }
-
-        function loadTags() {
-            return litecode.api.get('/tags').then(function (resp) {
-                var items = (resp && resp.data && Array.isArray(resp.data.items)) ? resp.data.items : [];
-                allTags = items;
-                renderTagChips();
-            }).catch(function (err) {
-                // Non-fatal: tag chips stay hidden, but list still works.
-                // We still log so an operator sees the failure.
-                console.warn('[problem-list] failed to load tags', err);
-                allTags = [];
-                renderTagChips();
-            });
-        }
-
-        function load() {
-            var token = ++inflightToken;
-            showState('loading');
-
-            var qs = '?limit=' + encodeURIComponent(state.limit)
-                   + '&offset=' + encodeURIComponent((state.page - 1) * state.limit);
-            if (state.difficulty) qs += '&difficulty=' + encodeURIComponent(state.difficulty);
-            if (state.tagId)      qs += '&tag_id=' + encodeURIComponent(state.tagId);
-
-            litecode.api.get('/problems' + qs)
-                .then(function (resp) {
-                    if (token !== inflightToken) return; // stale
-                    lastPayload = (resp && resp.data) ? resp.data : { items: [], total: 0 };
-                    renderSummary();
-                    renderRows();
-                    renderPagination();
-                    // Hero 题数填充 — 题库变化让 hero 实时跟
-                    renderHeroStats();
-                    $('problem-list').hidden = false;
-                    $('loading-state').hidden = true;
-                })
-                .catch(function (err) {
-                    if (token !== inflightToken) return; // stale
-                    showState('error');
-                    $('error-message').textContent = (err && err.message)
-                        ? err.message
-                        : '网络错误，请稍后重试';
-                });
-        }
-
-        // ── Hero CTA + stat sidebar — 根据登录态 + 题库填充 ─────────
-        // v1.3.1+: hero 显式承接主 CTA,而不是只靠右上角 nav。
-        //   - 未登录: 主 CTA = 开始刷题(锚 #problem-list),次 = 注册
-        //   - 已登录: 主 CTA = 继续刷题 (跳到上一道题或第一道),
-        //             次 CTA = 个人主页,旁标 username
+        // Render the hero CTA cluster.
+        //   - Logged in:  primary "继续刷题" → /problems_list.html
+        //                 secondary "个人主页" → /profile.html
+        //                 + username caption.
+        //   - Guest:      primary "开始刷题" → /problems_list.html
+        //                 secondary "注册账号" → /register.html
+        //                 + "游客可浏览" caption.
+        // Both states route the work-button to /problems_list.html
+        // because the problem list no longer lives at /.
         function renderHeroCta() {
             var slot = $('hero-cta');
             if (!slot) return;
@@ -902,7 +408,7 @@ cout <span class="tok-key">&lt;&lt;</span> ans <span class="tok-key">&lt;&lt;</s
             var user = litecode.api.auth.currentUser;
             if (user) {
                 slot.appendChild(el('a', {
-                    href: '#problem-list',
+                    href: '/problems_list.html',
                     class: 'lc-btn lc-btn--primary',
                     text: '继续刷题',
                 }));
@@ -911,15 +417,14 @@ cout <span class="tok-key">&lt;&lt;</span> ans <span class="tok-key">&lt;&lt;</s
                     class: 'lc-btn lc-btn--ghost',
                     text: '个人主页',
                 }));
-                var tag = el('span', {
+                slot.appendChild(el('span', {
                     class: 'lc-form-help',
                     style: 'margin-left: var(--lc-space-3);',
                     text: '已以 ' + String(user.username || '') + ' 登录',
-                });
-                slot.appendChild(tag);
+                }));
             } else {
                 slot.appendChild(el('a', {
-                    href: '#problem-list',
+                    href: '/problems_list.html',
                     class: 'lc-btn lc-btn--primary',
                     text: '开始刷题',
                 }));
@@ -928,109 +433,42 @@ cout <span class="tok-key">&lt;&lt;</span> ans <span class="tok-key">&lt;&lt;</s
                     class: 'lc-btn lc-btn--ghost',
                     text: '注册账号',
                 }));
-                var tag = el('span', {
+                slot.appendChild(el('span', {
                     class: 'lc-form-help',
                     style: 'margin-left: var(--lc-space-3);',
                     text: '游客可浏览,提交代码需登录',
-                });
-                slot.appendChild(tag);
+                }));
             }
         }
 
-        // Populate hero stat cards from lastPayload. Falls back to
-        // — placeholders if no payload yet (the placeholders are what
-        // the HTML ships with, so we don't *need* this to run early).
-        function renderHeroStats() {
-            var p = lastPayload;
-            if (!p) return;
-            var total = (typeof p.total === 'number') ? p.total : 0;
-            var items = Array.isArray(p.items) ? p.items : [];
-            var diff = { easy: 0, medium: 0, hard: 0 };
-            items.forEach(function (it) {
-                if (it && diff[it.difficulty] != null) diff[it.difficulty]++;
-            });
-            var totalEl  = $('hero-stat-total');
-            var probEl   = $('hero-stat-problems');
-            var diffEl   = $('hero-stat-difficulty');
-            if (totalEl) totalEl.textContent = String(total);
-            if (probEl)  probEl.textContent  = String(total);
-            if (diffEl)  diffEl.textContent  = (diff.easy + diff.medium + diff.hard > 0)
-                ? '简 ' + diff.easy + ' · 中 ' + diff.medium + ' · 难 ' + diff.hard
-                : '—';
+        // Pull the live problem count so the hero "道题" stat
+        // reflects reality instead of the static "—" placeholder.
+        // Uses ?limit=1 so we transfer just enough to learn `total`
+        // without burning bandwidth on 19 unused rows.
+        function refreshHeroStats() {
+            litecode.api.get('/problems?limit=1&offset=0')
+                .then(function (resp) {
+                    var data = (resp && resp.data) ? resp.data : null;
+                    var total = (data && typeof data.total === 'number') ? data.total : 0;
+                    var el = $('hero-stat-total');
+                    if (el) el.textContent = String(total);
+                })
+                .catch(function (err) {
+                    // Non-fatal: the hero just keeps its placeholder.
+                    console.warn('[landing] failed to refresh problem count', err);
+                });
         }
 
         // ── Boot ────────────────────────────────────────────────────
         document.addEventListener('DOMContentLoaded', function () {
-            // Phase 5 framework: theme + nav + global error wiring.
-            litecode.boot.shell({ title: 'LiteCode · 题库' });
+            litecode.boot.shell({ title: 'LiteCode · 首页' });
 
-            // Hero CTA — 必须在 boot.shell 之后,这样 hydrateUser 已经
-            // 把 currentUser 填好了(否则永远是游客态)。auth 状态变化
-            // (登录/登出) 时也要重绘 hero。
             renderHeroCta();
             if (litecode.api.auth && litecode.api.auth.onAuthChanged) {
                 litecode.api.auth.onAuthChanged(function () { renderHeroCta(); });
             }
 
-            // Hydrate state from URL.
-            var u = readUrl();
-            state.difficulty = u.difficulty;
-            state.tagId      = u.tagId;
-            state.page       = u.page;
-            state.limit      = u.limit;
-            state.search     = u.search;
-
-            els.searchInput     = $('search-input');
-            els.searchInput.value = state.search;
-
-            renderDifficultySeg();
-
-            // Wire user controls.
-            els.searchInput.addEventListener('input', onSearchInput);
-            $('reset-filters-btn').addEventListener('click', resetFilters);
-            $('retry-btn').addEventListener('click', function () { load(); });
-            $('retry-btn-top').addEventListener('click', function () { load(); });
-
-            // Quick chip — "只看简单" 触发 easy 标签 + 滚到列表
-            var qe = $('quick-easy');
-            if (qe) {
-                qe.addEventListener('click', function (ev) {
-                    ev.preventDefault();
-                    onDifficultyChange('easy');
-                    var list = $('problem-list-wrap');
-                    if (list && list.scrollIntoView) list.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                });
-            }
-
-            // Back/forward: re-hydrate from URL and refetch. We tag the
-            // user-initiated `pushState` ourselves by always using
-            // replaceState — so popstate fires only when the user
-            // actually navigates with the browser buttons.
-            window.addEventListener('popstate', function () {
-                var p = readUrl();
-                state.difficulty = p.difficulty;
-                state.tagId      = p.tagId;
-                state.page       = p.page;
-                state.limit      = p.limit;
-                state.search     = p.search;
-                els.searchInput.value = state.search;
-                // Re-resolve tag name from cached list (in case the
-                // page was reached via deep-link before /tags loaded).
-                state.tagName = '';
-                if (state.tagId !== null) {
-                    var t = allTags.find(function (x) { return x && x.id === state.tagId; });
-                    if (t) state.tagName = t.name;
-                }
-                renderDifficultySeg();
-                renderTagChips();
-                load();
-            });
-
-            // Load tags + first page. We run them in parallel; the
-            // problem list endpoint doesn't depend on tags, but tag
-            // chips need the result before the user can filter.
-            loadTags();
-            load();
+            refreshHeroStats();
         });
     })();
     </script>

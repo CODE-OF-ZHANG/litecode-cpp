@@ -467,6 +467,20 @@ private:
                 const std::string origin = req.get_header_value("Origin");
                 cors_.apply(res, origin);
 
+                // v1.3.3 hotfix: drop browser caching so a refresh
+                // (or hard refresh) immediately picks up server.h /
+                // csp.js / app.js changes. Until we ship hashed
+                // filenames + immutable cache, keep this `no-store`
+                // so QA / "I made a frontend change and nothing
+                // happened" tickets die. Once hashed-asset pipeline
+                // lands (v1.3.4+), switch to:
+                //    `public, max-age=31536000, immutable` for /js/* /css/*
+                //    `no-store` only for *.html
+                res.set_header("Cache-Control",
+                    "no-store, no-cache, must-revalidate, max-age=0");
+                res.set_header("Pragma", "no-cache");
+                res.set_header("Expires", "0");
+
                 // SPEC §15 / Phase 6 ★ v1.2.45: baseline security response
                 // headers. The Caddyfile sets the same set on the
                 // reverse-proxy path; this hook covers a developer

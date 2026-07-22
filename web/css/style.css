@@ -5650,3 +5650,1415 @@ main > h1 {
 }
 
 /* v1.3.3 ribbon hidden(再次声明兜底,被 v4 hero card 替代) */
+
+/* =============================================================
+ * §6  v1.3.4 — Cyber Dark 主题 (深色科技风)
+ * -------------------------------------------------------------
+ *  设计 tokens:
+ *    - 深色底 #0a0e14 (terminal dark)
+ *    - 霓虹强调 #22d3ee (cyan-400) / #a855f7 (violet-500)
+ *    - 成功 AC #10b981 (emerald-500)
+ *    - 等宽字体主导 (JetBrains Mono)
+ *    - 网格背景 + 微扫描线 + 玻璃拟态卡片
+ *  作用域: html.dark (复用现有 dark 模式 toggle)
+ *  契约: 所有 lc-v4-* / lc-* 类名继续生效,这里只覆盖视觉;
+ *        JS API、ID、CSS 类名不动。
+ * ============================================================= */
+
+/* §6.1 — token 重新声明 (在 dark 主题下覆写为 cyber 调色板) */
+html.dark {
+    /* 主题命名 (cyber) */
+    --lc-cyber-bg:           #0a0e14;
+    --lc-cyber-bg-2:         #0f1521;
+    --lc-cyber-bg-3:         #141b2d;
+    --lc-cyber-surface:      rgba(20, 27, 45, 0.72);   /* glass */
+    --lc-cyber-surface-2:    rgba(15, 21, 33, 0.92);
+    --lc-cyber-border:       rgba(34, 211, 238, 0.18);
+    --lc-cyber-border-2:     rgba(34, 211, 238, 0.32);
+    --lc-cyber-border-soft:  rgba(148, 163, 184, 0.12);
+
+    --lc-cyber-cyan:         #22d3ee;
+    --lc-cyber-cyan-bright:  #67e8f9;
+    --lc-cyber-violet:       #a855f7;
+    --lc-cyber-violet-hi:    #c084fc;
+    --lc-cyber-emerald:      #10b981;
+    --lc-cyber-amber:        #f59e0b;
+    --lc-cyber-rose:         #f43f5e;
+    --lc-cyber-text:         #e2e8f0;
+    --lc-cyber-text-muted:   #94a3b8;
+    --lc-cyber-text-dim:     #64748b;
+
+    --lc-cyber-glow-cyan:    0 0 18px rgba(34, 211, 238, 0.35),
+                            0 0 1px rgba(34, 211, 238, 0.6);
+    --lc-cyber-glow-violet:  0 0 18px rgba(168, 85, 247, 0.35),
+                            0 0 1px rgba(168, 85, 247, 0.6);
+    --lc-cyber-glow-emerald: 0 0 14px rgba(16, 185, 129, 0.40);
+
+    /* 覆写 base 主题 token (让现有 lc-* 自动 cyber 化) */
+    --lc-color-bg:           var(--lc-cyber-bg);
+    --lc-color-surface:      var(--lc-cyber-bg-2);
+    --lc-color-surface-1:    var(--lc-cyber-bg-2);
+    --lc-color-surface-2:    var(--lc-cyber-bg-3);
+    --lc-color-border:       var(--lc-cyber-border-soft);
+    --lc-color-border-2:     var(--lc-cyber-border);
+    --lc-color-text:         var(--lc-cyber-text);
+    --lc-color-text-2:       #cbd5e1;
+    --lc-color-text-muted:   var(--lc-cyber-text-muted);
+    --lc-color-link:         var(--lc-cyber-cyan);
+    --lc-color-link-hover:   var(--lc-cyber-cyan-bright);
+    --lc-color-success:      var(--lc-cyber-emerald);
+    --lc-color-warning:      var(--lc-cyber-amber);
+    --lc-color-danger:       var(--lc-cyber-rose);
+    --lc-color-info:         var(--lc-cyber-cyan);
+    --lc-color-focus-ring:   rgba(34, 211, 238, 0.32);
+
+    /* 覆写 v4 token (蓝白 → cyber neon) */
+    --lc-v4-slate-50:        #0f1521;
+    --lc-v4-slate-100:       #141b2d;
+    --lc-v4-slate-200:       #1e293b;
+    --lc-v4-slate-300:       #334155;
+    --lc-v4-slate-500:       #94a3b8;
+    --lc-v4-slate-700:       #cbd5e1;
+    --lc-v4-slate-800:       #e2e8f0;
+    --lc-v4-slate-900:       #f1f5f9;
+    --lc-v4-blue-50:         rgba(34, 211, 238, 0.10);
+    --lc-v4-blue-100:        rgba(34, 211, 238, 0.15);
+    --lc-v4-blue-300:        var(--lc-cyber-cyan);
+    --lc-v4-blue-500:        var(--lc-cyber-cyan);
+    --lc-v4-blue-600:        var(--lc-cyber-cyan-bright);
+    --lc-v4-blue-700:        var(--lc-cyber-cyan-bright);
+    --lc-v4-blue-900:        #67e8f9;
+    --lc-v4-cyan-400:        var(--lc-cyber-cyan);
+    --lc-v4-cyan-500:        var(--lc-cyber-cyan);
+    --lc-v4-indigo-500:      var(--lc-cyber-violet);
+    --lc-v4-indigo-600:      var(--lc-cyber-violet-hi);
+    --lc-v4-violet-500:      var(--lc-cyber-violet);
+
+    --lc-v4-card-bg:         var(--lc-cyber-surface);
+    --lc-v4-card-border:     var(--lc-cyber-border);
+    --lc-v4-card-shadow:     0 1px 0 rgba(34, 211, 238, 0.04),
+                             0 8px 32px rgba(0, 0, 0, 0.45),
+                             inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    --lc-v4-card-shadow-hover: 0 0 0 1px var(--lc-cyber-cyan),
+                               0 8px 32px rgba(34, 211, 238, 0.18),
+                               0 16px 48px rgba(0, 0, 0, 0.55);
+    --lc-v4-grad-blue:       linear-gradient(135deg, #22d3ee 0%, #a855f7 100%);
+    --lc-v4-grad-blue-h:     linear-gradient(135deg, #67e8f9 0%, #c084fc 100%);
+    --lc-v4-grad-deep:       linear-gradient(135deg, #0c1322 0%, #142036 50%, #1a2542 100%);
+    --lc-v4-grad-card:       linear-gradient(135deg, rgba(34, 211, 238, 0.04) 0%, rgba(168, 85, 247, 0.04) 100%);
+
+    /* 阴影翻深 */
+    --lc-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --lc-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
+    --lc-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.55);
+    --lc-shadow-rest:    0 1px 0 rgba(34, 211, 238, 0.04);
+    --lc-shadow-overlay: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+/* §6.2 — body 网格背景 + scanline 装饰 (cyber 视觉锤) */
+html.dark body {
+    background: var(--lc-cyber-bg);
+    color: var(--lc-cyber-text);
+    font-family: var(--lc-font-sans);
+    background-image:
+        /* 顶部光晕 */
+        radial-gradient(ellipse 80% 60% at 50% -10%, rgba(34, 211, 238, 0.18), transparent 70%),
+        /* 网格 */
+        linear-gradient(rgba(34, 211, 238, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(34, 211, 238, 0.04) 1px, transparent 1px);
+    background-size: 100% 100%, 48px 48px, 48px 48px;
+    background-position: 0 0, 0 0, 0 0;
+    background-attachment: fixed, fixed, fixed;
+    min-height: 100vh;
+}
+
+html.dark body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+        180deg,
+        transparent 0,
+        transparent 3px,
+        rgba(34, 211, 238, 0.012) 3px,
+        rgba(34, 211, 238, 0.012) 4px
+    );
+    z-index: 1;
+    mix-blend-mode: overlay;
+}
+
+html.dark body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background:
+        radial-gradient(circle at 20% 80%, rgba(168, 85, 247, 0.10), transparent 50%),
+        radial-gradient(circle at 80% 20%, rgba(34, 211, 238, 0.08), transparent 50%);
+    z-index: 0;
+}
+
+/* 让所有内容在 ::after 装饰之上 */
+html.dark body > * { position: relative; z-index: 2; }
+
+/* §6.3 — 现有 v4 组件覆写 (cyber 化) */
+
+html.dark .lc-v4-hero {
+    background:
+        radial-gradient(ellipse 60% 80% at 80% 0%, rgba(168, 85, 247, 0.30), transparent 60%),
+        radial-gradient(ellipse 60% 80% at 0% 100%, rgba(34, 211, 238, 0.25), transparent 60%),
+        linear-gradient(135deg, #0c1322 0%, #142036 50%, #1a2542 100%);
+    border-bottom: 1px solid var(--lc-cyber-border);
+}
+
+html.dark .lc-v4-hero::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+        linear-gradient(rgba(34, 211, 238, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(34, 211, 238, 0.05) 1px, transparent 1px);
+    background-size: 32px 32px;
+    pointer-events: none;
+    opacity: 0.6;
+    z-index: 0;
+}
+
+html.dark .lc-v4-hero__display {
+    color: var(--lc-cyber-text);
+    text-shadow: 0 0 28px rgba(34, 211, 238, 0.25);
+}
+
+html.dark .lc-v4-hero__display em {
+    background: linear-gradient(135deg, var(--lc-cyber-cyan-bright), var(--lc-cyber-violet-hi));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-shadow: none;
+}
+
+html.dark .lc-v4-hero__lede { color: var(--lc-cyber-text-muted); }
+
+html.dark .lc-v4-hero__facts-num {
+    color: var(--lc-cyber-cyan-bright);
+    text-shadow: var(--lc-cyber-glow-cyan);
+}
+
+html.dark .lc-v4-hero__facts-label { color: var(--lc-cyber-text-muted); }
+
+html.dark .lc-v4-hero__card {
+    background: linear-gradient(180deg, rgba(20, 27, 45, 0.95) 0%, rgba(15, 21, 33, 0.95) 100%);
+    border: 1px solid var(--lc-cyber-border);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55),
+                0 0 0 1px rgba(34, 211, 238, 0.10),
+                inset 0 1px 0 rgba(34, 211, 238, 0.06);
+}
+
+html.dark .lc-v4-hero__card pre {
+    background: transparent;
+    color: var(--lc-cyber-text);
+    font-family: var(--lc-font-mono);
+}
+
+html.dark .lc-v4-hero__card .tok-cmt { color: var(--lc-cyber-text-dim); font-style: italic; }
+html.dark .lc-v4-hero__card .tok-key { color: var(--lc-cyber-violet-hi); }
+html.dark .lc-v4-hero__card .tok-num { color: var(--lc-cyber-cyan-bright); }
+
+html.dark .lc-v4-hero__code-bg code {
+    color: rgba(34, 211, 238, 0.18);
+    font-family: var(--lc-font-mono);
+}
+
+/* 按钮 */
+html.dark .lc-v4-btn--ghost,
+html.dark .lc-v4-btn {
+    border-color: var(--lc-cyber-border-2);
+    color: var(--lc-cyber-text);
+    background: transparent;
+}
+
+html.dark .lc-v4-btn--ghost:hover {
+    background: rgba(34, 211, 238, 0.06);
+    border-color: var(--lc-cyber-cyan);
+    box-shadow: 0 0 16px rgba(34, 211, 238, 0.18);
+}
+
+html.dark .lc-v4-btn--primary {
+    background: linear-gradient(135deg, #22d3ee 0%, #a855f7 100%);
+    color: #0a0e14;
+    font-weight: 700;
+    box-shadow: 0 4px 14px rgba(34, 211, 238, 0.32),
+                0 0 24px rgba(168, 85, 247, 0.18);
+}
+
+html.dark .lc-v4-btn--primary:hover {
+    background: linear-gradient(135deg, #67e8f9 0%, #c084fc 100%);
+    box-shadow: 0 8px 28px rgba(34, 211, 238, 0.45),
+                0 0 32px rgba(168, 85, 247, 0.28);
+}
+
+/* 卡片 cyber 化 */
+html.dark .lc-v4-card,
+html.dark .lc-card {
+    background: var(--lc-cyber-surface);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid var(--lc-cyber-border);
+    box-shadow: var(--lc-v4-card-shadow);
+    position: relative;
+}
+
+html.dark .lc-v4-card::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 16px; right: 16px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.5), transparent);
+    opacity: 0.6;
+}
+
+html.dark .lc-v4-card:hover,
+html.dark .lc-card:hover {
+    border-color: var(--lc-cyber-cyan);
+    box-shadow: var(--lc-v4-card-shadow-hover);
+}
+
+/* stat grid 6 卡 (cyber 霓虹边框) */
+html.dark .lc-v4-stat-card {
+    background: var(--lc-cyber-surface);
+    border: 1px solid var(--lc-cyber-border);
+    backdrop-filter: blur(8px);
+}
+html.dark .lc-v4-stat-card:hover {
+    border-color: var(--lc-cyber-cyan);
+    box-shadow: 0 0 24px rgba(34, 211, 238, 0.25);
+    transform: translateY(-3px);
+}
+html.dark .lc-v4-stat-card__num { color: var(--lc-cyber-cyan-bright); font-family: var(--lc-font-mono); }
+html.dark .lc-v4-stat-card__label { color: var(--lc-cyber-text); }
+html.dark .lc-v4-stat-card__meta { color: var(--lc-cyber-text-muted); font-family: var(--lc-font-mono); }
+
+html.dark .lc-v4-stat-card--ac { border-left: 3px solid var(--lc-cyber-emerald); }
+html.dark .lc-v4-stat-card--wa { border-left: 3px solid var(--lc-cyber-rose); }
+html.dark .lc-v4-stat-card--tle { border-left: 3px solid var(--lc-cyber-amber); }
+html.dark .lc-v4-stat-card--re { border-left: 3px solid var(--lc-cyber-rose); }
+html.dark .lc-v4-stat-card--ce { border-left: 3px solid var(--lc-cyber-text-muted); }
+html.dark .lc-v4-stat-card--scf { border-left: 3px solid var(--lc-cyber-violet); }
+
+/* usecase / how (lucide 图标背景) */
+html.dark .lc-v4-usecase,
+html.dark .lc-v4-how__step {
+    background: var(--lc-cyber-surface);
+    border: 1px solid var(--lc-cyber-border);
+    backdrop-filter: blur(8px);
+}
+
+html.dark .lc-v4-usecase:hover,
+html.dark .lc-v4-how__step:hover {
+    border-color: var(--lc-cyber-cyan);
+    box-shadow: 0 0 24px rgba(34, 211, 238, 0.18);
+}
+
+html.dark .lc-v4-usecase__icon,
+html.dark .lc-v4-how__num {
+    background: linear-gradient(135deg, rgba(34, 211, 238, 0.16), rgba(168, 85, 247, 0.16));
+    border: 1px solid var(--lc-cyber-border);
+    color: var(--lc-cyber-cyan-bright);
+}
+
+html.dark .lc-v4-how__num {
+    background: linear-gradient(135deg, var(--lc-cyber-cyan), var(--lc-cyber-violet));
+    color: #0a0e14;
+    border: none;
+    box-shadow: 0 0 18px rgba(34, 211, 238, 0.35);
+}
+
+html.dark .lc-v4-section h2,
+html.dark .lc-v4-section-header h2 { color: var(--lc-cyber-text); }
+html.dark .lc-v4-section h2 em {
+    background: linear-gradient(135deg, var(--lc-cyber-cyan-bright), var(--lc-cyber-violet-hi));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-shadow: none;
+    font-style: normal;
+}
+html.dark .lc-v4-section-header p { color: var(--lc-cyber-text-muted); }
+
+/* §6.4 — 通用组件 cyber 化 */
+
+html.dark .lc-v4-page-header__title { color: var(--lc-cyber-text); }
+html.dark .lc-v4-page-header__title em {
+    background: linear-gradient(135deg, var(--lc-cyber-cyan-bright), var(--lc-cyber-violet-hi));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    font-style: normal;
+}
+html.dark .lc-v4-page-header__lede { color: var(--lc-cyber-text-muted); }
+html.dark .lc-v4-page-header__toolbar a,
+html.dark .lc-v4-breadcrumb a { color: var(--lc-cyber-text-muted); }
+html.dark .lc-v4-page-header__toolbar a:hover,
+html.dark .lc-v4-breadcrumb a:hover { color: var(--lc-cyber-cyan); }
+html.dark .lc-v4-breadcrumb [aria-current="page"] { color: var(--lc-cyber-text); }
+
+html.dark .lc-v4-identity-card {
+    background: var(--lc-cyber-surface);
+    border: 1px solid var(--lc-cyber-border);
+    backdrop-filter: blur(8px);
+}
+html.dark .lc-v4-avatar-xl {
+    background: linear-gradient(135deg, var(--lc-cyber-cyan), var(--lc-cyber-violet));
+    box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.3),
+                0 8px 24px rgba(34, 211, 238, 0.4);
+}
+html.dark .lc-v4-identity__name { color: var(--lc-cyber-text); }
+html.dark .lc-v4-identity__meta { color: var(--lc-cyber-text-muted); }
+
+html.dark .lc-v4-pill { background: rgba(34, 211, 238, 0.12); color: var(--lc-cyber-cyan-bright); }
+html.dark .lc-v4-pill--admin { background: rgba(168, 85, 247, 0.16); color: var(--lc-cyber-violet-hi); }
+html.dark .lc-v4-pill--user { background: rgba(148, 163, 184, 0.16); color: var(--lc-cyber-text-muted); }
+
+html.dark .lc-v4-kpi__num { color: var(--lc-cyber-cyan-bright); text-shadow: var(--lc-cyber-glow-cyan); }
+html.dark .lc-v4-kpi__label,
+html.dark .lc-v4-kpi__delta { color: var(--lc-cyber-text-muted); }
+
+/* 表格 / list */
+html.dark .lc-v4-table {
+    background: var(--lc-cyber-surface);
+    border: 1px solid var(--lc-cyber-border);
+}
+html.dark .lc-v4-table th {
+    background: rgba(15, 21, 33, 0.85);
+    color: var(--lc-cyber-text-muted);
+    border-bottom: 1px solid var(--lc-cyber-border);
+}
+html.dark .lc-v4-table td {
+    color: var(--lc-cyber-text);
+    border-bottom: 1px solid var(--lc-cyber-border-soft);
+}
+html.dark .lc-v4-table tbody tr:hover { background: rgba(34, 211, 238, 0.05); }
+
+html.dark .lc-v4-avatar-mini {
+    background: linear-gradient(135deg, var(--lc-cyber-cyan), var(--lc-cyber-violet));
+    box-shadow: 0 0 12px rgba(34, 211, 238, 0.4);
+}
+
+html.dark .lc-v4-list__item { color: var(--lc-cyber-text); }
+html.dark .lc-v4-list__item + .lc-v4-list__item { border-top-color: var(--lc-cyber-border-soft); }
+html.dark .lc-v4-list__item:hover { background: rgba(34, 211, 238, 0.05); }
+html.dark .lc-v4-list__item__title { color: var(--lc-cyber-text); }
+html.dark .lc-v4-list__item__title:hover { color: var(--lc-cyber-cyan-bright); }
+html.dark .lc-v4-list__item__meta { color: var(--lc-cyber-text-muted); }
+
+/* 通用 lc-* 组件 dark 化 */
+html.dark .lc-card {
+    background: var(--lc-cyber-surface);
+    border: 1px solid var(--lc-cyber-border);
+    backdrop-filter: blur(8px);
+}
+
+html.dark .lc-btn {
+    background: rgba(34, 211, 238, 0.08);
+    border: 1px solid var(--lc-cyber-border);
+    color: var(--lc-cyber-text);
+}
+html.dark .lc-btn:hover {
+    background: rgba(34, 211, 238, 0.16);
+    border-color: var(--lc-cyber-cyan);
+}
+html.dark .lc-btn--primary {
+    background: linear-gradient(135deg, var(--lc-cyber-cyan), var(--lc-cyber-violet));
+    border: none;
+    color: #0a0e14;
+    font-weight: 700;
+    box-shadow: 0 0 18px rgba(34, 211, 238, 0.30);
+}
+html.dark .lc-btn--primary:hover {
+    background: linear-gradient(135deg, var(--lc-cyber-cyan-bright), var(--lc-cyber-violet-hi));
+    box-shadow: 0 0 28px rgba(34, 211, 238, 0.45);
+}
+html.dark .lc-btn--ghost {
+    background: transparent;
+    border-color: var(--lc-cyber-border);
+}
+html.dark .lc-btn--ghost:hover {
+    background: rgba(34, 211, 238, 0.08);
+    border-color: var(--lc-cyber-cyan);
+}
+html.dark .lc-btn--danger {
+    background: rgba(244, 63, 94, 0.12);
+    border-color: rgba(244, 63, 94, 0.4);
+    color: var(--lc-cyber-rose);
+}
+
+html.dark .lc-input,
+html.dark .lc-input-text,
+html.dark .lc-input-password,
+html.dark .lc-input-email {
+    background: rgba(15, 21, 33, 0.6);
+    border: 1px solid var(--lc-cyber-border);
+    color: var(--lc-cyber-text);
+    font-family: var(--lc-font-mono);
+}
+html.dark .lc-input::placeholder { color: var(--lc-cyber-text-dim); }
+html.dark .lc-input:focus,
+html.dark .lc-input-text:focus {
+    outline: none;
+    border-color: var(--lc-cyber-cyan);
+    box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.18);
+}
+
+html.dark .lc-form-label { color: var(--lc-cyber-text-muted); }
+html.dark .lc-form-help { color: var(--lc-cyber-text-muted); }
+html.dark .lc-form-row label .lc-form-label::after {
+    color: var(--lc-cyber-text-dim);
+}
+
+/* 题目 list / filter */
+html.dark .lc-problem-filters {
+    background: var(--lc-cyber-surface);
+    border: 1px solid var(--lc-cyber-border);
+}
+
+html.dark .lc-problem-row {
+    border-color: var(--lc-cyber-border-soft);
+    background: rgba(15, 21, 33, 0.45);
+}
+html.dark .lc-problem-row:hover {
+    background: rgba(34, 211, 238, 0.05);
+    border-color: var(--lc-cyber-cyan);
+}
+html.dark .lc-problem-row__title { color: var(--lc-cyber-text); }
+html.dark .lc-problem-row__title:hover { color: var(--lc-cyber-cyan-bright); }
+html.dark .lc-problem-row__metric { color: var(--lc-cyber-text-muted); font-family: var(--lc-font-mono); }
+
+/* segmented / tag chips */
+html.dark .lc-seg {
+    border: 1px solid var(--lc-cyber-border);
+    background: rgba(15, 21, 33, 0.6);
+    border-radius: 8px;
+}
+html.dark .lc-seg__btn {
+    color: var(--lc-cyber-text-muted);
+    border-right: 1px solid var(--lc-cyber-border-soft);
+}
+html.dark .lc-seg__btn:hover { background: rgba(34, 211, 238, 0.06); color: var(--lc-cyber-text); }
+html.dark .lc-seg__btn--active {
+    background: rgba(34, 211, 238, 0.16);
+    color: var(--lc-cyber-cyan-bright);
+    box-shadow: inset 0 -2px 0 var(--lc-cyber-cyan);
+}
+
+html.dark .lc-tag-chip {
+    background: rgba(34, 211, 238, 0.08);
+    color: var(--lc-cyber-cyan-bright);
+    border: 1px solid var(--lc-cyber-border-soft);
+}
+html.dark .lc-tag-chip:hover { background: rgba(34, 211, 238, 0.16); }
+html.dark .lc-tag-chip--active {
+    background: rgba(34, 211, 238, 0.18);
+    border-color: var(--lc-cyber-cyan);
+    color: var(--lc-cyber-cyan-bright);
+    box-shadow: 0 0 12px rgba(34, 211, 238, 0.20);
+}
+
+html.dark .lc-v4-tag-chip {
+    background: rgba(34, 211, 238, 0.08);
+    color: var(--lc-cyber-cyan-bright);
+}
+html.dark .lc-v4-tag-chip:hover { background: rgba(34, 211, 238, 0.16); }
+html.dark .lc-v4-tag-chip--ghost {
+    background: rgba(148, 163, 184, 0.08);
+    color: var(--lc-cyber-text-muted);
+}
+
+/* status / pill / 状态徽章 */
+html.dark .lc-pill { background: rgba(34, 211, 238, 0.10); color: var(--lc-cyber-cyan-bright); }
+html.dark .lc-pill--easy   { color: var(--lc-cyber-emerald); background: rgba(16, 185, 129, 0.10); }
+html.dark .lc-pill--medium { color: var(--lc-cyber-amber);   background: rgba(245, 158, 11, 0.10); }
+html.dark .lc-pill--hard   { color: var(--lc-cyber-rose);    background: rgba(244, 63, 94, 0.10); }
+html.dark .lc-pill--admin  { color: var(--lc-cyber-violet-hi); background: rgba(168, 85, 247, 0.10); }
+
+html.dark .lc-status { font-family: var(--lc-font-mono); font-weight: 700; letter-spacing: 0.04em; }
+html.dark .lc-status--ac      { background: rgba(16, 185, 129, 0.15); color: var(--lc-cyber-emerald); box-shadow: var(--lc-cyber-glow-emerald); }
+html.dark .lc-status--wa      { background: rgba(244, 63, 94, 0.15); color: var(--lc-cyber-rose); }
+html.dark .lc-status--tle     { background: rgba(245, 158, 11, 0.15); color: var(--lc-cyber-amber); }
+html.dark .lc-status--mle     { background: rgba(168, 85, 247, 0.15); color: var(--lc-cyber-violet-hi); }
+html.dark .lc-status--re      { background: rgba(244, 63, 94, 0.15); color: var(--lc-cyber-rose); }
+html.dark .lc-status--ole     { background: rgba(245, 158, 11, 0.15); color: var(--lc-cyber-amber); }
+html.dark .lc-status--pe      { background: rgba(245, 158, 11, 0.15); color: var(--lc-cyber-amber); }
+html.dark .lc-status--ce      { background: rgba(148, 163, 184, 0.15); color: var(--lc-cyber-text-muted); }
+html.dark .lc-status--se      { background: rgba(244, 63, 94, 0.15); color: var(--lc-cyber-rose); }
+html.dark .lc-status--pending { background: rgba(34, 211, 238, 0.15); color: var(--lc-cyber-cyan-bright); }
+html.dark .lc-status--running { background: rgba(34, 211, 238, 0.15); color: var(--lc-cyber-cyan-bright); }
+
+/* pagination */
+html.dark .lc-page-btn {
+    background: rgba(15, 21, 33, 0.6);
+    border: 1px solid var(--lc-cyber-border);
+    color: var(--lc-cyber-text-muted);
+    font-family: var(--lc-font-mono);
+}
+html.dark .lc-page-btn:hover {
+    background: rgba(34, 211, 238, 0.08);
+    border-color: var(--lc-cyber-cyan);
+    color: var(--lc-cyber-cyan-bright);
+}
+html.dark .lc-page-btn--active {
+    background: linear-gradient(135deg, var(--lc-cyber-cyan), var(--lc-cyber-violet));
+    color: #0a0e14;
+    border-color: transparent;
+    font-weight: 700;
+}
+html.dark .lc-page-btn--disabled { opacity: 0.3; cursor: not-allowed; }
+html.dark .lc-page-ellipsis { color: var(--lc-cyber-text-dim); }
+
+/* state / loading / empty / error */
+html.dark .lc-loading,
+html.dark .lc-empty,
+html.dark .lc-error,
+html.dark .lc-v4-state {
+    background: var(--lc-cyber-surface);
+    border: 1px solid var(--lc-cyber-border);
+    color: var(--lc-cyber-text);
+    backdrop-filter: blur(8px);
+}
+html.dark .lc-v4-state__icon {
+    background: rgba(34, 211, 238, 0.10);
+    border: 1px solid var(--lc-cyber-border);
+    color: var(--lc-cyber-cyan-bright);
+}
+html.dark .lc-v4-state__title { color: var(--lc-cyber-text); }
+html.dark .lc-v4-state__lede { color: var(--lc-cyber-text-muted); }
+html.dark .lc-empty__title,
+html.dark .lc-error__title { color: var(--lc-cyber-text); }
+html.dark .lc-error__title { color: var(--lc-cyber-rose); }
+
+html.dark .lc-spinner {
+    border-color: rgba(34, 211, 238, 0.2);
+    border-top-color: var(--lc-cyber-cyan);
+}
+
+/* history list */
+html.dark .lc-history-list {
+    background: var(--lc-cyber-surface);
+    border: 1px solid var(--lc-cyber-border);
+    border-radius: 12px;
+}
+html.dark .lc-history-row {
+    background: rgba(15, 21, 33, 0.5);
+    border-color: var(--lc-cyber-border-soft);
+}
+html.dark .lc-history-row:hover { background: rgba(34, 211, 238, 0.05); }
+html.dark .lc-history-row__id { color: var(--lc-cyber-text); }
+html.dark .lc-history-row__id:hover { color: var(--lc-cyber-cyan-bright); }
+html.dark .lc-history-row__lang,
+html.dark .lc-history-row__time { color: var(--lc-cyber-text-muted); font-family: var(--lc-font-mono); }
+html.dark .lc-history-row__metric { color: var(--lc-cyber-text-muted); font-family: var(--lc-font-mono); }
+html.dark .lc-history-row__details { background: rgba(10, 14, 20, 0.6); border-top-color: var(--lc-cyber-border-soft); }
+html.dark .lc-history-row__details-body { color: var(--lc-cyber-text); font-family: var(--lc-font-mono); }
+
+/* stats / bars */
+html.dark .lc-stat-card {
+    background: var(--lc-cyber-surface);
+    border: 1px solid var(--lc-cyber-border);
+    backdrop-filter: blur(8px);
+}
+html.dark .lc-stat-card__value {
+    color: var(--lc-cyber-cyan-bright);
+    font-family: var(--lc-font-mono);
+    text-shadow: var(--lc-cyber-glow-cyan);
+}
+html.dark .lc-stat-card__value--accent { color: var(--lc-cyber-violet-hi); text-shadow: var(--lc-cyber-glow-violet); }
+html.dark .lc-stat-card__label { color: var(--lc-cyber-text); }
+html.dark .lc-stat-card__sub { color: var(--lc-cyber-text-muted); font-family: var(--lc-font-mono); }
+
+html.dark .lc-bar-track {
+    background: rgba(15, 21, 33, 0.85);
+    border: 1px solid var(--lc-cyber-border-soft);
+}
+html.dark .lc-bar-fill { background: linear-gradient(90deg, var(--lc-cyber-cyan), var(--lc-cyber-violet)); }
+html.dark .lc-bar-fill--easy { background: var(--lc-cyber-emerald); }
+html.dark .lc-bar-fill--medium { background: var(--lc-cyber-amber); }
+html.dark .lc-bar-fill--hard { background: var(--lc-cyber-rose); }
+html.dark .lc-bar-fill--ac { background: var(--lc-cyber-emerald); }
+html.dark .lc-bar-fill--muted { background: var(--lc-cyber-text-dim); }
+html.dark .lc-bar-row__label,
+html.dark .lc-bar-row__count { color: var(--lc-cyber-text-muted); font-family: var(--lc-font-mono); }
+
+/* nav */
+html.dark .lc-nav {
+    background: rgba(15, 21, 33, 0.85);
+    border-bottom: 1px solid var(--lc-cyber-border);
+    backdrop-filter: blur(12px);
+}
+html.dark .lc-nav-brand { color: var(--lc-cyber-text); }
+html.dark .lc-nav-brand::before { color: var(--lc-cyber-cyan-bright); }
+html.dark .lc-nav-link { color: var(--lc-cyber-text-muted); }
+html.dark .lc-nav-link:hover { color: var(--lc-cyber-cyan-bright); }
+html.dark .lc-nav-link--active { color: var(--lc-cyber-cyan-bright); }
+html.dark .lc-nav-link--active::after { background: var(--lc-cyber-cyan); box-shadow: 0 0 8px var(--lc-cyber-cyan); }
+html.dark .lc-nav-username { color: var(--lc-cyber-text); }
+
+html.dark .lc-avatar { background: linear-gradient(135deg, var(--lc-cyber-cyan), var(--lc-cyber-violet)); color: #0a0e14; }
+
+html.dark .lc-icon-btn {
+    color: var(--lc-cyber-text-muted);
+    border-color: var(--lc-cyber-border);
+}
+html.dark .lc-icon-btn:hover { color: var(--lc-cyber-cyan-bright); border-color: var(--lc-cyber-cyan); }
+
+/* menu */
+html.dark .lc-menu {
+    background: var(--lc-cyber-bg-2);
+    border: 1px solid var(--lc-cyber-border);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+}
+html.dark .lc-menu-item { color: var(--lc-cyber-text); }
+html.dark .lc-menu-item:hover { background: rgba(34, 211, 238, 0.08); color: var(--lc-cyber-cyan-bright); }
+html.dark .lc-menu-item--danger { color: var(--lc-cyber-rose); }
+html.dark .lc-menu-sep { background: var(--lc-cyber-border-soft); }
+
+/* toast */
+html.dark .lc-toast {
+    background: var(--lc-cyber-bg-2);
+    border: 1px solid var(--lc-cyber-border);
+    color: var(--lc-cyber-text);
+    backdrop-filter: blur(12px);
+}
+html.dark .lc-toast--success { border-left: 3px solid var(--lc-cyber-emerald); box-shadow: -4px 0 16px rgba(16, 185, 129, 0.18), 0 8px 32px rgba(0, 0, 0, 0.55); }
+html.dark .lc-toast--error   { border-left: 3px solid var(--lc-cyber-rose);    box-shadow: -4px 0 16px rgba(244, 63, 94, 0.18), 0 8px 32px rgba(0, 0, 0, 0.55); }
+html.dark .lc-toast--info    { border-left: 3px solid var(--lc-cyber-cyan);    box-shadow: -4px 0 16px rgba(34, 211, 238, 0.18), 0 8px 32px rgba(0, 0, 0, 0.55); }
+html.dark .lc-toast--warn    { border-left: 3px solid var(--lc-cyber-amber);   box-shadow: -4px 0 16px rgba(245, 158, 11, 0.18), 0 8px 32px rgba(0, 0, 0, 0.55); }
+html.dark .lc-toast-close { color: var(--lc-cyber-text-muted); }
+html.dark .lc-toast-close:hover { color: var(--lc-cyber-cyan-bright); }
+
+/* form errors + draft banner */
+html.dark .lc-v4-auth__err {
+    background: rgba(244, 63, 94, 0.10);
+    border: 1px solid rgba(244, 63, 94, 0.32);
+    color: var(--lc-cyber-rose);
+}
+html.dark .lc-draft-banner {
+    background: rgba(34, 211, 238, 0.08);
+    border: 1px solid var(--lc-cyber-border);
+}
+html.dark .lc-draft-banner__title { color: var(--lc-cyber-cyan-bright); }
+
+/* editor pane */
+html.dark .lc-editor-pane { background: var(--lc-cyber-surface); border: 1px solid var(--lc-cyber-border); }
+html.dark .lc-editor-pane__toolbar { background: rgba(15, 21, 33, 0.6); border-bottom-color: var(--lc-cyber-border-soft); }
+html.dark .lc-editor-shell {
+    background: rgba(10, 14, 20, 0.85);
+    border: 1px solid var(--lc-cyber-border);
+    box-shadow: inset 0 0 32px rgba(34, 211, 238, 0.04);
+}
+html.dark .lc-editor-pane__select {
+    background: rgba(15, 21, 33, 0.85);
+    color: var(--lc-cyber-text);
+    border-color: var(--lc-cyber-border);
+}
+html.dark .lc-saved-indicator { color: var(--lc-cyber-text-muted); font-family: var(--lc-font-mono); }
+html.dark .lc-saved-indicator__dot { background: var(--lc-cyber-cyan); box-shadow: 0 0 8px var(--lc-cyber-cyan); }
+html.dark .lc-sse-status { color: var(--lc-cyber-text-muted); }
+html.dark .lc-sse-status__dot--sse { background: var(--lc-cyber-emerald); box-shadow: 0 0 8px var(--lc-cyber-emerald); }
+html.dark .lc-sse-status__dot--polling { background: var(--lc-cyber-cyan); box-shadow: 0 0 8px var(--lc-cyber-cyan); }
+html.dark .lc-sse-status__dot--timeout { background: var(--lc-cyber-amber); box-shadow: 0 0 8px var(--lc-cyber-amber); }
+
+/* result panel + gauges */
+html.dark .lc-result-panel { background: var(--lc-cyber-surface); border: 1px solid var(--lc-cyber-border); }
+html.dark .lc-result-panel__message { color: var(--lc-cyber-text); }
+html.dark .lc-result-panel__metric-label { color: var(--lc-cyber-text-muted); font-family: var(--lc-font-mono); }
+html.dark .lc-result-panel__metric-value { color: var(--lc-cyber-text); font-family: var(--lc-font-mono); }
+html.dark .lc-result-panel__details {
+    background: rgba(10, 14, 20, 0.6);
+    border-top-color: var(--lc-cyber-border-soft);
+}
+html.dark .lc-result-panel__details-body { color: var(--lc-cyber-text); font-family: var(--lc-font-mono); }
+html.dark .lc-result-panel__help { color: var(--lc-cyber-text-muted); background: rgba(34, 211, 238, 0.05); }
+
+html.dark .lc-gauge__label { color: var(--lc-cyber-text-muted); font-family: var(--lc-font-mono); }
+html.dark .lc-gauge__value { color: var(--lc-cyber-text); font-family: var(--lc-font-mono); }
+html.dark .lc-gauge__max { color: var(--lc-cyber-text-dim); font-family: var(--lc-font-mono); }
+html.dark .lc-gauge__track { background: rgba(15, 21, 33, 0.85); border: 1px solid var(--lc-cyber-border-soft); }
+html.dark .lc-gauge__fill { background: linear-gradient(90deg, var(--lc-cyber-cyan), var(--lc-cyber-violet)); }
+html.dark .lc-gauge--warning .lc-gauge__fill { background: var(--lc-cyber-amber); }
+html.dark .lc-gauge--danger .lc-gauge__fill { background: var(--lc-cyber-rose); }
+
+/* problem pane (markdown) */
+html.dark .lc-problem-pane { background: var(--lc-cyber-surface); border: 1px solid var(--lc-cyber-border); }
+html.dark .lc-problem-pane__title { color: var(--lc-cyber-text); }
+html.dark .lc-problem-pane__title em { background: linear-gradient(135deg, var(--lc-cyber-cyan-bright), var(--lc-cyber-violet-hi)); -webkit-background-clip: text; background-clip: text; color: transparent; font-style: normal; }
+html.dark .lc-problem-pane__meta { color: var(--lc-cyber-text-muted); }
+html.dark .lc-problem-pane__description { color: var(--lc-cyber-text); }
+html.dark .lc-problem-pane__description h1,
+html.dark .lc-problem-pane__description h2,
+html.dark .lc-problem-pane__description h3 { color: var(--lc-cyber-text); }
+html.dark .lc-problem-pane__description code {
+    background: rgba(34, 211, 238, 0.10);
+    color: var(--lc-cyber-cyan-bright);
+    font-family: var(--lc-font-mono);
+    border-radius: 4px;
+    padding: 1px 6px;
+}
+html.dark .lc-problem-pane__description pre {
+    background: rgba(10, 14, 20, 0.85);
+    border: 1px solid var(--lc-cyber-border-soft);
+    color: var(--lc-cyber-text);
+}
+html.dark .lc-problem-pane__description a { color: var(--lc-cyber-cyan); }
+html.dark .lc-problem-pane__description a:hover { color: var(--lc-cyber-cyan-bright); }
+html.dark .lc-problem-pane__description blockquote {
+    border-left: 3px solid var(--lc-cyber-cyan);
+    background: rgba(34, 211, 238, 0.04);
+    color: var(--lc-cyber-text-muted);
+}
+html.dark .lc-problem-pane__description table { border-color: var(--lc-cyber-border-soft); }
+html.dark .lc-problem-pane__description th { background: rgba(15, 21, 33, 0.85); color: var(--lc-cyber-text-muted); }
+html.dark .lc-problem-pane__description td { border-color: var(--lc-cyber-border-soft); color: var(--lc-cyber-text); }
+
+html.dark .lc-sample { background: rgba(10, 14, 20, 0.6); border: 1px solid var(--lc-cyber-border-soft); }
+html.dark .lc-sample__caption { color: var(--lc-cyber-cyan-bright); font-family: var(--lc-font-mono); }
+html.dark .lc-sample__label { color: var(--lc-cyber-text-muted); font-family: var(--lc-font-mono); }
+html.dark .lc-sample__pre { color: var(--lc-cyber-text); font-family: var(--lc-font-mono); }
+
+/* status cells (status grid) */
+html.dark .lc-status-cell { background: var(--lc-cyber-surface); border: 1px solid var(--lc-cyber-border); }
+html.dark .lc-status-cell:hover { border-color: var(--lc-cyber-cyan); box-shadow: 0 0 18px rgba(34, 211, 238, 0.20); }
+html.dark .lc-status-cell__num { color: var(--lc-cyber-cyan-bright); font-family: var(--lc-font-mono); }
+html.dark .lc-status-cell__label { color: var(--lc-cyber-text); }
+
+/* judge row */
+html.dark .lc-v4-judge-row--ac  { background: rgba(16, 185, 129, 0.16); color: var(--lc-cyber-emerald); }
+html.dark .lc-v4-judge-row--wa,
+html.dark .lc-v4-judge-row--tre,
+html.dark .lc-v4-judge-row--re,
+html.dark .lc-v4-judge-row--se  { background: rgba(244, 63, 94, 0.16); color: var(--lc-cyber-rose); }
+html.dark .lc-v4-judge-row--tle { background: rgba(245, 158, 11, 0.16); color: var(--lc-cyber-amber); }
+html.dark .lc-v4-judge-row--ce  { background: rgba(148, 163, 184, 0.16); color: var(--lc-cyber-text-muted); }
+html.dark .lc-v4-judge-row--mle { background: rgba(168, 85, 247, 0.16); color: var(--lc-cyber-violet-hi); }
+html.dark .lc-v4-judge-row--pe  { background: rgba(245, 158, 11, 0.16); color: var(--lc-cyber-amber); }
+html.dark .lc-v4-judge-row--scf { background: rgba(34, 211, 238, 0.16); color: var(--lc-cyber-cyan-bright); }
+html.dark .lc-v4-judge-row--pending { background: rgba(148, 163, 184, 0.16); color: var(--lc-cyber-text-muted); }
+html.dark .lc-v4-judge-row--running { background: rgba(34, 211, 238, 0.16); color: var(--lc-cyber-cyan-bright); }
+html.dark .lc-v4-judge-row--ole  { background: rgba(168, 85, 247, 0.16); color: var(--lc-cyber-violet-hi); }
+
+/* §6.5 — cyber 独立组件类 (新增, 不影响现有 JS) */
+
+/* 终端装饰标题 */
+.lc-cyber-terminal {
+    font-family: var(--lc-font-mono);
+    font-size: 13px;
+    color: var(--lc-cyber-text-muted);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.lc-cyber-terminal__dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--lc-cyber-cyan);
+    box-shadow: 0 0 8px var(--lc-cyber-cyan);
+    animation: lc-cyber-blink 1.6s ease-in-out infinite;
+}
+@keyframes lc-cyber-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+/* cyber 卡片 (在已有 v4-card 之外, 用于 hero / ranking podium) */
+html.dark .lc-cyber-card {
+    position: relative;
+    background: linear-gradient(180deg, rgba(20, 27, 45, 0.92) 0%, rgba(15, 21, 33, 0.95) 100%);
+    border: 1px solid var(--lc-cyber-border);
+    border-radius: 14px;
+    backdrop-filter: blur(10px);
+    box-shadow:
+        0 1px 0 rgba(34, 211, 238, 0.06) inset,
+        0 12px 32px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+}
+html.dark .lc-cyber-card::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 12px; right: 12px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.6), transparent);
+}
+html.dark .lc-cyber-card__title {
+    font-family: var(--lc-font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--lc-cyber-cyan-bright);
+    margin: 0 0 8px;
+}
+html.dark .lc-cyber-card__value {
+    font-family: var(--lc-font-mono);
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--lc-cyber-text);
+    line-height: 1.1;
+    text-shadow: 0 0 24px rgba(34, 211, 238, 0.3);
+}
+html.dark .lc-cyber-card__value--violet { color: var(--lc-cyber-violet-hi); text-shadow: 0 0 24px rgba(168, 85, 247, 0.3); }
+html.dark .lc-cyber-card__value--emerald { color: var(--lc-cyber-emerald); text-shadow: 0 0 24px rgba(16, 185, 129, 0.3); }
+
+/* podium (前 3 名) */
+html.dark .lc-cyber-podium {
+    display: grid;
+    grid-template-columns: 1fr 1.2fr 1fr;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+html.dark .lc-cyber-podium__step {
+    position: relative;
+    background: linear-gradient(180deg, rgba(20, 27, 45, 0.92) 0%, rgba(15, 21, 33, 0.95) 100%);
+    border: 1px solid var(--lc-cyber-border);
+    border-radius: 14px;
+    padding: 24px 16px 20px;
+    text-align: center;
+    backdrop-filter: blur(10px);
+    overflow: hidden;
+}
+html.dark .lc-cyber-podium__step--1 {
+    border-color: rgba(245, 158, 11, 0.55);
+    box-shadow: 0 0 28px rgba(245, 158, 11, 0.18);
+}
+html.dark .lc-cyber-podium__step--2 {
+    border-color: rgba(203, 213, 225, 0.45);
+}
+html.dark .lc-cyber-podium__step--3 {
+    border-color: rgba(180, 83, 9, 0.50);
+}
+html.dark .lc-cyber-podium__rank {
+    font-family: var(--lc-font-mono);
+    font-size: 36px;
+    font-weight: 800;
+    background: linear-gradient(180deg, var(--lc-cyber-cyan-bright), var(--lc-cyber-violet-hi));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    line-height: 1;
+    margin-bottom: 8px;
+}
+html.dark .lc-cyber-podium__step--1 .lc-cyber-podium__rank { color: var(--lc-cyber-amber); -webkit-text-fill-color: var(--lc-cyber-amber); text-shadow: 0 0 24px rgba(245, 158, 11, 0.5); }
+html.dark .lc-cyber-podium__step--2 .lc-cyber-podium__rank { color: #cbd5e1; -webkit-text-fill-color: #cbd5e1; text-shadow: 0 0 16px rgba(203, 213, 225, 0.4); }
+html.dark .lc-cyber-podium__step--3 .lc-cyber-podium__rank { color: #b45309; -webkit-text-fill-color: #b45309; text-shadow: 0 0 16px rgba(180, 83, 9, 0.4); }
+html.dark .lc-cyber-podium__name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--lc-cyber-text);
+    margin-bottom: 4px;
+    font-family: var(--lc-font-mono);
+}
+html.dark .lc-cyber-podium__solved {
+    font-size: 12px;
+    color: var(--lc-cyber-text-muted);
+    font-family: var(--lc-font-mono);
+}
+
+/* rank row (排行榜行) */
+html.dark .lc-rank-row {
+    background: rgba(15, 21, 33, 0.45);
+    border-bottom: 1px solid var(--lc-cyber-border-soft);
+    color: var(--lc-cyber-text);
+}
+html.dark .lc-rank-row:hover { background: rgba(34, 211, 238, 0.05); }
+html.dark .lc-rank-row--me {
+    background: rgba(34, 211, 238, 0.10);
+    border-left: 3px solid var(--lc-cyber-cyan);
+    box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.2);
+}
+html.dark .lc-rank-head {
+    background: rgba(15, 21, 33, 0.85);
+    color: var(--lc-cyber-text-muted);
+    border-bottom: 1px solid var(--lc-cyber-border);
+    font-family: var(--lc-font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+html.dark .lc-rank-cell--rank { color: var(--lc-cyber-cyan-bright); font-family: var(--lc-font-mono); }
+html.dark .lc-rank-username { color: var(--lc-cyber-text); }
+html.dark .lc-rank-username:hover { color: var(--lc-cyber-cyan-bright); }
+html.dark .lc-rank-me-tag { background: var(--lc-cyber-cyan); color: #0a0e14; }
+html.dark .lc-rank-cell--solved,
+html.dark .lc-rank-cell--subs,
+html.dark .lc-rank-cell--rate { color: var(--lc-cyber-text); font-family: var(--lc-font-mono); }
+html.dark .lc-rank-sub { color: var(--lc-cyber-text-muted); }
+
+/* password strength (register) */
+html.dark .lc-v4-pw-bar { background: rgba(15, 21, 33, 0.85); }
+html.dark .lc-v4-pw-bar--on-1 { background: var(--lc-cyber-rose); }
+html.dark .lc-v4-pw-bar--on-2 { background: var(--lc-cyber-amber); }
+html.dark .lc-v4-pw-bar--on-3 { background: var(--lc-cyber-cyan); }
+html.dark .lc-v4-pw-bar--on-4 { background: var(--lc-cyber-emerald); box-shadow: var(--lc-cyber-glow-emerald); }
+html.dark .lc-v4-pw-rule { color: var(--lc-cyber-text-muted); }
+html.dark .lc-v4-pw-rule__mark { background: rgba(15, 21, 33, 0.85); color: var(--lc-cyber-text-dim); border: 1px solid var(--lc-cyber-border-soft); }
+html.dark .lc-v4-pw-rule--ok { color: var(--lc-cyber-emerald); }
+html.dark .lc-v4-pw-rule--ok .lc-v4-pw-rule__mark {
+    background: rgba(16, 185, 129, 0.16);
+    color: var(--lc-cyber-emerald);
+    border-color: rgba(16, 185, 129, 0.4);
+}
+
+/* scrollbar (cyber) */
+html.dark ::-webkit-scrollbar { width: 10px; height: 10px; }
+html.dark ::-webkit-scrollbar-track { background: rgba(15, 21, 33, 0.6); }
+html.dark ::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, var(--lc-cyber-cyan), var(--lc-cyber-violet));
+    border-radius: 999px;
+    border: 2px solid var(--lc-cyber-bg);
+}
+html.dark ::-webkit-scrollbar-thumb:hover { box-shadow: 0 0 12px var(--lc-cyber-cyan); }
+
+/* selection */
+html.dark ::selection {
+    background: rgba(34, 211, 238, 0.32);
+    color: var(--lc-cyber-text);
+}
+
+/* focus ring */
+html.dark *:focus-visible {
+    outline: 2px solid var(--lc-cyber-cyan);
+    outline-offset: 2px;
+}
+
+/* §6.6 — cyber 装饰元素 (grid pattern + scanline 装饰条) */
+.lc-cyber-grid-strip {
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--lc-cyber-cyan), var(--lc-cyber-violet), transparent);
+    margin: 0 0 24px;
+    opacity: 0.55;
+}
+
+/* ribbon status (顶部状态栏) */
+.lc-cyber-ribbon {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(34, 211, 238, 0.10);
+    border: 1px solid var(--lc-cyber-border-2);
+    color: var(--lc-cyber-cyan-bright);
+    font-family: var(--lc-font-mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+.lc-cyber-ribbon::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--lc-cyber-emerald);
+    box-shadow: 0 0 8px var(--lc-cyber-emerald);
+    animation: lc-cyber-blink 1.8s ease-in-out infinite;
+}
+
+/* 隐藏 a11y 焦点偏移, 让 cyber 主题下 outline 更贴合 */
+@media (prefers-reduced-motion: reduce) {
+    html.dark .lc-cyber-terminal__dot,
+    html.dark .lc-cyber-ribbon::before { animation: none; }
+}
+
+/* =====================================================================
+   §15. v1.3.3.9 — Desktop polish + Ace editor theme
+
+   Three deliverables:
+     (1) `.lc-problem-page` widens the page wrapper to 1480px and
+         raises the single-column breakpoint from 1024px to 1180px
+         so the two-column problem+editor layout survives on
+         13" / 14" laptops instead of collapsing into a stack.
+     (2) `.ace_editor` / `.ace_gutter` colour overrides so the
+         Ace editor matches the page's paper / cyber palette
+         without us bundling a custom theme. Ace injects its own
+         stylesheet on first edit(); our overrides win by
+         specificity.
+     (3) `.lc-result-panel__hero` + `__case-progress` is the
+         desktop-grade verdict card — verdict icon + big badge
+         on the left, case progress (X/Y) + actions on the
+         right, gauges in a 2-col grid below (time / memory).
+         Collapses cleanly below 768px.
+   ===================================================================== */
+
+/* (1) Problem page wrapper — wider, more breathing room on desktop. */
+.lc-problem-page {
+    --lc-problem-page-max: 1480px;
+    max-width: var(--lc-problem-page-max) !important;
+    padding: 0 32px 96px;
+}
+@media (max-width: 1180px) {
+    .lc-problem-page {
+        padding: 0 24px 80px;
+    }
+}
+@media (max-width: 768px) {
+    .lc-problem-page {
+        padding: 0 16px 64px;
+    }
+}
+
+/* (1a) Two-column layout — survive on 13" laptops instead of collapsing
+   at 1024px. The hero (left) gets more space because descriptions are
+   usually the longer column; the editor pane stays sticky on the right. */
+.lc-problem-layout {
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    gap: var(--lc-space-5);
+}
+@media (max-width: 1180px) {
+    .lc-problem-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .lc-problem-pane {
+        max-height: none;
+    }
+    .lc-editor-pane {
+        position: static;
+    }
+}
+
+/* (1b) Editor pane — slightly taller shell so Ace can show ~25 lines
+   without scrolling on a 1440x900 viewport. Was 50vh / max 600px. */
+.lc-editor-shell {
+    min-height: 420px;
+    height: 56vh;
+    max-height: 720px;
+}
+@media (max-width: 1180px) {
+    .lc-editor-shell {
+        height: 420px;
+        max-height: none;
+    }
+}
+
+/* (2) Ace editor — palette overrides.
+   Light theme (paper / GitHub-ish): tinted gutter, monospace body. */
+.lc-editor-shell .ace_editor {
+    font-family: var(--lc-font-mono) !important;
+    background: var(--lc-color-surface) !important;
+    color: var(--lc-color-text) !important;
+    border-radius: var(--lc-radius-md);
+}
+.lc-editor-shell .ace_gutter {
+    background: var(--lc-color-surface-2) !important;
+    color: var(--lc-color-text-muted) !important;
+    border-right: 1px solid var(--lc-color-border);
+}
+.lc-editor-shell .ace_active-line {
+    background: rgba(56, 189, 248, 0.08) !important;
+}
+.lc-editor-shell .ace_cursor {
+    color: var(--lc-color-text) !important;
+}
+.lc-editor-shell .ace_marker-layer .ace_selection {
+    background: rgba(56, 189, 248, 0.22) !important;
+}
+
+/* Dark theme (cyber): gutter goes near-black, selection is cyan tint. */
+html.dark .lc-editor-shell .ace_editor,
+html.dark .lc-editor-shell .ace_scroller {
+    background: #0d1420 !important;
+    color: #e6edf3 !important;
+}
+html.dark .lc-editor-shell .ace_gutter {
+    background: #0a0e14 !important;
+    color: #5d6b80 !important;
+    border-right: 1px solid rgba(34, 211, 238, 0.18);
+}
+html.dark .lc-editor-shell .ace_active-line {
+    background: rgba(34, 211, 238, 0.08) !important;
+}
+html.dark .lc-editor-shell .ace_cursor {
+    color: #22d3ee !important;
+}
+html.dark .lc-editor-shell .ace_marker-layer .ace_selection {
+    background: rgba(34, 211, 238, 0.22) !important;
+}
+html.dark .lc-editor-shell .ace_placeholder {
+    color: rgba(148, 163, 184, 0.5) !important;
+}
+
+/* (3) Result panel — desktop hero block. */
+.lc-result-panel__hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    gap: var(--lc-space-4);
+    align-items: center;
+    padding: var(--lc-space-4) var(--lc-space-5);
+    background: linear-gradient(135deg,
+        rgba(56, 189, 248, 0.06),
+        rgba(56, 189, 248, 0.02) 60%,
+        transparent);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-lg);
+}
+html.dark .lc-result-panel__hero {
+    background: linear-gradient(135deg,
+        rgba(34, 211, 238, 0.10),
+        rgba(34, 211, 238, 0.04) 60%,
+        rgba(15, 21, 33, 0.4));
+    border-color: rgba(34, 211, 238, 0.20);
+}
+@media (max-width: 768px) {
+    .lc-result-panel__hero {
+        grid-template-columns: 1fr;
+        padding: var(--lc-space-3) var(--lc-space-4);
+    }
+}
+
+.lc-result-panel__verdict {
+    display: flex;
+    align-items: center;
+    gap: var(--lc-space-3);
+    min-width: 0;
+}
+.lc-result-panel__verdict-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+.lc-result-panel__badge {
+    align-self: flex-start;
+    padding: 4px 12px;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+}
+.lc-result-panel__message {
+    font-size: var(--lc-font-size-base);
+    color: var(--lc-color-text-2);
+    font-weight: 500;
+}
+
+.lc-result-panel__hero-side {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lc-space-3);
+    align-items: stretch;
+    min-width: 0;
+}
+
+/* Case progress meter — horizontal pill with X / Y passed and a
+   mini bar. Hidden via `[hidden]` (no display: none override) so
+   the IIFE can flip it. */
+.lc-result-panel__case-progress {
+    display: flex;
+    align-items: center;
+    gap: var(--lc-space-3);
+    padding: 10px 14px;
+    border-radius: var(--lc-radius-md);
+    background: var(--lc-color-surface-2);
+    border: 1px solid var(--lc-color-border);
+    min-width: 0;
+}
+.lc-result-panel__case-progress-label {
+    font-size: 12px;
+    color: var(--lc-color-text-muted);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    flex-shrink: 0;
+}
+.lc-result-panel__case-progress-value {
+    font-family: var(--lc-font-mono);
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--lc-color-text);
+    flex-shrink: 0;
+}
+.lc-result-panel__case-progress-value strong {
+    font-size: 22px;
+    color: var(--lc-color-success);
+}
+.lc-result-panel__case-progress-sep {
+    margin: 0 4px;
+    color: var(--lc-color-text-muted);
+    font-weight: 400;
+}
+.lc-result-panel__case-progress-bar {
+    flex: 1 1 auto;
+    height: 6px;
+    background: var(--lc-color-surface);
+    border: 1px solid var(--lc-color-border);
+    border-radius: 999px;
+    overflow: hidden;
+    min-width: 60px;
+}
+.lc-result-panel__case-progress-fill {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, #16a34a, #22d3ee);
+    border-radius: 999px;
+    transition: width 220ms ease;
+}
+
+/* (3a) Gauge grid — desktop 2-col already, now with a bit more
+   breathing room and a softer track. */
+.lc-result-panel__gauges {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--lc-space-3);
+}
+@media (max-width: 540px) {
+    .lc-result-panel__gauges {
+        grid-template-columns: 1fr;
+    }
+}
+.lc-gauge {
+    padding: var(--lc-space-3) var(--lc-space-4);
+    background: var(--lc-color-surface-2);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-md);
+}
+.lc-gauge__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+.lc-gauge__label {
+    font-size: 12px;
+    color: var(--lc-color-text-muted);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.lc-gauge__value {
+    font-family: var(--lc-font-mono);
+    font-size: var(--lc-font-size-sm);
+    color: var(--lc-color-text);
+}
+.lc-gauge__track {
+    height: 6px;
+    background: var(--lc-color-surface);
+    border: 1px solid var(--lc-color-border);
+    border-radius: 999px;
+    overflow: hidden;
+}
+.lc-gauge__fill {
+    height: 100%;
+    background: linear-gradient(90deg, #38bdf8, #6366f1);
+    border-radius: 999px;
+    transition: width 220ms ease;
+}
+.lc-gauge--warning .lc-gauge__fill {
+    background: linear-gradient(90deg, #f59e0b, #ea580c);
+}
+.lc-gauge--danger .lc-gauge__fill {
+    background: linear-gradient(90deg, #dc2626, #b91c1c);
+}
+
+/* (4) Hero + landing-page polish — make the landing / problems_list
+   pages feel like a desktop product, not a mobile-first view.
+
+   The existing rules cap the hero copy at 56ch (≈ 480px) and
+   collapse the hero to a single column at 880px, which makes a
+   1440px desktop screen look like a phone-sized column. We bump
+   the column threshold to 1024px and let the hero breathe with
+   more horizontal padding.
+   ------------------------------------------------------------------- */
+.lc-v4-hero__inner {
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    gap: 64px;
+    max-width: 1280px;
+}
+.lc-v4-hero__copy {
+    max-width: 64ch;
+}
+@media (max-width: 1024px) {
+    .lc-v4-hero__inner {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 32px;
+    }
+}
+
+/* Landing-page sections — tone down the 96px vertical padding so
+   a desktop scroll doesn't feel like three screen heights of
+   white space. Was 96px → now 72px; the tight variant stays
+   at 64px. */
+.lc-v4-section {
+    padding: 72px 0;
+}
+.lc-v4-section--tight {
+    padding: 56px 0;
+}
+
+/* Status grid — add a touch more breathing room and a subtler
+   shadow on desktop. Hover lift is unchanged. */
+.lc-v4-stat-grid {
+    gap: 18px;
+    margin: 56px 0;
+}
+
+/* Problems-list page chrome — wider container than the generic
+   .lc-v4-page (1180px). Desktop users with a 1440px+ monitor get
+   a wider, more breathable filter / list. The list rows still
+   keep their content density. */
+.lc-problems-list-page {
+    max-width: 1280px !important;
+    padding: 0 32px 96px;
+}
+@media (max-width: 1180px) {
+    .lc-problems-list-page {
+        padding: 0 24px 80px;
+    }
+}
+@media (max-width: 768px) {
+    .lc-problems-list-page {
+        padding: 0 16px 64px;
+    }
+}
+
+/* Filter bar — make the search + difficulty chips feel like a
+   proper desktop toolbar instead of stacked form rows. */
+.lc-problem-filters {
+    padding: var(--lc-space-4) var(--lc-space-5);
+}
+.lc-problem-filters__row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--lc-space-3);
+}
+.lc-problem-filters__search {
+    flex: 1 1 320px;
+    min-width: 280px;
+}
+.lc-problem-filters__search input {
+    width: 100%;
+}
+
+/* Tag chips — allow wrapping with a comfortable gap. */
+.lc-tag-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+/* Problem list rows — slightly denser rows on desktop so a 20-row
+   page fits without scrolling. */
+.lc-problem-row {
+    padding: 14px 20px;
+}
+.lc-problem-row__title {
+    font-size: 15px;
+    font-weight: 500;
+}
+.lc-problem-row__metric {
+    padding: 4px 10px;
+    border-radius: var(--lc-radius-sm);
+    background: var(--lc-color-surface-2);
+    font-size: 12px;
+}
+
+/* Pagination — horizontal, centered, with proper hover. */
+.lc-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: var(--lc-space-4) 0;
+}

@@ -1,12 +1,22 @@
 // SPDX-License-Identifier: MIT
 //
-// web/js/editor.js — CodeMirror 5 lazy-load + IIFE 抽象层
+// web/js/editor.js — Ace editor lazy-load + IIFE abstraction layer
 //
-// Phase 4 ★ frontend polish / v1.3.2 (template field): per-problem
-// code template (DB column `problems.template_`, JSON key `template`)
-// is consumed here. The public detail endpoint includes the field;
-// this module picks it up if present and falls back to the built-in
-// C++/C skeleton below — same fallback for an absent or empty value.
+// v1.3.3.9 ★ editor migration: CodeMirror 5 → Ace 1.32.7. Why:
+//   (1) Ace's `ace/mode/c_cpp` tokenizer is C/C++ specific (not the
+//       clike "C-like-family" fallback that mis-coloured some C++17
+//       tokens on dark theme).
+//   (2) Ace's editor.setTheme() / session.setMode() API hooks into
+//       our theme-boot.js dark-mode flip directly — no manual
+//       re-paint, the gutter and selection recolor in real time.
+//   (3) Ace 1.32.x is a single ~436 KB UMD bundle (no ES module
+//       shenanigans), same SRI-friendly model as CodeMirror 5.x.
+//
+// Phase 4 ★ frontend polish / v1.2.50 — per-problem code template
+// (DB column `problems.template_`, JSON key `template`) is consumed
+// here. The public detail endpoint includes the field; this module
+// picks it up if present and falls back to the built-in C++/C
+// skeleton below — same fallback for an absent or empty value.
 //
 // SPEC §6.3 + A34 — single source of truth for the editor behavior.
 // Mirrors `web/js/{api,markdown,csp,app}.js` style: IIFE wrapper +
@@ -15,24 +25,24 @@
 // What this module owns:
 //   - DEFAULT_TEMPLATES    — built-in C++/C skeletons (fallback only;
 //                            per-problem template from API wins)
-//   - LANG_MODE / LANG_LABEL — CodeMirror mode + UI label per language
-//   - loadCodemirror()     — lazy-load the pinned SRI codemirror 5
-//                            bundle + clike mode via litecode.csp
-//   - mountEditor(code, lang) — instance lifecycle (CodeMirror or
+//   - LANG_MODE / LANG_LABEL — Ace mode id + UI label per language
+//   - loadEditor()         — lazy-load the pinned SRI ace bundle +
+//                            C/C++ mode via litecode.csp
+//   - mountEditor(code, lang) — instance lifecycle (Ace or
 //                            plain-textarea fallback)
-//   - getEditorValue / setEditorValue / onEditorChange — the public
-//                            surface used by problem.html
+//   - getEditorValue / setEditorValue / onEditorChange / setMode
+//                            — the public surface used by problem.html
 //   - templateForLang(lang) — returns the fallback skeleton (or ''
 //                            for unknown langs) so problem.html can
 //                            decide between problem.template vs
 //                            skeleton without a try/catch.
 //
 // Deps (loaded first via defer tags in problem.html):
-//   - litecode.csp.makeStylesheet / makeScript — SRI-pinned loaders
-//   - window.CodeMirror — once loadCodemirror's promise resolves
+//   - litecode.csp.makeScript — SRI-pinned loaders
+//   - window.ace            — once loadEditor's promise resolves
 //
 // Page consumers (problem.html IIFE):
-//   - litecode.editor.loadCodemirror() on boot
+//   - litecode.editor.loadEditor() on boot
 //   - litecode.editor.templateForLang(lang) to pick the initial value
 //   - litecode.editor.mountEditor(value, lang) once the bundle is up
 //   - litecode.editor.getEditorValue() on submit
@@ -44,9 +54,15 @@
 
     // ── Constants ──────────────────────────────────────────────
 
+    // Ace mode id for the C-like-family tokenizer. Ace's c_cpp mode
+    // handles both `c` and `cpp` internally — we pass the same id
+    // for both langs; the syntax state machine switches based on
+    // keyword recognition.
+    var ACE_MODE_C_CPP = 'ace/mode/c_cpp';
+
     var LANG_MODE = {
-        c:   'text/x-c',
-        cpp: 'text/x-c++src',
+        c:   ACE_MODE_C_CPP,
+        cpp: ACE_MODE_C_CPP,
     };
     var LANG_LABEL = {
         c:   'C',
@@ -58,7 +74,7 @@
     // MEDIUMTEXT NULL; HTTP transports it as JSON `""` (or omits
     // the key on older clients); both are detected by the
     // consumer as "fall back". Keep these compact — they're shown
-    // verbatim in the CodeMirror editor.
+    // verbatim in the editor.
     var DEFAULT_TEMPLATES = {
         cpp: [
             '#include <bits/stdc++.h>',
@@ -66,7 +82,7 @@
             '',
             'int main() {',
             '    ios::sync_with_stdio(false);',
-            '    cin.tie(nullptr);',
+            'cin.tie(nullptr);',
             '    // TODO: 实现题目逻辑',
             '    return 0;',
             '}',
@@ -78,7 +94,7 @@
             '',
             'int main(void) {',
             '    // TODO: 实现题目逻辑',
-            '    return 0;',
+            '    return 1;',
             '}',
             '',
         ].join('\n'),
@@ -87,42 +103,34 @@
     // Closured state — no `var editor = {}` leak. The exported
     // get / set / on* functions are the only public touch-points.
     var state = {
-        cm: null,             // CodeMirror instance, or null
-        textarea: null,       // <textarea> fallback
-        ready: false,         // mountEditor has run
+        editor:   null,    // Ace Editor instance, or null
+        session:  null,    // Ace EditSession, cached for setMode
+        textarea: null,    // <textarea> fallback
+        ready:    false,   // mountEditor has run
     };
 
-    // ── CodeMirror bootstrap ───────────────────────────────────
-    // Lazy-load the SRI-pinned CM bundle + clike mode; returns a
+    // ── Ace bootstrap ──────────────────────────────────────────
+    // Lazy-load the SRI-pinned Ace bundle + C/C++ mode; returns a
     // promise that resolves to true on success, false on fallback.
-    function loadCodemirror() {
+    //
+    // Why no CSS load? Ace injects its own stylesheet when
+    // `ace.edit()` is called the first time; we override the
+    // theme colours via inline CSS variables in style.css
+    // (`.ace_editor` rules) so the page's dark-mode toggle flows
+    // through without reloading the Ace stylesheet.
+    function loadEditor() {
         if (!window.litecode || !litecode.csp) {
             console.warn('[editor] csp.js not loaded; falling back to <textarea>');
             return Promise.resolve(false);
         }
-        var cssSpec  = litecode.csp.STYLESHEETS && litecode.csp.STYLESHEETS.codemirror;
-        var jsSpec   = litecode.csp.SCRIPTS     && litecode.csp.SCRIPTS.codemirror;
-        var modeSpec = litecode.csp.SCRIPTS     && litecode.csp.SCRIPTS['codemirror-clike'];
+        var aceSpec  = litecode.csp.SCRIPTS && litecode.csp.SCRIPTS.ace;
+        var modeSpec = litecode.csp.SCRIPTS && litecode.csp.SCRIPTS['ace-mode-c_cpp'];
 
-        function loadStyle(spec) {
-            return new Promise(function (resolve, reject) {
-                if (!spec) { reject(new Error('no stylesheet spec')); return; }
-                var existing = document.querySelector(
-                    'link[data-lc-cm-css="' + spec.url + '"]'
-                );
-                if (existing) { resolve(existing); return; }
-                var l = litecode.csp.makeStylesheet(spec);
-                l.dataset.lcCmCss = spec.url;
-                l.addEventListener('load',  function () { resolve(l); });
-                l.addEventListener('error', function () { reject(new Error('css load failed')); });
-                document.head.appendChild(l);
-            });
-        }
         function loadJs(spec) {
             return new Promise(function (resolve, reject) {
                 if (!spec) { reject(new Error('no script spec')); return; }
                 var existing = document.querySelector(
-                    'script[data-lc-cm-src="' + spec.url + '"]'
+                    'script[data-lc-ace-src="' + spec.url + '"]'
                 );
                 if (existing && existing.dataset.loaded === '1') { resolve(); return; }
                 if (existing) {
@@ -131,61 +139,95 @@
                     return;
                 }
                 var s = litecode.csp.makeScript(spec);
-                s.dataset.lcCmSrc = spec.url;
+                s.dataset.lcAceSrc = spec.url;
                 s.addEventListener('load',  function () { s.dataset.loaded = '1'; resolve(); });
                 s.addEventListener('error', function () { reject(new Error('js load failed')); });
                 document.head.appendChild(s);
             });
         }
 
-        return loadStyle(cssSpec)
-            .then(function () { return loadJs(jsSpec); })
+        return loadJs(aceSpec)
             .then(function () { return loadJs(modeSpec); })
             .then(function () { return true; })
             .catch(function (err) {
-                console.warn('[editor] CodeMirror load failed, using <textarea> fallback', err);
+                console.warn('[editor] Ace load failed, using <textarea> fallback', err);
                 return false;
             });
+    }
+
+    // ── Theme resolution ───────────────────────────────────────
+    // Ace ships its own theme files (e.g. textmate / monokai /
+    // tomorrow_night). We don't pull any extra theme bundle — both
+    // light and dark modes use Ace's built-in `github` /
+    // `tomorrow_night_eighties` themes, which match the page's
+    // paper / cyber palettes well enough without a 200 KB theme
+    // download. The theme id is computed off the document's
+    // `.dark` class so theme-boot.js flips take effect immediately.
+    function currentAceTheme() {
+        var isDark = document.documentElement.classList.contains('dark')
+            || document.body.classList.contains('lc-cyber');
+        return isDark ? 'ace/theme/tomorrow_night_eighties'
+                      : 'ace/theme/github';
     }
 
     // ── Editor instance lifecycle ──────────────────────────────
     function mountEditor(initialCode, lang) {
         state.textarea = document.getElementById('code-textarea');
-        if (window.CodeMirror && state.textarea) {
-            state.cm = window.CodeMirror.fromTextArea(state.textarea, {
-                mode: LANG_MODE[lang] || LANG_MODE.cpp,
-                lineNumbers: true,
-                indentUnit: 4,
-                tabSize: 4,
-                indentWithTabs: false,
-                smartIndent: true,
-                lineWrapping: true,
-                matchBrackets: true,
-                autoCloseBrackets: true,
-                styleActiveLine: true,
-                theme: document.documentElement.classList.contains('dark')
-                    ? 'monokai' : 'default',
+        if (window.ace && state.textarea) {
+            // The host div (`#editor-shell`) wraps the textarea. Ace
+            // wants a div to attach to, so we either reuse the
+            // textarea's parent or fall through. We pick the parent
+            // because the CSS for `.lc-editor-shell` already
+            // constrains height + min-height there.
+            var host = state.textarea.parentNode;
+            // Hide the underlying textarea — Ace paints over the
+            // same coordinates. We keep it in the DOM (not remove)
+            // so screen readers without JS still see the field.
+            state.textarea.style.display = 'none';
+
+            state.editor = window.ace.edit(host, {
+                value:           initialCode || '',
+                mode:            LANG_MODE[lang] || ACE_MODE_C_CPP,
+                theme:           currentAceTheme(),
+                wrap:            true,
+                tabSize:         4,
+                useSoftTabs:     true,
+                showPrintMargin: false,
+                fontSize:        '14px',
+                // Ace ships a small built-in C/C++ worker for
+                // auto-completion; opt-in for nicer UX without
+                // paying for the full language server.
+                enableBasicAutocompletion: true,
+                enableSnippets:           false,
+                enableLiveAutocompletion:  false,
             });
-            // Re-sync theme on dark-mode toggle. We monkey-patch the
-            // exposed toggle so the saved reference is held by our
-            // own closure variable, not the litecode namespace.
+            state.session = state.editor.getSession();
+
+            // Re-sync theme on dark-mode toggle. We monkey-patch
+            // the exposed toggle so the saved reference is held
+            // by our own closure variable, not the litecode
+            // namespace — same pattern the old CodeMirror code
+            // used.
             var origToggle = window.litecode && litecode.theme && litecode.theme.toggle;
             if (origToggle) {
                 litecode.theme.toggle = function () {
                     origToggle();
-                    if (state.cm) {
-                        state.cm.setOption('theme',
-                            document.documentElement.classList.contains('dark')
-                                ? 'monokai' : 'default');
+                    if (state.editor) {
+                        state.editor.setTheme(currentAceTheme());
                     }
                 };
             }
-            state.cm.setValue(initialCode || '');
+            // Set explicit min-height on the host so Ace can
+            // compute its layout on the first paint; the CSS
+            // rule already caps it but Ace needs an explicit
+            // pixel hint to size its gutter.
+            state.editor.renderer.setOption('showLineNumbers', true);
+
             state.ready = true;
         } else {
             // Plain-textarea fallback: tab/shift-tab indentation +
             // no other niceties. Keeps the editor usable when the
-            // CDN bundle fails (offline, CSP block, etc.).
+            // bundle fails (offline, CSP block, etc.).
             state.textarea.value = initialCode || '';
             state.textarea.addEventListener('keydown', function (e) {
                 if (e.key !== 'Tab') return;
@@ -211,26 +253,35 @@
 
     // ── Public editor API ──────────────────────────────────────
     function getEditorValue() {
-        if (state.cm)        return state.cm.getValue();
-        if (state.textarea)  return state.textarea.value;
+        if (state.editor)   return state.editor.getValue();
+        if (state.textarea) return state.textarea.value;
         return '';
     }
     function setEditorValue(v) {
-        if (state.cm)        state.cm.setValue(v || '');
-        else if (state.textarea) state.textarea.value = v || '';
+        if (state.editor) {
+            // Setting value through the model keeps undo history
+            // — same as CodeMirror's `setValue` from the user's
+            // perspective (the page-side expectation is "replace
+            // the buffer", which Ace does with `setValue`).
+            state.editor.session.setValue(v || '');
+        } else if (state.textarea) {
+            state.textarea.value = v || '';
+        }
     }
-    // setMode — switch the CodeMirror mode when the language picker
-    // changes (no-op on the textarea fallback — syntax highlighting
-    // only matters in the CodeMirror path). No-op if mountEditor
-    // hasn't run yet (state.cm is still null).
     function setMode(lang) {
-        if (state.cm) {
-            state.cm.setOption('mode', LANG_MODE[lang] || LANG_MODE.cpp);
+        // Ace's C/C++ mode covers both `c` and `cpp`; the mode id
+        // is the same and Ace's syntax state machine branches
+        // internally. No-op on the textarea fallback.
+        if (state.editor) {
+            state.editor.session.setMode(LANG_MODE[lang] || ACE_MODE_C_CPP);
         }
     }
     function onEditorChange(cb) {
-        if (state.cm)        state.cm.on('change', cb);
-        else if (state.textarea) state.textarea.addEventListener('input', cb);
+        if (state.editor) {
+            state.editor.session.on('change', cb);
+        } else if (state.textarea) {
+            state.textarea.addEventListener('input', cb);
+        }
     }
 
     // ── Per-problem template picker ───────────────────────────
@@ -242,7 +293,7 @@
     }
 
     ns.editor = {
-        loadCodemirror:    loadCodemirror,
+        loadEditor:        loadEditor,
         mountEditor:       mountEditor,
         getEditorValue:    getEditorValue,
         setEditorValue:    setEditorValue,

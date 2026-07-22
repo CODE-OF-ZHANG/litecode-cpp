@@ -48,6 +48,10 @@
 // Touching the DOM: only `document.documentElement.classList` and
 // `setAttribute` are used, both available the moment <html> starts
 // parsing. We don't query or wait for anything else.
+//
+// v1.3.4 — 默认走 cyber 深色主题:首次访问 (localStorage 为空) 默认
+// 应用 `.dark` 类,这样 §6 cyber dark 视觉生效。用户仍可点击 toggle
+// 切回 light;一旦显式选择就锁定走 data-theme-chosen 路径。
 
 (function () {
     'use strict';
@@ -56,15 +60,20 @@
 
     // localStorage may be unavailable (private mode, sandboxed iframe
     // with quota 0, etc.). Read in a try/catch and bail out — the
-    // default light theme is the safe fallback.
+    // default dark theme is the safe fallback (v1.3.4).
     var stored;
     try { stored = window.localStorage.getItem(STORAGE_KEY); }
-    catch (_) { return; }
-
-    if (stored !== 'dark' && stored !== 'light') return;
+    catch (_) { stored = null; }
 
     var html = document.documentElement;
-    if (stored === 'dark') html.classList.add('dark');
-    // 'light' is the default — no class change needed.
+
+    if (stored === 'light') {
+        // 显式选择 light — 不加 .dark。
+        html.setAttribute('data-theme-chosen', '1');
+        return;
+    }
+
+    // stored === 'dark' 或 null (首次访问) → 默认深色 + cyber。
+    html.classList.add('dark');
     html.setAttribute('data-theme-chosen', '1');
 })();

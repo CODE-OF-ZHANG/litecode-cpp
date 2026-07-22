@@ -17,9 +17,15 @@
 //                                       when COOKIE_ALLOW_BODY_FALLBACK=true
 //                                       (dev/test back-compat). Always sets
 //                                       a fresh Set-Cookie on rotation.
-//   - POST /api/v1/auth/logout       — auth required; revokes the presented
-//                                       refresh + clears the cookie
-//                                       (Set-Cookie Max-Age=0)
+//   - POST /api/v1/auth/logout       — auth required; sources refresh
+//                                       from HttpOnly cookie (preferred)
+//                                       OR body when COOKIE_ALLOW_BODY_FALLBACK
+//                                       is true; clears the cookie
+//                                       (Set-Cookie Max-Age=0) and revokes
+//                                       the presented refresh (best-effort).
+//                                       Empty body is a valid logout
+//                                       since v1.3.3.8 (Phase 5 ★ moved
+//                                       refresh out of the JS-side path).
 //   - GET  /api/v1/auth/profile      — auth required
 //
 // Phase 5 ★ token storage (this file, on top of Phase 2 ★):
@@ -378,6 +384,17 @@ inline void clear_refresh_cookie(httplib::Response& res) {
 // Look up the refresh in the Cookie header first; fall back to body
 // only if the cookie is empty AND the dev-mode allow_body_fallback is on.
 // Returns the presented refresh (empty if neither is present).
+//
+// Two overloads:
+//   - The RefreshRequest-flavored one is used by /auth/refresh where
+//     the body has a required refresh_token field.
+//   - The std::optional<std::string>-flavored one (v1.3.3.8 ★) is used
+//     by /auth/logout where the body refresh_token is OPTIONAL — the
+//     field may be present-but-empty-handled-elsewhere, so we don't
+//     want to drag RefreshRequest's required-field semantics into the
+//     logout call site. Both overloads share the SAME priority:
+//     cookie first → body fallback only when cookie is empty AND
+//     allow_body_fallback is on.
 inline std::string extract_refresh_token(const httplib::Request& req,
                                          const CookieConfig&      cfg,
                                          const std::optional<
@@ -388,6 +405,19 @@ inline std::string extract_refresh_token(const httplib::Request& req,
         get_cookie_value(req.get_header_value("Cookie"), cookie_name);
     if (!cookie_value.empty()) return cookie_value;
     if (cfg.allow_body_fallback && body.has_value()) return body->refresh_token;
+    return std::string();
+}
+
+inline std::string extract_refresh_token(
+        const httplib::Request& req,
+        const CookieConfig&      cfg,
+        const std::optional<std::string>& body_refresh) {
+    const std::string cookie_value =
+        get_cookie_value(req.get_header_value("Cookie"), cfg.name);
+    if (!cookie_value.empty()) return cookie_value;
+    if (cfg.allow_body_fallback && body_refresh.has_value()) {
+        return *body_refresh;
+    }
     return std::string();
 }
 
@@ -432,7 +462,7 @@ parse_refresh_request(const nlohmann::json& j,
 // ────────────────────────────────────────────────────────────────────────────
 
 struct LogoutRequest {
-    std::string refresh_token;
+    std::optional<std::string> refresh_token;
 };
 
 // parse_logout_request — extract a LogoutRequest from JSON. Returns
@@ -453,24 +483,41 @@ struct LogoutRequest {
 // hosts parse_refresh_request (see line 294) — there's no new
 // namespace open here. The single closing brace on line 376 closes
 // the entire block opened back at line 294.
+// parse_logout_request — v1.3.3.8 cookie-aware contract:
+//   - Missing refresh_token field  → returns a populated LogoutRequest
+//                                    with refresh_token == std::nullopt
+//                                    (no envelope written). The handler
+//                                    will fall back to the HttpOnly
+//                                    cookie for the actual revoke.
+//   - Present but non-string        → 400 INVALID_INPUT.
+//   - Present but empty string ""   → 400 INVALID_INPUT.
+//   - Body fine (empty {}, surplus fields, valid string) → accepted.
 inline std::optional<LogoutRequest>
 parse_logout_request(const nlohmann::json& j,
                      httplib::Response&    res) {
     LogoutRequest out;
 
-    if (!j.contains("refresh_token") || !j["refresh_token"].is_string()) {
+    // Missing field — Phase 5 made refresh a cookie-resident field.
+    // The handler accepts "no body refresh" and reads the cookie. We
+    // intentionally do NOT write a 400 here; that would break every
+    // front-end that sends an empty body (the canonical Phase 5 path).
+    if (!j.contains("refresh_token")) {
+        return out;
+    }
+    if (!j["refresh_token"].is_string()) {
         send_error(res, 400, ErrorCode::INVALID_INPUT,
-                   "missing or non-string `refresh_token`",
+                   "`refresh_token` must be a string when present",
                    {{"field", "refresh_token"}});
         return std::nullopt;
     }
-    out.refresh_token = j["refresh_token"].get<std::string>();
-    if (out.refresh_token.empty()) {
+    const std::string value = j["refresh_token"].get<std::string>();
+    if (value.empty()) {
         send_error(res, 400, ErrorCode::INVALID_INPUT,
-                   "`refresh_token` must not be empty",
+                   "`refresh_token` must not be empty when present",
                    {{"field", "refresh_token"}});
         return std::nullopt;
     }
+    out.refresh_token = value;
     return out;
 }
 
@@ -1432,21 +1479,39 @@ inline void refresh_handler(httplib::Response&                 res,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-//  POST /api/v1/auth/logout   — Phase 2 ★  (SPEC §5.1, §15.1, A2)
+//  POST /api/v1/auth/logout   — Phase 2 ★ + Phase 5 ★ cookie-aware
+//                                correction v1.3.3.8 (SPEC §5.1, §15.1, A2)
 //
-//  Wire flow:
+//  Wire flow (v1.3.3.8):
 //    1. require_authentication()    — 401 envelope on missing / bad /
 //                                       expired Bearer access token
 //                                       (SPEC §5.1: "已登录")
-//    2. parse_json_body()           — 400 INVALID_INPUT on bad JSON
-//    3. detail::parse_logout_request()— 400 on missing/empty refresh_token
-//    4. revoke_refresh_token()      — best-effort: parses the refresh,
+//    2. detail::clear_refresh_cookie() — Phase 5 ★ Set-Cookie Max-Age=0.
+//                                        Placed EARLY so a malformed body
+//                                        (400) still drops the cookie —
+//                                        pre-v1.3.3.8 the clear only fired
+//                                        on success and was bypassed by the
+//                                        "missing refresh_token in body"
+//                                        400 path, leaving stolen cookies.
+//    3. (optional) parse_json_body() + detail::parse_logout_request() —
+//                                        body refresh_token is OPTIONAL
+//                                        since Phase 5 moved refresh to a
+//                                        cookie. Empty body / absent
+//                                        refresh_token field → no error.
+//                                        Present-but-malformed (non-string,
+//                                        empty string) → 400 INVALID_INPUT.
+//    4. extract_refresh_token(cookie-first, body-fallback) — same
+//                                       priority as /auth/refresh; cookie
+//                                       always wins when both are present.
+//    5. revoke_refresh_token()      — best-effort: parses the refresh,
 //                                       checks sub == claims.user_id
 //                                       (theft defense), and adds the
 //                                       jti to the blacklist with a TTL
 //                                       equal to the token's remaining
-//                                       lifetime. NEVER throws.
-//    5. send_success()              — 200 + {logged_out: true}
+//                                       lifetime. NEVER throws. Empty
+//                                       presented_refresh is a no-op
+//                                       (revoked=false on the response).
+//    6. send_success()              — 200 + {logged_out:true, revoked:bool}
 //
 //  Why the response is ALWAYS 200 on a well-formed request:
 //    The goal of /auth/logout is to forget the session. A malformed /
@@ -1494,77 +1559,119 @@ inline void logout_handler(httplib::Response&                 res,
     //    server.h's per-request wrap turns into the unified envelope.
     const Claims claims = require_authentication(req, jwt_cfg);
 
-    // 2) Body — must contain a refresh_token. Same shape as
-    //    /auth/refresh so the front-end can reuse its JSON plumbing.
-    auto j = parse_json_body(req, res);
-    if (!j) return;                                  // 400 already on the wire
-
-    auto parsed = detail::parse_logout_request(*j, res);
-    if (!parsed) return;                             // 400 already on the wire
-
-    // 3) Best-effort revocation. revoke_refresh_token() NEVER throws —
-    //    it folds every failure mode (malformed JWT, expired, wrong
-    //    kind, theft-mismatch) into the returned RevokeOutcome so the
-    //    wire stays consistent at 200. The detailed reason is logged
-    //    below at the appropriate level.
-    const auto outcome = revoke_refresh_token(
-        store,
-        parsed->refresh_token,
-        jwt_cfg.secret,
-        jwt_cfg.issuer,
-        jwt_cfg.refresh_ttl_seconds,
-        /*expected_user_id=*/claims.user_id);
-
-    if (!outcome.parsed) {
-        // Malformed / expired / wrong-kind refresh. The session
-        // we're trying to forget is already useless; nothing to
-        // revoke. Logged at INFO because this is the common case
-        // for a client that already let the refresh expire.
-        LOG_INFO("auth: logout (refresh did not parse)",
-                 {{"user_id",  claims.user_id},
-                  {"ip",       std::string(client_ip)},
-                  {"reason",   outcome.reason}});
-    } else if (!outcome.user_matched) {
-        // Theft signal: the refresh is for a different user than the
-        // access token. Don't revoke (the legitimate user's session
-        // is intact), but record it so operators can correlate.
-        LOG_WARN("auth: logout theft-mismatch (refresh sub != access sub)",
-                 {{"access_user_id",  claims.user_id},
-                  {"refresh_user_id", outcome.jti},
-                  {"reason",          outcome.reason},
-                  {"ip",              std::string(client_ip)}});
-    } else if (outcome.revoked) {
-        LOG_INFO("auth: logout",
-                 {{"user_id",  claims.user_id},
-                  {"jti",      outcome.jti},
-                  {"ip",       std::string(client_ip)}});
-    } else {
-        // Parsed + matched, but not revoked — should be unreachable
-        // given the current revoke_refresh_token contract, but log it
-        // defensively in case the helper grows a new failure mode.
-        LOG_INFO("auth: logout (no-op)",
-                 {{"user_id",  claims.user_id},
-                  {"jti",      outcome.jti},
-                  {"ip",       std::string(client_ip)}});
-    }
-
-    // 4) Always 200 — the front-end clears local state and moves on.
-    //    The "revoked" field lets the front-end distinguish a clean
-    //    logout (true) from a no-op logout (false: token was already
-    //    invalid). Both are non-error outcomes from the API's POV.
+    // 2) Phase 5 ★ — clear the HttpOnly cookie IMMEDIATELY after the
+    //    Bearer gate succeeds. We do this BEFORE any body parsing
+    //    so even malformed-JSON 400 responses still drop the cookie
+    //    on the wire; closing the XSS-steal window even when the
+    //    client sent garbage.
     //
-    // Phase 5 ★: clear the HttpOnly cookie too, so the browser drops
-    // it on receipt. Even if the JS layer forgets to call clear(),
-    // the cookie is gone — closing the XSS-steal window where an
-    // attacker who already has a stolen refresh could keep using it
-    // until natural expiry. We send the clear BEFORE the body so a
-    // concurrent /refresh that raced in can't mint a cookie we then
-    // immediately delete (httplib sends headers before body either way).
+    //    Why send it early rather than late (pre-v1.3.3.8 had it
+    //    after the body parse): the previous code returned 400 on
+    //    empty-body / missing-refresh_token-from-body, and on the 400
+    //    path it returned without calling clear_refresh_cookie — so
+    //    the browser kept the stolen cookie live. By moving the
+    //    clear to step 2 we make cookie-clear a guaranteed side
+    //    effect of an authenticated request, not a contingent one.
     detail::clear_refresh_cookie(res);
 
+    // 3) Body — refresh_token is OPTIONAL since v1.3.3.8 (Phase 5
+    //    made refresh a cookie-resident field). The front-end
+    //    sends an empty body `{}`; the handler now extracts the
+    //    refresh from the cookie via detail::extract_refresh_token.
+    //
+    //    Important: do NOT call parse_json_body unconditionally —
+    //    that helper emits a 400 envelope when req.body is empty,
+    //    which would defeat the "empty body = valid logout" path.
+    //    We only consult the body if it's non-empty.
+    std::optional<detail::LogoutRequest> body_parsed;
+    if (!req.body.empty()) {
+        auto j = parse_json_body(req, res);
+        if (!j) return;                              // 400 already on the wire
+        body_parsed = detail::parse_logout_request(*j, res);
+        if (!body_parsed) return;                    // 400 already on the wire
+    }
+
+    // 4) Source the refresh from cookie first, body as fallback
+    //    (only when the configured allow_body_fallback is on). The
+    //    std::optional<std::string> overload of extract_refresh_token
+    //    gives us identical priority semantics to /auth/refresh —
+    //    cookie wins over body when both are present.
+    std::optional<std::string> body_refresh;
+    if (body_parsed) body_refresh = body_parsed->refresh_token;
+    const std::string presented_refresh = detail::extract_refresh_token(
+        req, config().cookie, body_refresh);
+
+    // 5) Best-effort revocation. revoke_refresh_token() NEVER throws —
+    //    it folds every failure mode (malformed JWT, expired, wrong
+    //    kind, theft-mismatch) into the returned RevokeOutcome so the
+    //    wire stays consistent at 200. Empty presented_refresh means
+    //    there was no cookie and no body — we still return 200 with
+    //    revoked=false, on the same anti-enumeration principle as the
+    //    "refresh did not parse" path below.
+    bool revoked = false;
+    if (presented_refresh.empty()) {
+        // No refresh was presented. Clear-cookie already happened;
+        // nothing to revoke. Logged at INFO because a logged-in user
+        // who hits /auth/logout with no refresh is a normal tail-end
+        // event (e.g. they already cleared cookies on this device in
+        // another tab).
+        LOG_INFO("auth: logout (no refresh presented)",
+                 {{"user_id", claims.user_id},
+                  {"ip",      std::string(client_ip)}});
+    } else {
+        const auto outcome = revoke_refresh_token(
+            store,
+            presented_refresh,
+            jwt_cfg.secret,
+            jwt_cfg.issuer,
+            jwt_cfg.refresh_ttl_seconds,
+            /*expected_user_id=*/claims.user_id);
+        revoked = outcome.revoked;
+
+        if (!outcome.parsed) {
+            // Malformed / expired / wrong-kind refresh. The session
+            // we're trying to forget is already useless; nothing to
+            // revoke. Logged at INFO because this is the common case
+            // for a client that already let the refresh expire.
+            LOG_INFO("auth: logout (refresh did not parse)",
+                     {{"user_id", claims.user_id},
+                      {"ip",      std::string(client_ip)},
+                      {"reason",  outcome.reason}});
+        } else if (!outcome.user_matched) {
+            // Theft signal: the refresh is for a different user than
+            // the access token. Don't revoke (the legitimate user's
+            // session is intact), but record it so operators can
+            // correlate.
+            LOG_WARN("auth: logout theft-mismatch (refresh sub != access sub)",
+                     {{"access_user_id",  claims.user_id},
+                      {"refresh_user_id", outcome.jti},
+                      {"reason",          outcome.reason},
+                      {"ip",              std::string(client_ip)}});
+        } else if (outcome.revoked) {
+            LOG_INFO("auth: logout",
+                     {{"user_id", claims.user_id},
+                      {"jti",     outcome.jti},
+                      {"ip",      std::string(client_ip)}});
+        } else {
+            // Parsed + matched, but not revoked — should be
+            // unreachable given the current revoke_refresh_token
+            // contract, but log it defensively in case the helper
+            // grows a new failure mode.
+            LOG_INFO("auth: logout (no-op)",
+                     {{"user_id", claims.user_id},
+                      {"jti",     outcome.jti},
+                      {"ip",      std::string(client_ip)}});
+        }
+    }
+
+    // 6) Always 200 — the front-end clears local state and moves on.
+    //    The "revoked" field lets the front-end distinguish a clean
+    //    logout (true) from a no-op logout (false: refresh absent or
+    //    already invalid). Both are non-error outcomes from the API's
+    //    POV.
     send_success(res, {
         {"logged_out", true},
-        {"revoked",    outcome.revoked},
+        {"revoked",    revoked},
     });
 }
 
@@ -1837,17 +1944,24 @@ inline HttpServer& register_auth_routes(HttpServer&        server,
             }
         });
 
-    // POST /api/v1/auth/logout — Phase 2 ★  (SPEC §5.1)
+    // POST /api/v1/auth/logout — Phase 2 ★ + v1.3.3.8 cookie-aware  (SPEC §5.1)
     //
     // No rate limit (SPEC §5.1): logout is hit once per session and
     // is idempotent. A flood of logouts just adds rows to the blacklist
     // with shorter TTLs (refresh tokens self-expire on their own).
     //
-    // The Bearer access token gates the endpoint (SPEC §5.1: "已登录").
-    // The user_id from the verified claims is fed to
+    // v1.3.3.8 contract: the Bearer access token still gates the
+    // endpoint (SPEC §5.1: "已登录"), but the body `refresh_token`
+    // field is now OPTIONAL. The handler sources the refresh from the
+    // `lc_refresh` HttpOnly cookie (mirroring /auth/refresh); when no
+    // cookie is presented and the body has no refresh, revoke is a
+    // no-op and the response is 200 + revoked=false. The detail::clear
+    // _refresh_cookie() call inside the handler runs immediately after
+    // the Bearer gate so even malformed-body 400 responses still drop
+    // the cookie. The user_id from the verified claims is fed to
     // revoke_refresh_token as the theft-defense check, so a stolen
     // refresh presented with the attacker's own access token is
-    // detected and refused.
+    // detected and refused (existing behavior — SPEC §15.1).
     //
     // `pool` is NOT captured — logout_handler doesn't touch the DB
     // (Phase 2 ★ keeps logout out of audit_logs since it's a routine

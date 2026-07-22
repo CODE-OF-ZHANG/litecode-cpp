@@ -5,12 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
+    <meta name="theme-color" content="#0a0e14">
     <title>LiteCode · 注册</title>
-    <script src="/js/theme-boot.js?v=1.3.3.2"></script>
-    <link rel="stylesheet" href="/css/style.css?v=1.3.3.2">
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%230B0E14'/%3E%3Ctext x='14' y='42' font-family='JetBrains Mono, monospace' font-size='28' font-weight='700' fill='%235DC9E2'%3E%26lt%3B/%3E%3C/svg%3E">
+    <script src="/js/theme-boot.js?v=1.3.4"></script>
+    <link rel="stylesheet" href="/css/style.css?v=1.3.4">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230a0e14'/%3E%3Cpath d='M22 18 L42 32 L22 46' stroke='%2322d3ee' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
     <style>
-        /* v4 表单本地补 — 密码强度条 + 规则列表(lc-auth-2026 没继承过来) */
+        /* v1.3.4 — 密码强度条 + 规则列表;
+           cyber dark 主题下颜色通过 §6.5 .lc-v4-pw-bar--on-* 覆写,
+           这里只保留 light / 通用样式。 */
         .lc-v4-pw-strength {
             margin-top: 8px;
             display: grid;
@@ -59,7 +62,7 @@
         }
     </style>
 </head>
-<body>
+<body class="lc-cyber">
     <div class="lc-v4-auth">
         <aside class="lc-v4-auth__side">
             <a class="lc-v4-auth__brand" href="/index.html">
@@ -68,6 +71,10 @@
             </a>
 
             <div class="lc-v4-auth__pitch">
+                <div class="lc-cyber-terminal" aria-hidden="true">
+                    <span class="lc-cyber-terminal__dot"></span>
+                    <span>$ litecode signup --new</span>
+                </div>
                 <span class="lc-v4-eyebrow lc-v4-eyebrow--dark">
                     新建账号
                 </span>
@@ -97,7 +104,8 @@
 
         <main class="lc-v4-auth__pane">
             <form class="lc-v4-auth__form" id="register-form" novalidate>
-                <h1>创建账号</h1>
+                <span class="lc-cyber-ribbon">CREATE ACCOUNT</span>
+                <h1 style="margin-top: 12px;">创建账号</h1>
                 <p class="lc-v4-auth__form-sub">3 步搞定,默认 <strong>user</strong> 角色 — 30 秒后即可提交第一题。</p>
 
                 <div class="lc-v4-auth__field">
@@ -200,9 +208,9 @@
         </main>
     </div>
 
-    <script src="/js/csp.js?v=1.3.3.2" defer></script>
-    <script src="/js/api.js?v=1.3.3.2" defer></script>
-    <script src="/js/app.js?v=1.3.3.2" defer></script>
+    <script src="/js/csp.js?v=1.3.4" defer></script>
+    <script src="/js/api.js?v=1.3.4" defer></script>
+    <script src="/js/app.js?v=1.3.4" defer></script>
 
     <script>
     (function () {
@@ -210,8 +218,7 @@
 
         // v1.2.49-a: same client-side validators as the legacy
         // register.html — USERNAME_PATTERN / EMAIL_PATTERN / PW_MIN/MAX.
-        // Visual layer is new in v1.3.3.4 (lc-v4-auth split); contract
-        // is identical.
+        // Visual layer is now §6 cyber dark; contract is identical.
         var USERNAME_PATTERN = /^[A-Za-z0-9_.\-]+$/;
         var EMAIL_PATTERN    = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         var PW_MIN = 8;
@@ -277,9 +284,9 @@
                 if (field) {
                     var target = document.getElementById(field);
                     if (target) {
-                        target.style.borderColor = msg ? '#dc2626' : '';
+                        target.style.borderColor = msg ? '#f43f5e' : '';
                         target.style.boxShadow    = msg
-                            ? '0 0 0 4px rgba(220, 38, 38, 0.14)'
+                            ? '0 0 0 4px rgba(244, 63, 94, 0.20)'
                             : '';
                         try { target.focus(); } catch (_) {}
                     }

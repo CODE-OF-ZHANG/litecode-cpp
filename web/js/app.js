@@ -147,9 +147,15 @@
     // ────────────────────────────────────────────────────────────────────
 
     var NAV_LINKS = [
-        { label: '题库',         href: '/index.html',     key: 'problems' },
-        { label: '排行榜',       href: '/ranking.html',   key: 'ranking'  },
-        { label: '个人主页',     href: '#',               key: 'profile', authOnly: true,
+        // v1.3.3.9 — the problem list moved off the landing page;
+        // the global "题库" nav now points at the dedicated work
+        // surface /problems_list.html. The brand link (see below)
+        // still goes to /index.html so the logo doubles as a
+        // "go home" affordance.
+        { label: '首页',         href: '/index.html',         key: 'home'      },
+        { label: '题库',         href: '/problems_list.html', key: 'problems'  },
+        { label: '排行榜',       href: '/ranking.html',       key: 'ranking'   },
+        { label: '个人主页',     href: '#',                   key: 'profile', authOnly: true,
           dynamicHref: function (u) { return '/profile.html?u=' + encodeURIComponent(u.username); } },
         { label: '管理后台',     href: '/admin/dashboard.html', key: 'admin', adminOnly: true },
     ];

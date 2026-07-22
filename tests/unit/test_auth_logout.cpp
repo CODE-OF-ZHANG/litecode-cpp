@@ -20,8 +20,13 @@
 //     middleware passes (token is valid for B) but the theft-defense
 //     inside revoke_refresh_token refuses to add the jti to the
 //     blacklist. The wire still answers 200.
-//   - 400 on missing / non-string / empty refresh_token
-//   - 400 on malformed JSON / empty body
+//   - 200 on missing refresh_token body field (v1.3.3.8 ★ Phase 5
+//     cookie-aware — pre-v1.3.3.8 this was 400, which broke every
+//     front-end that sent the cookie-only empty body)
+//   - 200 on empty body (v1.3.3.8 ★)
+//   - 400 ONLY when refresh_token is present-but-malformed (non-string,
+//     empty string) or body is malformed JSON — the "presence required"
+//     rule is gone
 //   - Response envelope includes X-Request-Id passthrough
 //   - After logout, /auth/refresh with the revoked token returns 401
 //     (reuse detection — the full SPEC §15.1 round-trip)
@@ -238,6 +243,20 @@ httplib::Result post_logout(ServerHandle& h, const std::string& body,
         return h.client->Post("/api/v1/auth/logout", body, "application/json");
     }
     httplib::Headers hdrs = {{"Authorization", "Bearer " + bearer}};
+    return h.client->Post("/api/v1/auth/logout", hdrs, body, "application/json");
+}
+
+// v1.3.3.8 ★ — cookie-aware variant for the Phase 5 path. Pass the
+// presented refresh token through the Cookie header instead of (or
+// in addition to) the JSON body. The handler sources the refresh via
+// detail::extract_refresh_token, cookie-first.
+httplib::Result post_logout_cookie(ServerHandle& h, const std::string& body,
+                                   const std::string& bearer,
+                                   const std::string& cookie_value) {
+    httplib::Headers hdrs = {{"Authorization", "Bearer " + bearer}};
+    if (!cookie_value.empty()) {
+        hdrs.emplace("Cookie", "lc_refresh=" + cookie_value);
+    }
     return h.client->Post("/api/v1/auth/logout", hdrs, body, "application/json");
 }
 
@@ -612,23 +631,51 @@ TEST_F(AuthLogoutLiveFixture, RefreshAsAccessTokenReturns401) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-//  400 — body validation
+//  200 — body validation (v1.3.3.8: refresh_token is OPTIONAL since
+//  Phase 5 moved refresh to HttpOnly cookie). The canonical Phase 5
+//  call shape is `Bearer + body={}` — handler reads refresh from
+//  cookie, no body shape error.
 // ────────────────────────────────────────────────────────────────────────────
 
-TEST_F(AuthLogoutLiveFixture, RejectsMissingRefreshToken) {
+TEST_F(AuthLogoutLiveFixture, LogoutAcceptsMissingRefreshToken) {
+    // v1.3.3.8: empty body `{}` is now the canonical success shape.
+    // Pre-v1.3.3.8 this returned 400 INVALID_INPUT details.field=
+    // "refresh_token", which silently broke every front-end that
+    // used the cookie-only Phase 5 storage path.
     StdoutSilencer silencer;
     const std::string username = create_user_with_password("hunter22", "rm");
     const auto login = login_and_get_tokens(username, "hunter22");
     const std::string access = login["access_token"].get<std::string>();
     auto r = post_logout(handle, R"({})", access);
     ASSERT_TRUE(r);
-    EXPECT_EQ(r->status, 400);
+    EXPECT_EQ(r->status, 200);
     const auto body = nlohmann::json::parse(r->body);
-    EXPECT_EQ(body["code"], "INVALID_INPUT");
-    EXPECT_EQ(body["details"]["field"], "refresh_token");
+    EXPECT_EQ(body["data"]["logged_out"], true);
+    EXPECT_EQ(body["data"]["revoked"],    false);   // no refresh was presented
 }
 
+TEST_F(AuthLogoutLiveFixture, LogoutAcceptsEmptyBody) {
+    // v1.3.3.8: zero-byte body is now valid. Pre-v1.3.3.8 this was
+    // 400 from parse_json_body's `req.body.empty()` short-circuit.
+    StdoutSilencer silencer;
+    const std::string username = create_user_with_password("hunter22", "rb");
+    const auto login = login_and_get_tokens(username, "hunter22");
+    const std::string access = login["access_token"].get<std::string>();
+    auto r = post_logout(handle, "", access);
+    ASSERT_TRUE(r);
+    EXPECT_EQ(r->status, 200);
+    const auto body = nlohmann::json::parse(r->body);
+    EXPECT_EQ(body["data"]["logged_out"], true);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  400 — body validation (only when refresh_token is *present but
+//  malformed*). Absent refresh_token is the success shape above.
+// ────────────────────────────────────────────────────────────────────────────
+
 TEST_F(AuthLogoutLiveFixture, RejectsEmptyRefreshToken) {
+    // Present-but-empty-string is still 400 — too easy to ship a
+    // buggy client that sends "" instead of omitting the field.
     StdoutSilencer silencer;
     const std::string username = create_user_with_password("hunter22", "re");
     const auto login = login_and_get_tokens(username, "hunter22");
@@ -664,16 +711,6 @@ TEST_F(AuthLogoutLiveFixture, RejectsMalformedJson) {
     EXPECT_EQ(r->status, 400);
     const auto body = nlohmann::json::parse(r->body);
     EXPECT_EQ(body["code"], "INVALID_INPUT");
-}
-
-TEST_F(AuthLogoutLiveFixture, RejectsEmptyBody) {
-    StdoutSilencer silencer;
-    const std::string username = create_user_with_password("hunter22", "rb");
-    const auto login = login_and_get_tokens(username, "hunter22");
-    const std::string access = login["access_token"].get<std::string>();
-    auto r = post_logout(handle, "", access);
-    ASSERT_TRUE(r);
-    EXPECT_EQ(r->status, 400);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -714,6 +751,90 @@ TEST_F(AuthLogoutLiveFixture, FailureEnvelopeCarriesRequestId) {
     EXPECT_EQ(r->get_header_value("X-Request-Id"), "logout-rid-fail");
     const auto body = nlohmann::json::parse(r->body);
     EXPECT_EQ(body["request_id"], "logout-rid-fail");
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  v1.3.3.8 ★ cookie-aware Phase 5 path
+//
+//  These cases exercise the canonical front-end logout shape: Bearer
+//  access token in the Authorization header, refresh token in the
+//  `lc_refresh` HttpOnly cookie, no body. Pre-v1.3.3.8 the handler
+//  returned 400 from parse_logout_request on empty body, so the
+//  cookie was never consulted and the cookie-clear header was never
+//  emitted; every production logout silently failed.
+// ────────────────────────────────────────────────────────────────────────────
+
+TEST_F(AuthLogoutLiveFixture, LogoutRevokesCookieRefresh) {
+    // Phase 5 ★ canonical: cookie carries the refresh, body is empty,
+    // handler sources refresh from cookie and adds the jti to the
+    // blacklist.
+    StdoutSilencer silencer;
+    const std::string username = create_user_with_password("hunter22", "ck");
+    const auto login = login_and_get_tokens(username, "hunter22");
+    const std::string refresh = login["refresh_token"].get<std::string>();
+    const std::string access  = login["access_token"].get<std::string>();
+
+    litecode::Claims claims = litecode::verify(
+        refresh, dev_jwt().secret, dev_jwt().issuer, litecode::TokenKind::Refresh);
+    EXPECT_FALSE(store->is_revoked(claims.jti));
+
+    const auto r = post_logout_cookie(handle, std::string{}, access, refresh);
+    ASSERT_TRUE(r) << "logout POST failed: " << r.error();
+    ASSERT_EQ(r->status, 200) << "body=" << r->body;
+
+    const auto body = nlohmann::json::parse(r->body);
+    EXPECT_EQ(body["data"]["logged_out"], true);
+    EXPECT_EQ(body["data"]["revoked"],    true);
+
+    // Cookie-clear Set-Cookie header MUST be present even though
+    // the cookie was the one carrying the refresh — closing the
+    // XSS-steal window.
+    const std::string set_cookie = r->get_header_value("Set-Cookie");
+    EXPECT_NE(set_cookie.find("lc_refresh="),  std::string::npos);
+    EXPECT_NE(set_cookie.find("Max-Age=0"),   std::string::npos);
+
+    // The jti carried by the cookie MUST be on the blacklist now.
+    EXPECT_TRUE(store->is_revoked(claims.jti));
+
+    // And subsequent refresh via the same cookie fails 401.
+    const httplib::Headers refresh_hdrs = {
+        {"Cookie", "lc_refresh=" + refresh},
+    };
+    const auto refresh_resp = handle.client->Post(
+        "/api/v1/auth/refresh", refresh_hdrs,
+        std::string{}, "application/json");
+    ASSERT_TRUE(refresh_resp);
+    EXPECT_EQ(refresh_resp->status, 401);
+}
+
+TEST_F(AuthLogoutLiveFixture, LogoutWithoutAnyTokenClearsCookie) {
+    // Empty body + no cookie + valid Bearer. The handler has nothing
+    // to revoke, so revoked=false, but it STILL emits Set-Cookie
+    // Max-Age=0 to drop whatever cookie the browser is holding
+    // (closing the XSS-steal window even when no fresh token was
+    // presented this request).
+    StdoutSilencer silencer;
+    const std::string username = create_user_with_password("hunter22", "nt");
+    const auto login = login_and_get_tokens(username, "hunter22");
+    const std::string access  = login["access_token"].get<std::string>();
+
+    // No cookie header at all — simulate "browser dropped the cookie
+    // on its own earlier" scenario.
+    httplib::Headers hdrs = {{"Authorization", "Bearer " + access}};
+    const auto r = handle.client->Post(
+        "/api/v1/auth/logout", hdrs, std::string{}, "application/json");
+    ASSERT_TRUE(r);
+    EXPECT_EQ(r->status, 200);
+    const auto body = nlohmann::json::parse(r->body);
+    EXPECT_EQ(body["data"]["logged_out"], true);
+    EXPECT_EQ(body["data"]["revoked"],    false);   // nothing to revoke
+
+    // The clear-cookie header MUST still go out — defensive, even
+    // when the present request has no cookie. This is the v1.3.3.8
+    // contract promise.
+    const std::string set_cookie = r->get_header_value("Set-Cookie");
+    EXPECT_NE(set_cookie.find("lc_refresh="),  std::string::npos);
+    EXPECT_NE(set_cookie.find("Max-Age=0"),   std::string::npos);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -768,19 +889,33 @@ TEST(ParseLogoutRequestUnit, AcceptsValidBody) {
     const auto parsed = litecode::detail::parse_logout_request(
         nlohmann::json{{"refresh_token", "abc.def.ghi"}}, res);
     ASSERT_TRUE(parsed.has_value());
-    EXPECT_EQ(parsed->refresh_token, "abc.def.ghi");
+    ASSERT_TRUE(parsed->refresh_token.has_value());
+    EXPECT_EQ(*parsed->refresh_token, "abc.def.ghi");
     EXPECT_TRUE(res.body.empty());   // no envelope written
 }
 
-TEST(ParseLogoutRequestUnit, RejectsMissingField) {
+TEST(ParseLogoutRequestUnit, AcceptsMissingField) {
+    // v1.3.3.8 ★ — Phase 5 cookie-aware: missing refresh_token is
+    // the success shape (handler sources from cookie). Returns a
+    // populated struct with refresh_token == nullopt and writes no
+    // envelope.
     httplib::Response res;
     const auto parsed = litecode::detail::parse_logout_request(
         nlohmann::json::object(), res);
-    EXPECT_FALSE(parsed.has_value());
-    EXPECT_FALSE(res.body.empty());
-    const auto body = nlohmann::json::parse(res.body);
-    EXPECT_EQ(body["code"], "INVALID_INPUT");
-    EXPECT_EQ(body["details"]["field"], "refresh_token");
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_FALSE(parsed->refresh_token.has_value());
+    EXPECT_TRUE(res.body.empty());
+}
+
+TEST(ParseLogoutRequestUnit, AcceptsMissingFieldWithSurplusKeys) {
+    // Surplus telemetry keys + absent refresh_token is also fine —
+    // proves the v1.3.3.8 contract goes through pure negative-shape
+    // situations, not just bare `{}`.
+    httplib::Response res;
+    const auto parsed = litecode::detail::parse_logout_request(
+        nlohmann::json{{"device_id", "laptop-7"}}, res);
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_FALSE(parsed->refresh_token.has_value());
 }
 
 TEST(ParseLogoutRequestUnit, RejectsEmptyString) {
@@ -813,7 +948,8 @@ TEST(ParseLogoutRequestUnit, IgnoresSurplusFields) {
             {"device_id",     "laptop-1"},
         }, res);
     ASSERT_TRUE(parsed.has_value());
-    EXPECT_EQ(parsed->refresh_token, "abc.def.ghi");
+    ASSERT_TRUE(parsed->refresh_token.has_value());
+    EXPECT_EQ(*parsed->refresh_token, "abc.def.ghi");
 }
 
 } // namespace

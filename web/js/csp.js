@@ -138,16 +138,12 @@
             integrity:  'sha384-+VfUPEb0PdtChMwmBcBmykRMDd+v6D/oFmB3rZM/puCMDYcIvF968OimRh4KQY9a',
             size:       21496,
         },
-        // CodeMirror 5.65.16 — problem.html loads it dynamically so
-        // the editor gets syntax highlighting + line numbers without
-        // shipping ~250 KB of JS inline. Pinned to 5.x (not 6.x) for
-        // two reasons: (a) 5.x is a UMD bundle that works without
-        // ES-module shenanigans, (b) 6.x's split bundles don't have
-        // a single canonical sha384 to pin. See problem.html /
-        // editor-bootstrap for the load sequence.
-        //
-        // v1.3.3 perf: served from /vendor/codemirror/ — see top
-        // of this section.
+        // CodeMirror 5.65.16 — kept around for any page that still
+        // reaches back into litecode.editor.* legacy APIs; problem.html
+        // migrated to Ace (see ace entry below) in v1.3.3.9. The
+        // legacy CodeMirror assets stay cached locally so the bundle
+        // remains loadable if a stale page is served. SRI integrity
+        // remains pinned to the cdnjs bytes.
         codemirror: {
             url:        '/vendor/codemirror/lib/codemirror.min.js',
             integrity:  'sha384-CtBuRlcKITyrd+aBeTPNFB1/T8+kvtNQiWMCLtiGvD6NpLOJAdt8e8PpJJ2Gn1D0',
@@ -157,10 +153,36 @@
         },
         // C/C++ mode for CodeMirror 5. 'clike' is the upstream name
         // for the C-like-family tokenizer (C / C++ / Java / JS / etc.).
+        // Retained for legacy pages; new code should consume Ace.
         'codemirror-clike': {
             url:        '/vendor/codemirror/mode/clike/clike.min.js',
             integrity:  'sha384-ZS86VwH8VodbCs4EeYNX2wCKSJpCZfGlrTWe2cFgaqyafruHBCCuZcP2vfCz+V9Q',
             size:       21368,
+        },
+
+        // ── Ace editor (v1.3.3.9 ★ editor migration) ───────────────
+        // Ace 1.32.7 — chosen over CodeMirror for two reasons:
+        //   (a) Ace ships a dedicated C/C++ tokenizer
+        //       (mode-c_cpp.js) so we no longer have to depend on
+        //       the clike "C-like-family" fallback that mis-coloured
+        //       some C++17 tokens; (b) Ace's editor.setTheme() /
+        //       editor.session.setMode() API is closer to the rest
+        //       of the page's theme boot, so dark-mode flips actually
+        //       re-paint the gutter without a manual refresh. Same
+        //       SRI discipline: served from /vendor/ace/ (v1.3.3
+        //       perf — local bytes, cdnjs-quality integrity hash).
+        ace: {
+            url:        '/vendor/ace/ace.min.js',
+            integrity:  'sha384-ILMc324YcIXLF5HJrEU7OBSaHNjjMhfsMXin6US9BVBhz0vd03te5EPtfGd5j6pw',
+            size:       436377,
+        },
+        // C / C++ tokenizer mode for Ace. One module covers both
+        // because the upstream c_cpp mode handles the `c` /
+        // `cpp` distinction internally via session.setMode() arg.
+        'ace-mode-c_cpp': {
+            url:        '/vendor/ace/mode-c_cpp.js',
+            integrity:  'sha384-1SQNEN4epGIfsWY5JxK0vP565nJOUUuhjWagJEum7XK4ZC/d5rpgBY2BowdZhgoU',
+            size:       19778,
         },
     };
 

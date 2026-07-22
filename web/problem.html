@@ -21,16 +21,23 @@
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
 
+    <meta name="theme-color" content="#0a0e14">
     <title>LiteCode · 刷题</title>
 
-    <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. -->
-    <script src="/js/theme-boot.js?v=1.3.3.2"></script>
-    <link rel="stylesheet" href="/css/style.css?v=1.3.3.2">
+    <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. v1.3.4 默认 cyber dark。 -->
+    <script src="/js/theme-boot.js?v=1.3.4"></script>
+    <link rel="stylesheet" href="/css/style.css?v=1.3.4">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230a0e14'/%3E%3Cpath d='M22 18 L42 32 L22 46' stroke='%2322d3ee' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 </head>
-<body>
+<body class="lc-cyber">
+    <!--
+      v1.3.4 — 顶部 cyber 装饰条 (cyber dark 主题下显示,light 模式隐藏)。
+      不影响任何 ID / class / JS 行为。
+    -->
+    <div class="lc-cyber-grid-strip" aria-hidden="true"></div>
     <div data-nav></div>
 
-    <main class="lc-v4-page" style="max-width: 1320px;">
+    <main class="lc-v4-page lc-problem-page" style="max-width: 1480px;">
         <div id="loading-state" class="lc-loading" aria-live="polite">
             <span class="lc-spinner" aria-hidden="true"></span>
             <span>加载题目中…</span>
@@ -201,22 +208,51 @@
                 <section id="result-panel" class="lc-result-panel" hidden
                          aria-live="polite" aria-label="判题结果">
                     <!--
-                      Header — status icon + badge + message + actions.
-                      The icon is a single character (emoji) that visually
-                      identifies the status; the badge uses the existing
-                      .lc-status--{ac,wa,tle,...} palette from style.css.
+                      Hero block — verdict-first, full width on desktop.
+                      Two-tier layout:
+                        .lc-result-panel__hero        — verdict icon + big status badge + headline
+                        .lc-result-panel__hero-side   — actions (copy / resubmit) and the
+                                                        case-progress meter (X / Y passed) when
+                                                        the API supplies total_cases / passed_cases.
+                      The verdict icon uses the same emoji glyph the
+                      existing per-row badge uses; the badge class is
+                      `.lc-status--{status}` so the existing palette
+                      palette in style.css applies unchanged.
                     -->
-                    <div class="lc-result-panel__header">
-                        <div class="lc-result-panel__status">
+                    <div class="lc-result-panel__hero">
+                        <div class="lc-result-panel__verdict">
                             <span id="result-status-icon" class="lc-status-icon" aria-hidden="true">…</span>
-                            <span id="result-status-badge" class="lc-status">…</span>
-                            <span id="result-message" class="lc-result-panel__message"></span>
+                            <div class="lc-result-panel__verdict-body">
+                                <span id="result-status-badge" class="lc-status lc-result-panel__badge">…</span>
+                                <span id="result-message" class="lc-result-panel__message"></span>
+                            </div>
                         </div>
-                        <div class="lc-result-panel__actions">
-                            <button type="button" class="lc-btn lc-btn--ghost lc-btn--sm"
-                                    id="copy-code-btn" title="复制当前编辑器代码到剪贴板">复制代码</button>
-                            <button type="button" class="lc-btn lc-btn--primary lc-btn--sm"
-                                    id="resubmit-btn" title="用当前代码再次提交">再次提交</button>
+                        <div class="lc-result-panel__hero-side">
+                            <div class="lc-result-panel__case-progress"
+                                 id="result-case-progress" hidden
+                                 aria-label="测例通过进度">
+                                <span class="lc-result-panel__case-progress-label">通过测例</span>
+                                <span class="lc-result-panel__case-progress-value">
+                                    <strong id="result-case-passed">0</strong>
+                                    <span class="lc-result-panel__case-progress-sep">/</span>
+                                    <span id="result-case-total">0</span>
+                                </span>
+                                <span class="lc-result-panel__case-progress-bar"
+                                      aria-hidden="true">
+                                    <span class="lc-result-panel__case-progress-fill"
+                                          id="result-case-progress-fill"
+                                          style="width: 0%"></span>
+                                </span>
+                            </div>
+                            <div class="lc-result-panel__actions">
+                                <button type="button" class="lc-btn lc-btn--ghost lc-btn--sm"
+                                        id="copy-code-btn" title="复制当前编辑器代码到剪贴板">复制代码</button>
+                                <button type="button" class="lc-btn lc-btn--ghost lc-btn--sm"
+                                        id="copy-verdict-btn"
+                                        title="复制判题摘要（含状态、耗时、内存）到剪贴板">复制摘要</button>
+                                <button type="button" class="lc-btn lc-btn--primary lc-btn--sm"
+                                        id="resubmit-btn" title="用当前代码再次提交">再次提交</button>
+                            </div>
                         </div>
                     </div>
 
@@ -226,7 +262,10 @@
                       / state.problem.memory_limit). When the gauge
                       goes red, the user immediately sees they hit the
                       limit. Empty / unknown values are handled with a
-                      neutral track.
+                      neutral track. The desktop layout puts them in a
+                      2-column grid so the gauges breathe (was a
+                      single column on phones); collapses to 1 column
+                      below 600px.
                     -->
                     <div class="lc-result-panel__gauges" id="result-gauges">
                         <div class="lc-gauge" data-kind="time">
@@ -399,17 +438,17 @@
       csp.js is loaded first so api.js / app.js / markdown.js can
       reference the SRI registry (litecode.csp.SCRIPTS) at boot.
     -->
-    <script src="/js/csp.js?v=1.3.3.2" defer></script>
-    <script src="/js/markdown.js?v=1.3.3.2" defer></script>
-    <script src="/js/api.js?v=1.3.3.2" defer></script>
-    <script src="/js/app.js?v=1.3.3.2" defer></script>
+    <script src="/js/csp.js?v=1.3.4" defer></script>
+    <script src="/js/markdown.js?v=1.3.4" defer></script>
+    <script src="/js/api.js?v=1.3.4" defer></script>
+    <script src="/js/app.js?v=1.3.4" defer></script>
     <!--
       v1.3.2 — web/js/editor.js module (litecode.editor.*). Loaded
       after app.js so its IIFE registers `window.litecode.editor`
       for the inline IIFE below; consumes SRI-pinned CodeMirror +
       clike mode from csp.js like the previous in-page bootstrap.
     -->
-    <script src="/js/editor.js?v=1.3.3.2" defer></script>
+    <script src="/js/editor.js?v=1.3.4" defer></script>
 
     <script>
     // ────────────────────────────────────────────────────────────────────
@@ -421,26 +460,28 @@
     //       litecode.markdown.renderSafeAsync, which falls back to
     //       escaped text if marked/DOMPurify failed to load) + tags +
     //       samples.
-    //    3) Lazy-load CodeMirror (CSS + JS + C/C++ mode) via the
-    //       csp.STYLESHEETS / csp.SCRIPTS registries. Each load is
-    //       sha384-pinned; an integrity failure logs and falls back
-    //       to a plain <textarea>.
-    //    4) Boot CodeMirror with the selected language, restore the
+    //    3) Lazy-load Ace 1.32.7 (JS bundle + C/C++ mode) via the
+    //       csp.SCRIPTS registry. Each load is sha384-pinned; an
+    //       integrity failure logs and falls back to a plain
+    //       <textarea>. v1.3.3.9: Ace replaces CodeMirror 5 — the
+    //       dedicated c_cpp tokenizer no longer mis-colours some
+    //       C++17 tokens, and theme-boot.js dark-mode flips paint
+    //       the gutter in real time.
+    //    4) Boot Ace with the selected language, restore the
     //       localStorage draft keyed by `<slug>:<language>`, and
     //       auto-save on every change (debounced 300ms).
-    //    5) POST /api/v1/submissions on submit → poll
-    //       GET /api/v1/submissions/:id every 1.5s until status is
-    //       terminal → render the result panel.
+    //    5) POST /api/v1/submissions on submit → SSE /poll
+    //       /submissions/:id until status is terminal → render the
+    //       result panel (status badge + time/memory gauges +
+    //       metrics + failed-case error_message).
     //    6) On AC, the draft is cleared (per SPEC §11 "提交成功后清除").
     //       On WA / TLE / etc. the draft is kept so the user can
     //       iterate without losing work.
     //
     //  Out of scope (later commits):
-    //    - SSE push (the server has /submissions/sse/:id v1.2.17; the
-    //      front-end can switch to it when we want lower latency).
-    //    - CodeMirror 6 / Monaco (the bundled CodeMirror 5 covers the
-    //      "LeetCode 风格" requirement; 6/7 are drop-in upgrades
-    //      behind the same `litecode.editor` surface).
+    //    - Monaco (the bundled Ace covers the "LeetCode 风格"
+    //      requirement; Monaco is a drop-in upgrade behind the same
+    //      `litecode.editor` surface if we ever want its TS server).
     // ────────────────────────────────────────────────────────────────────
     (function () {
         'use strict';
@@ -612,9 +653,12 @@
         }
 
         // v1.3.2 — editor bootstrap moved to web/js/editor.js
-        // (`litecode.editor.{loadCodemirror, mountEditor,
+        // (`litecode.editor.{loadEditor, mountEditor,
         // getEditorValue, setEditorValue, setMode, onEditorChange,
         // templateForLang}`). The page IIFE below imports those.
+        // v1.3.3.9: `loadCodemirror` was renamed to `loadEditor`
+        // when the editor migrated from CodeMirror 5.65.16 to
+        // Ace 1.32.7 — same SRI-pinned registry, new bundle.
 
         // ── Draft persistence (localStorage, scoped to slug+lang) ────
         //
@@ -1011,7 +1055,7 @@
 
             // Status badge + icon + headline message
             var badge = $('result-status-badge');
-            badge.className = 'lc-status lc-status--' + status;
+            badge.className = 'lc-status lc-status--' + status + ' lc-result-panel__badge';
             badge.textContent = STATUS_LABEL[status] || status.toUpperCase();
             var icon = $('result-status-icon');
             icon.textContent = STATUS_ICON[status] || '·';
@@ -1115,6 +1159,60 @@
                 link.hidden = false;
             } else {
                 link.hidden = true;
+            }
+
+            // v1.3.3.9 — case-progress meter (X / Y passed). Surfaced
+            // only when the API actually returns total_cases /
+            // passed_cases; older rows (and pending/running statuses)
+            // keep the meter hidden so the verdict card doesn't show
+            // a placeholder "0 / 0" bar. The fill width is a
+            // percentage of passed / total; round to 1 decimal place
+            // to avoid 0% flashes when the first case hasn't decided
+            // yet (passed=0 total=20 → still 0%, not 0.0%).
+            var caseProgress = $('result-case-progress');
+            var totalCases = Number(row.total_cases);
+            var passedCases = Number(row.passed_cases);
+            if (Number.isFinite(totalCases) && totalCases > 0
+                && Number.isFinite(passedCases) && passedCases >= 0
+                && status !== 'pending' && status !== 'running') {
+                $('result-case-passed').textContent = String(Math.min(passedCases, totalCases));
+                $('result-case-total').textContent  = String(totalCases);
+                var pct = Math.max(0, Math.min(100, (passedCases / totalCases) * 100));
+                $('result-case-progress-fill').style.width = pct.toFixed(1) + '%';
+                caseProgress.hidden = false;
+            } else {
+                caseProgress.hidden = true;
+            }
+
+            // v1.3.3.9 — copy verdict button. Builds a one-line
+            // summary (verdict + language + time + memory +
+            // submission id) so the user can paste it into a
+            // chat / bug report. Re-bound once per result update
+            // because the row-level values change.
+            var copyBtn = $('copy-verdict-btn');
+            if (copyBtn) {
+                copyBtn.onclick = function () {
+                    var parts = [];
+                    parts.push('[LiteCode] ' + (STATUS_LABEL[status] || status.toUpperCase()));
+                    if (state.problem && state.problem.slug) parts.push(state.problem.slug);
+                    if (row.language) parts.push(row.language);
+                    if (row.time_used != null)    parts.push(row.time_used + 'ms');
+                    if (row.memory_used != null)  parts.push(row.memory_used + 'KB');
+                    if (lastSubmissionId > 0)     parts.push('#' + lastSubmissionId);
+                    var txt = parts.join(' · ');
+                    var done = function () {
+                        if (window.litecode && litecode.toast) {
+                            litecode.toast.show('已复制判题摘要', 'success');
+                        }
+                    };
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(txt).then(done, function () {
+                            fallbackCopy(txt); done();
+                        });
+                    } else {
+                        fallbackCopy(txt); done();
+                    }
+                };
             }
         }
 
@@ -2236,11 +2334,12 @@
                 // becomes visible (loaded=false branch).
             }
 
-            // Load CodeMirror + problem detail. We run the editor
+            // Load Ace + problem detail. We run the editor
             // load in parallel with the problem fetch — the editor
             // can finish mounting before or after the data arrives
-            // without breaking anything.
-            litecode.editor.loadCodemirror().then(function (ok) {
+            // without breaking anything. v1.3.3.9: migrated from
+            // CodeMirror 5 → Ace 1.32.7.
+            litecode.editor.loadEditor().then(function (ok) {
                 // Mount the editor with an empty default; it gets
                 // replaced once the problem (and its draft) loads.
                 litecode.editor.mountEditor(litecode.editor.templateForLang(state.lang || '', state.lang));

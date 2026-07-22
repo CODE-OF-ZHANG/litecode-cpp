@@ -213,6 +213,21 @@ target_link_libraries(lit_smoke_check PRIVATE
     mysql::concpp
     litecode_bcrypt)
 
+# ─── One-shot password hash generator (v1.3.3.7) ──────────────────────────
+# Used by scripts/admin_tool.py when the operator wants a hash generated
+# by the SAME code path as production login/registration, instead of
+# relying on a Python bcrypt binding. Links only the bcrypt primitive
+# (no HTTP / DB / OpenSSL) so it's safe to ship in the dev build but
+# never goes into the Docker image (mirrors lit_smoke_check policy).
+add_executable(lit_gen_password_hash
+    src/tools/gen_password_hash.cpp)
+
+target_include_directories(lit_gen_password_hash PRIVATE
+    ${CMAKE_SOURCE_DIR}/src)
+
+target_link_libraries(lit_gen_password_hash PRIVATE
+    litecode_bcrypt)
+
 # ─── Build type default ───
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
