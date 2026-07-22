@@ -11,7 +11,7 @@
       for problem-description previews on the edit form).
     -->
     <meta http-equiv="Content-Security-Policy"
-          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
+          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
 
     <title>LiteCode · 编辑题目</title>
 
@@ -31,6 +31,7 @@
         <header class="lc-row lc-row--between"
                 style="margin-bottom: var(--lc-space-5);">
             <div class="lc-stack-sm">
+                <p class="lc-hero__eyebrow">管 理 台 · ADMIN</p>
                 <h1 id="page-title">题目</h1>
                 <p class="lc-form-help" id="page-subtitle">…</p>
             </div>
@@ -225,6 +226,46 @@
             </section>
 
             <!--
+              Section: 代码模板 (v1.3.2 — per-problem CodeMirror initial value)
+              Optional MEDIUMTEXT; absent / empty string ⇒ fallback to
+              the built-in C++/C skeleton in web/js/editor.js. Mirrors
+              the description editor (textarea + live <pre> preview)
+              but renders the preview as plain text — no CodeMirror on
+              the admin path, to avoid shipping another 700 KB of editor
+              JS where a typewriter-style preview is enough.
+            -->
+            <section class="lc-form-section" aria-label="代码模板">
+                <h2 class="lc-form-section__title">代码模板（可选）</h2>
+                <p class="lc-form-help">
+                    进入题目页时,编辑器会用此模板初始化。
+                    留空将使用内置 C++/C skeleton。
+                </p>
+                <div class="lc-md-editor">
+                    <div class="lc-md-editor__pane">
+                        <label class="lc-form-label" for="template-input">模板源码</label>
+                        <textarea id="template-input" name="template"
+                                  class="lc-input lc-md-editor__textarea"
+                                  rows="10"
+                                  placeholder="#include &lt;bits/stdc++.h&gt;..."
+                                  aria-describedby="template-help template-error"></textarea>
+                        <span id="template-help" class="lc-form-help">
+                            进入题目页时,编辑器会用此模板初始化。
+                            留空将使用内置 C++/C skeleton；最大 64 KB。
+                        </span>
+                        <span id="template-error" class="lc-form-error" hidden></span>
+                    </div>
+                    <div class="lc-md-editor__pane">
+                        <span class="lc-form-label">预览</span>
+                        <pre id="template-preview"
+                             class="lc-input lc-md-editor__preview lc-md-editor__preview--code"
+                             aria-live="polite"><em class="lc-form-help">
+                            （左侧输入模板后即时预览）
+                        </em></pre>
+                    </div>
+                </div>
+            </section>
+
+            <!--
               Section: 样例（示例输入输出）
               Repeatable rows. Each row has input / output textareas
               + a judge_type select + a remove button. Adding a row
@@ -332,7 +373,8 @@
         function $(id) { return document.getElementById(id); }
         var form, slugInput, titleInput, difficultySeg, timeInput,
             memInput, tagInput, tagChips, tagError, descriptionInput,
-            descriptionPreview, samplesList, samplesError, pageTitle,
+            descriptionPreview, templateInput, templatePreview,
+            samplesList, samplesError, pageTitle,
             pageSubtitle, submitBtn, submitBtnBottom, formError;
 
         // ── el() helper ─────────────────────────────────────────────
@@ -382,7 +424,8 @@
         function clearAllErrors() {
             ['slug-error', 'title-error', 'difficulty-error',
              'time-limit-error', 'memory-limit-error', 'tag-error',
-             'description-error', 'samples-error'].forEach(function (id) {
+             'description-error', 'template-error',
+             'samples-error'].forEach(function (id) {
                 showFieldError(id, '');
             });
             formError.hidden = true;
@@ -416,6 +459,7 @@
             'time_limit_ms':  'time-limit-error',
             'memory_limit_mb':'memory-limit-error',
             'description':    'description-error',
+            'template':       'template-error',
             'tags':           'tag-error',
             'samples':        'samples-error',
         };
@@ -620,6 +664,17 @@
             descriptionPreview.innerHTML = safeHtml;
         }
 
+        // v1.3.2 — template preview. Plain-text reflection of the
+        // template textarea into the read-only `<pre>`. We DELIBERATELY
+        // use textContent (not innerHTML) on the user-typed body: the
+        // back-end treats template as raw C++ source, not Markdown, so
+        // any HTML-ish characters (`<`, `&`, etc.) must NOT be interpreted.
+        // Empty string clears the preview back to its placeholder.
+        function renderTemplatePreview() {
+            var src = templateInput.value || '';
+            templatePreview.textContent = src;
+        }
+
         // ── Mode detection + initial load ───────────────────────────
         function readModeFromUrl() {
             var sp = new URLSearchParams(window.location.search);
@@ -678,9 +733,12 @@
                         };
                     }) : [];
                     descriptionInput.value = p.description || '';
+                    // v1.3.2: per-problem code template (optional MEDIUMTEXT)
+                    templateInput.value = (typeof p.template === 'string') ? p.template : '';
                     renderTagChips();
                     renderSamples();
                     renderPreview();
+                    renderTemplatePreview();
                 })
                 .catch(function (err) {
                     if (err && err.status === 404) {
@@ -784,6 +842,12 @@
                     return out;
                 }),
             };
+            // v1.3.2: per-problem code template. Always include the
+            // field — absent / empty ⇒ "" (overwrite with empty), so
+            // the admin can intentionally clear a template by deleting
+            // its content. The back-end persists "": problem.html
+            // treats it as "fall back to the built-in skeleton".
+            body.template = templateInput.value || '';
             var t = (timeInput.value || '').trim();
             if (t) body.time_limit_ms = parseInt(t, 10);
             var m = (memInput.value || '').trim();
@@ -854,6 +918,10 @@
             // needed for typing latency).
             descriptionInput.addEventListener('input', renderPreview);
 
+            // v1.3.2: Template → live plain-text preview. Same
+            // no-debounce pattern (textContent is essentially free).
+            templateInput.addEventListener('input', renderTemplatePreview);
+
             // Tag input: Enter or comma commits the typed value.
             tagInput.addEventListener('keydown', function (ev) {
                 if (ev.key === 'Enter' || ev.key === ',') {
@@ -920,6 +988,8 @@
                 tagError          = $('tag-error');
                 descriptionInput  = $('description-input');
                 descriptionPreview= $('description-preview');
+                templateInput     = $('template-input');
+                templatePreview   = $('template-preview');
                 samplesList       = $('samples-list');
                 samplesError      = $('samples-error');
                 pageTitle         = $('page-title');

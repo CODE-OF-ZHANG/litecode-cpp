@@ -18,6 +18,7 @@
     {"input": "0\n", "expected_output": "true\n", "judge_type": "exact"},
     {"input": "12321\n", "expected_output": "true\n", "judge_type": "exact"},
     {"input": "1001\n", "expected_output": "true\n", "judge_type": "exact"},
-    {"input": "1000021\n", "expected_output": "false\n", "judge_type": "exact"}
-  ]
+    {"input": "1000021\n", "expected_output": "false\n", "judge_type": "exact"},
+  ],
+  "template": "#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    ios::sync_with_stdio(false);\n    cin.tie(nullptr);\n    // TODO: 实现 palindrome-number — 整数回文判定\n    return 0;\n}\n"
 }

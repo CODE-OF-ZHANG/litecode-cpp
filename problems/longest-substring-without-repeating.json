@@ -19,6 +19,7 @@
     {"input": " \n", "expected_output": "1\n", "judge_type": "exact"},
     {"input": "abcdef\n", "expected_output": "6\n", "judge_type": "exact"},
     {"input": "dvdf\n", "expected_output": "3\n", "judge_type": "exact"},
-    {"input": "tmmzuxt\n", "expected_output": "5\n", "judge_type": "exact"}
-  ]
+    {"input": "tmmzuxt\n", "expected_output": "5\n", "judge_type": "exact"},
+  ],
+  "template": "#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    ios::sync_with_stdio(false);\n    cin.tie(nullptr);\n    // TODO: 实现 longest-substring-without-repeating — 无重复字符的最长子串\n    return 0;\n}\n"
 }

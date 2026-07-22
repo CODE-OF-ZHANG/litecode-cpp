@@ -21,6 +21,7 @@
     {"input": "{[]}\n", "expected_output": "true\n", "judge_type": "exact"},
     {"input": "([{}])\n", "expected_output": "true\n", "judge_type": "exact"},
     {"input": "(((((((((())))))))))()\n", "expected_output": "true\n", "judge_type": "exact"},
-    {"input": "(((((((((())))))))))((\n", "expected_output": "false\n", "judge_type": "exact"}
-  ]
+    {"input": "(((((((((())))))))))((\n", "expected_output": "false\n", "judge_type": "exact"},
+  ],
+  "template": "#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    ios::sync_with_stdio(false);\n    cin.tie(nullptr);\n    // TODO: 实现 valid-parentheses — 括号匹配\n    return 0;\n}\n"
 }

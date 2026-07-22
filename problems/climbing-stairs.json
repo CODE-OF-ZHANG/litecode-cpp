@@ -17,6 +17,7 @@
     {"input": "5\n", "expected_output": "8\n", "judge_type": "exact"},
     {"input": "10\n", "expected_output": "89\n", "judge_type": "exact"},
     {"input": "20\n", "expected_output": "10946\n", "judge_type": "exact"},
-    {"input": "45\n", "expected_output": "1836311903\n", "judge_type": "exact"}
-  ]
+    {"input": "45\n", "expected_output": "1836311903\n", "judge_type": "exact"},
+  ],
+  "template": "#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    ios::sync_with_stdio(false);\n    cin.tie(nullptr);\n    // TODO: 实现 climbing-stairs — 第 n 阶走法数\n    return 0;\n}\n"
 }

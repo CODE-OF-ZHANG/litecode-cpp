@@ -17,6 +17,7 @@
     {"input": "9 9 9 9 9 9 9\n9 9 9 9\n", "expected_output": "8 9 9 9 0 0 0 1\n", "judge_type": "exact"},
     {"input": "1\n9 9 9\n", "expected_output": "0 0 0 1\n", "judge_type": "exact"},
     {"input": "5\n5\n", "expected_output": "0 1\n", "judge_type": "exact"},
-    {"input": "1 2 3\n4 5 6\n", "expected_output": "5 7 9\n", "judge_type": "exact"}
-  ]
+    {"input": "1 2 3\n4 5 6\n", "expected_output": "5 7 9\n", "judge_type": "exact"},
+  ],
+  "template": "#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    ios::sync_with_stdio(false);\n    cin.tie(nullptr);\n    // TODO: 实现 add-two-numbers — 链表逆序相加\n    return 0;\n}\n"
 }
