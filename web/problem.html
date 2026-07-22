@@ -19,7 +19,7 @@
       enforced the same way as the JS bundles.
     -->
     <meta http-equiv="Content-Security-Policy"
-          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
+          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
 
     <title>LiteCode · 刷题</title>
 
@@ -403,6 +403,13 @@
     <script src="/js/markdown.js" defer></script>
     <script src="/js/api.js" defer></script>
     <script src="/js/app.js" defer></script>
+    <!--
+      v1.3.2 — web/js/editor.js module (litecode.editor.*). Loaded
+      after app.js so its IIFE registers `window.litecode.editor`
+      for the inline IIFE below; consumes SRI-pinned CodeMirror +
+      clike mode from csp.js like the previous in-page bootstrap.
+    -->
+    <script src="/js/editor.js" defer></script>
 
     <script>
     // ────────────────────────────────────────────────────────────────────
@@ -445,33 +452,11 @@
         var DRAFT_SAVE_DEBOUNCE = 300;
         var SAMPLE_MAX_LINE = 24;               // pre-truncate long sample I/O in display
 
-        var DEFAULT_TEMPLATES = {
-            cpp: [
-                '#include <bits/stdc++.h>',
-                'using namespace std;',
-                '',
-                'int main() {',
-                '    ios::sync_with_stdio(false);',
-                '    cin.tie(nullptr);',
-                '    // TODO: 实现题目逻辑',
-                '    return 0;',
-                '}',
-                '',
-            ].join('\n'),
-            c: [
-                '#include <stdio.h>',
-                '#include <stdlib.h>',
-                '',
-                'int main(void) {',
-                '    // TODO: 实现题目逻辑',
-                '    return 0;',
-                '}',
-                '',
-            ].join('\n'),
-        };
-
-        var LANG_MODE = { c: 'text/x-c', cpp: 'text/x-c++src' };
-        var LANG_LABEL = { c: 'C', cpp: 'C++' };
+        // v1.3.2 — DEFAULT_TEMPLATES / LANG_MODE / LANG_LABEL moved
+        // to web/js/editor.js (litecode.editor.{DEFAULT_TEMPLATES,
+        // LANG_MODE, LANG_LABEL}). The page IIFE below imports them
+        // via the public `litecode.editor.*` API rather than defining
+        // its own copies.
 
         // Status badge mapping (matches the existing .lc-status--* tokens
         // in style.css; kept in lock-step here so a server-side status
@@ -618,145 +603,10 @@
             }
         }
 
-        // ── Editor bootstrap (CodeMirror 5, SRI-pinned) ─────────────
-        var editor = {
-            cm: null,            // CodeMirror instance (or null if load failed)
-            textarea: null,      // <textarea> fallback
-            ready: false,
-        };
-
-        function loadCodemirror() {
-            if (!window.litecode || !litecode.csp) {
-                console.warn('[editor] csp.js not loaded; falling back to <textarea>');
-                return Promise.resolve(false);
-            }
-            // CSS first so the editor mounts with proper gutter colors
-            // when the JS bundle finishes loading.
-            var cssSpec = litecode.csp.STYLESHEETS && litecode.csp.STYLESHEETS.codemirror;
-            var jsSpec  = litecode.csp.SCRIPTS     && litecode.csp.SCRIPTS.codemirror;
-            var modeSpec = litecode.csp.SCRIPTS    && litecode.csp.SCRIPTS['codemirror-clike'];
-
-            function loadStyle(spec) {
-                return new Promise(function (resolve, reject) {
-                    if (!spec) { reject(new Error('no stylesheet spec')); return; }
-                    var existing = document.querySelector(
-                        'link[data-lc-cm-css="' + spec.url + '"]'
-                    );
-                    if (existing) { resolve(existing); return; }
-                    var l = litecode.csp.makeStylesheet(spec);
-                    l.dataset.lcCmCss = spec.url;
-                    l.addEventListener('load',  function () { resolve(l); });
-                    l.addEventListener('error', function () { reject(new Error('css load failed')); });
-                    document.head.appendChild(l);
-                });
-            }
-            function loadJs(spec) {
-                return new Promise(function (resolve, reject) {
-                    if (!spec) { reject(new Error('no script spec')); return; }
-                    var existing = document.querySelector(
-                        'script[data-lc-cm-src="' + spec.url + '"]'
-                    );
-                    if (existing && existing.dataset.loaded === '1') { resolve(); return; }
-                    if (existing) {
-                        existing.addEventListener('load',  function () { resolve(); });
-                        existing.addEventListener('error', function () { reject(new Error('js load failed')); });
-                        return;
-                    }
-                    var s = litecode.csp.makeScript(spec);
-                    s.dataset.lcCmSrc = spec.url;
-                    s.addEventListener('load',  function () { s.dataset.loaded = '1'; resolve(); });
-                    s.addEventListener('error', function () { reject(new Error('js load failed')); });
-                    document.head.appendChild(s);
-                });
-            }
-
-            return loadStyle(cssSpec)
-                .then(function () { return loadJs(jsSpec); })
-                .then(function () { return loadJs(modeSpec); })
-                .then(function () { return true; })
-                .catch(function (err) {
-                    console.warn('[editor] CodeMirror load failed, using <textarea> fallback', err);
-                    return false;
-                });
-        }
-
-        function mountEditor(initialCode, lang) {
-            editor.textarea = $('code-textarea');
-            if (window.CodeMirror && editor.textarea) {
-                editor.cm = window.CodeMirror.fromTextArea(editor.textarea, {
-                    mode: LANG_MODE[lang] || LANG_MODE.cpp,
-                    lineNumbers: true,
-                    indentUnit: 4,
-                    tabSize: 4,
-                    indentWithTabs: false,
-                    smartIndent: true,
-                    lineWrapping: true,
-                    matchBrackets: true,
-                    autoCloseBrackets: true,
-                    styleActiveLine: true,
-                    // Built-in themes from the CodeMirror 5.65.16 core
-                    // bundle (no extra SRI load needed). We override
-                    // theme colors via .CodeMirror overrides in
-                    // style.css to match the page's --lc-color-*
-                    // tokens, so the editor feels native.
-                    theme: document.documentElement.classList.contains('dark')
-                        ? 'monokai' : 'default',
-                });
-                // Re-sync theme when the page's dark mode toggles.
-                var origToggle = window.litecode && litecode.theme && litecode.theme.toggle;
-                if (origToggle) {
-                    litecode.theme.toggle = function () {
-                        origToggle();
-                        if (editor.cm) {
-                            editor.cm.setOption('theme',
-                                document.documentElement.classList.contains('dark')
-                                    ? 'monokai' : 'default');
-                        }
-                    };
-                }
-                editor.cm.setValue(initialCode || '');
-                editor.ready = true;
-            } else {
-                // Fallback: plain textarea. We still keep a few niceties
-                // (tab inserts spaces; shift+tab reverses) so a failed
-                // CDN load doesn't make the editor unusable.
-                editor.textarea.value = initialCode || '';
-                editor.textarea.addEventListener('keydown', function (e) {
-                    if (e.key !== 'Tab') return;
-                    e.preventDefault();
-                    var ta = e.target;
-                    var start = ta.selectionStart, end = ta.selectionEnd;
-                    var v = ta.value;
-                    if (e.shiftKey) {
-                        // Outdent current line by 4 spaces.
-                        var lineStart = v.lastIndexOf('\n', start - 1) + 1;
-                        var line = v.slice(lineStart, end);
-                        var dedented = line.replace(/^( {1,4})/gm, '');
-                        ta.value = v.slice(0, lineStart) + dedented + v.slice(end);
-                        ta.selectionStart = lineStart;
-                        ta.selectionEnd = lineStart + dedented.length;
-                    } else {
-                        ta.value = v.slice(0, start) + '    ' + v.slice(end);
-                        ta.selectionStart = ta.selectionEnd = start + 4;
-                    }
-                });
-                editor.ready = true;
-            }
-        }
-
-        function getEditorValue() {
-            if (editor.cm) return editor.cm.getValue();
-            if (editor.textarea) return editor.textarea.value;
-            return '';
-        }
-        function setEditorValue(v) {
-            if (editor.cm) editor.cm.setValue(v || '');
-            else if (editor.textarea) editor.textarea.value = v || '';
-        }
-        function onEditorChange(cb) {
-            if (editor.cm) editor.cm.on('change', cb);
-            else if (editor.textarea) editor.textarea.addEventListener('input', cb);
-        }
+        // v1.3.2 — editor bootstrap moved to web/js/editor.js
+        // (`litecode.editor.{loadCodemirror, mountEditor,
+        // getEditorValue, setEditorValue, setMode, onEditorChange,
+        // templateForLang}`). The page IIFE below imports those.
 
         // ── Draft persistence (localStorage, scoped to slug+lang) ────
         //
@@ -910,7 +760,7 @@
                 try { return new Blob([draft.code]).size; }
                 catch (_) { return draft.code.length; }
             })();
-            var langLabel = LANG_LABEL[draft.lang] || draft.lang || '?';
+            var langLabel = litecode.editor.LANG_LABEL[draft.lang] || draft.lang || '?';
             meta.textContent =
                 langLabel + ' · 保存于 ' + formatSavedAt(draft.savedAt)
                 + ' · ' + formatBytes(bytes);
@@ -935,7 +785,7 @@
             if (!pendingDraft) return;
             var code = pendingDraft.code;
             hideDraftBanner();
-            setEditorValue(code);
+            litecode.editor.setEditorValue(code);
             // Mark the just-loaded draft as "saved" so the next
             // auto-save won't redundantly re-write identical bytes.
             lastSavedDraft = code;
@@ -957,10 +807,10 @@
         }
 
         function startDraftAutoSave(slug, lang) {
-            onEditorChange(function () {
+            litecode.editor.onEditorChange(function () {
                 if (draftTimer) clearTimeout(draftTimer);
                 draftTimer = setTimeout(function () {
-                    var code = getEditorValue();
+                    var code = litecode.editor.getEditorValue();
                     // Skip no-op writes (default template, or any
                     // value byte-equal to what we last wrote).
                     if (code === lastSavedDraft) return;
@@ -1446,7 +1296,7 @@
 
         function submit() {
             if (!state.problem || !state.problem.id) return;
-            var code = getEditorValue();
+            var code = litecode.editor.getEditorValue();
             if (!code || !code.trim()) {
                 updateDraftStatus('请先编写代码');
                 return;
@@ -1554,9 +1404,20 @@
                     // look like the page lost their work.
                     var lang = $('lang-select').value || 'cpp';
                     state.lang = lang;
-                    var initial = DEFAULT_TEMPLATES[lang] || '';
+                    // v1.3.2 — prefer the per-problem template from the
+                    // public detail endpoint (`data.template`); fall
+                    // back to the built-in C++/C skeleton when the
+                    // field is absent, null, or an empty string (the
+                    // back-end persists "" when the admin cleared it).
+                    var problemTemplate = (state.problem
+                        && typeof state.problem.template === 'string'
+                        && state.problem.template.length > 0)
+                            ? state.problem.template
+                            : '';
+                    var fallback = litecode.editor.templateForLang(lang);
+                    var initial = problemTemplate || fallback;
                     lastSavedDraft = '';
-                    setEditorValue(initial);
+                    litecode.editor.setEditorValue(initial);
                     startDraftAutoSave(slug, lang);
                     // If a draft exists in localStorage, surface the
                     // banner so the user can Restore / Discard. The
@@ -2192,30 +2053,33 @@
                 // the editor still shows the default template for prev;
                 // we don't want to write a no-op envelope).
                 if (state.slug) {
-                    var cur = getEditorValue();
-                    var tplPrev = DEFAULT_TEMPLATES[prev] || '';
+                    var cur = litecode.editor.getEditorValue();
+                    var tplPrev = litecode.editor.templateForLang(prev) || '';
                     if (cur && cur !== tplPrev) {
                         saveDraft(state.slug, prev, cur);
                     }
                 }
                 state.lang = next;
-                var tplNext = DEFAULT_TEMPLATES[next] || '';
+                var tplNext = litecode.editor.templateForLang(next) || '';
                 var nextDraft = loadDraft(state.slug, next);
                 if (nextDraft && nextDraft.code && nextDraft.code !== tplNext) {
-                    setEditorValue(tplNext);
+                    litecode.editor.setEditorValue(tplNext);
                     lastSavedDraft = '';
                     showDraftBanner(nextDraft);
-                    updateDraftStatus('已切换语言 · 已发现 ' + LANG_LABEL[next] + ' 草稿');
+                    updateDraftStatus('已切换语言 · 已发现 ' + litecode.editor.LANG_LABEL[next] + ' 草稿');
                 } else {
-                    setEditorValue(tplNext);
+                    litecode.editor.setEditorValue(tplNext);
                     lastSavedDraft = '';
                     hideDraftBanner();
                     updateSavedIndicator(null);
                     updateDraftStatus('已切换语言');
                 }
-                if (editor.cm) {
-                    editor.cm.setOption('mode', LANG_MODE[next] || LANG_MODE.cpp);
-                }
+                // Swap CodeMirror's mode for the new language. The
+                // textarea fallback has no mode to set; v1.3.2 moved
+                // the setOption call behind litecode.editor.setMode
+                // so the IIFE doesn't reach into a CodeMirror
+                // instance directly.
+                litecode.editor.setMode(next);
             });
 
             // Reset code: overwrite editor + draft with default template.
@@ -2224,8 +2088,8 @@
                 if (!window.confirm('确定要重置为默认模板吗？当前编辑内容会丢失（草稿仍可在 localStorage 找回）。')) {
                     return;
                 }
-                var tpl = DEFAULT_TEMPLATES[state.lang] || '';
-                setEditorValue(tpl);
+                var tpl = litecode.editor.templateForLang(state.lang) || '';
+                litecode.editor.setEditorValue(tpl);
                 // Overwrite the draft with the default template so a
                 // future refresh doesn't re-prompt with this "stale"
                 // draft. lastSavedDraft is set so the next auto-save
@@ -2267,7 +2131,7 @@
                 if (!$('submit-btn').disabled) submit();
             });
             $('copy-code-btn').addEventListener('click', function () {
-                var code = getEditorValue();
+                var code = litecode.editor.getEditorValue();
                 if (!code) { updateDraftStatus('编辑器为空，无可复制的代码'); return; }
                 copyToClipboard(code).then(function () {
                     updateDraftStatus('已复制 ' + code.length + ' 字符到剪贴板');
@@ -2363,10 +2227,10 @@
             // load in parallel with the problem fetch — the editor
             // can finish mounting before or after the data arrives
             // without breaking anything.
-            loadCodemirror().then(function (ok) {
+            litecode.editor.loadCodemirror().then(function (ok) {
                 // Mount the editor with an empty default; it gets
                 // replaced once the problem (and its draft) loads.
-                mountEditor(DEFAULT_TEMPLATES[state.lang] || '', state.lang);
+                litecode.editor.mountEditor(litecode.editor.templateForLang(state.lang] || '', state.lang);
             });
             loadProblem();
         });
