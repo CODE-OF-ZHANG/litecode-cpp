@@ -476,7 +476,22 @@ private:
                 // a route handler that needs a custom value can call
                 // apply_security_headers(...) again or set_header(...)
                 // after this hook runs.
-                litecode::security::apply_security_headers(res);
+                //
+                // Only stamp the strict CSP (`default-src 'none'`) on API
+                // responses — those are JSON, so the browser must not load
+                // any sub-resource from them. HTML pages already declare
+                // their own CSP via the <meta> tag in web/*.html; if we
+                // also sent the strict CSP via the HTTP header here, the
+                // browser would intersect the two policies and apply the
+                // stricter one — `default-src 'none'` — which would block
+                // every script/stylesheet/fetch the SPA needs and the
+                // page would render with 0 items / "加载失败" forever.
+                // (v1.3.1 fix: this hook used to apply uniformly, which
+                // made direct :8080 access (no Caddy in front) silently
+                // break the homepage.)
+                if (req.path.rfind("/api/", 0) == 0) {
+                    litecode::security::apply_security_headers(res);
+                }
 
                 // OPTIONS preflight short-circuit. Real route handlers
                 // never see OPTIONS.

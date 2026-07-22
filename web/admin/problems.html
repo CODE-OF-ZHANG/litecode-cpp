@@ -10,7 +10,7 @@
       Admin pages don't need any extra origin beyond 'self' + cdn.jsdelivr.net.
     -->
     <meta http-equiv="Content-Security-Policy"
-          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
+          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
 
     <title>LiteCode · 题目管理</title>
 
@@ -31,6 +31,7 @@
         <header class="lc-row lc-row--between"
                 style="margin-bottom: var(--lc-space-5);">
             <div class="lc-stack-sm">
+                <p class="lc-hero__eyebrow">管 理 台 · ADMIN</p>
                 <h1>题目管理</h1>
                 <p class="lc-form-help">
                     管理题库的增删改与批量导入。删除采用软删除（题目不再公开展示，历史提交保留）。

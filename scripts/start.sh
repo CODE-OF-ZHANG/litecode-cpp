@@ -75,10 +75,11 @@ trap 'rm -rf "${TMPD}"' EXIT
 
 api() {
     local method="$1" path="$2"; shift 2
-    local token=""
+    local token="" data=""
     while [ $# -gt 0 ]; do
         case "$1" in
             -t) token="$2"; shift 2;;
+            -d) data="$2"; shift 2;;
             *) shift;;
         esac
     done
@@ -86,6 +87,9 @@ api() {
     local -a args=(-sS -X "${method}" -o "${RESP_BODY}" \
                    -w '%{http_code}' --max-time 30)
     [ -n "${token}" ] && args+=(-H "Authorization: Bearer ${token}")
+    if [ -n "${data}" ]; then
+        args+=(-H "Content-Type: application/json" --data "${data}")
+    fi
     HTTP_CODE="$(curl "${args[@]}" "${url}" 2>/dev/null)" || HTTP_CODE="000"
 }
 jqb() { jq -r "$1" "${RESP_BODY}" 2>/dev/null; }

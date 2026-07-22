@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy"
-          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
+          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
     <title>LiteCode · 注册</title>
     <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. -->
     <script src="/js/theme-boot.js"></script>
@@ -70,11 +70,11 @@
                     <span class="lc-prompt">$</span> <span class="lc-bin">./litecode</span> --register
                 </p>
 
-                <p class="lc-auth-subtitle">// mint a new user, role defaults to <code style="color: var(--a26-accent);">user</code></p>
+                <p class="lc-auth-subtitle">// 创建新用户,默认角色为 <code style="color: var(--a26-accent);">user</code></p>
 
                 <form class="lc-form" id="register-form" novalidate>
                     <div class="lc-form-row">
-                        <label for="username" class="lc-cmd-label">username <span class="lc-required">*</span></label>
+                        <label for="username" class="lc-cmd-label">用户名 <span class="lc-required">*</span></label>
                         <div class="lc-input-shell">
                             <span class="lc-input-shell__prompt" aria-hidden="true">&gt;</span>
                             <input
@@ -86,7 +86,7 @@
                                 autocapitalize="off"
                                 autocorrect="off"
                                 spellcheck="false"
-                                placeholder="alice"
+                                placeholder="请输入用户名"
                                 required
                                 minlength="3"
                                 maxlength="50"
@@ -94,12 +94,12 @@
                                 aria-describedby="username-help">
                         </div>
                         <span id="username-help" class="lc-form-help">
-                            // 3-50 chars · [A-Za-z0-9_.-] · no leading/trailing dot or dash
+                            // 3-50 个字符 · 仅支持字母、数字与 ._- · 首尾不能为点或短横
                         </span>
                     </div>
 
                     <div class="lc-form-row">
-                        <label for="email" class="lc-cmd-label">email <span style="color:var(--a26-muted);">// optional</span></label>
+                        <label for="email" class="lc-cmd-label">邮箱 <span style="color:var(--a26-muted);">// 选填</span></label>
                         <div class="lc-input-shell">
                             <span class="lc-input-shell__prompt" aria-hidden="true">&gt;</span>
                             <input
@@ -113,12 +113,12 @@
                                 aria-describedby="email-help">
                         </div>
                         <span id="email-help" class="lc-form-help">
-                            // for password recovery · optional but unique
+                            // 用于找回密码 · 选填,但不可与其他账号重复
                         </span>
                     </div>
 
                     <div class="lc-form-row">
-                        <label for="password" class="lc-cmd-label">password <span class="lc-required">*</span></label>
+                        <label for="password" class="lc-cmd-label">密码 <span class="lc-required">*</span></label>
                         <div class="lc-input-shell">
                             <span class="lc-input-shell__prompt" aria-hidden="true">&gt;</span>
                             <input
@@ -127,14 +127,14 @@
                                 name="password"
                                 class="lc-input"
                                 autocomplete="new-password"
-                                placeholder="••••••••"
+                                placeholder="请输入密码"
                                 minlength="8"
                                 maxlength="72"
                                 required
                                 aria-describedby="password-help password-strength">
                         </div>
                         <span id="password-help" class="lc-form-help">
-                            // 8-72 chars · must include 1 letter + 1 digit (bcrypt ceiling 72)
+                            // 8-72 个字符 · 至少 1 个字母 + 1 个数字(bcrypt 上限 72)
                         </span>
 
                         <div class="lc-pw-strength"
@@ -148,19 +148,19 @@
                                 <span class="lc-pw-strength-bar-fill" data-seg="3"></span>
                             </div>
                             <div class="lc-pw-strength-label" id="pw-strength-label">
-                                // enter a password
+                                // 请输入密码
                             </div>
                             <ul class="lc-pw-rules" id="pw-rules">
-                                <li class="lc-pw-rule" data-rule="length"><span class="lc-pw-rule-mark" aria-hidden="true">○</span><span>8-72 chars</span></li>
-                                <li class="lc-pw-rule" data-rule="letter"><span class="lc-pw-rule-mark" aria-hidden="true">○</span><span>1 letter</span></li>
-                                <li class="lc-pw-rule" data-rule="digit"><span class="lc-pw-rule-mark" aria-hidden="true">○</span><span>1 digit</span></li>
-                                <li class="lc-pw-rule" data-rule="match"><span class="lc-pw-rule-mark" aria-hidden="true">○</span><span>passwords match</span></li>
+                                <li class="lc-pw-rule" data-rule="length"><span class="lc-pw-rule-mark" aria-hidden="true">○</span><span>8-72 个字符</span></li>
+                                <li class="lc-pw-rule" data-rule="letter"><span class="lc-pw-rule-mark" aria-hidden="true">○</span><span>至少 1 个字母</span></li>
+                                <li class="lc-pw-rule" data-rule="digit"><span class="lc-pw-rule-mark" aria-hidden="true">○</span><span>至少 1 个数字</span></li>
+                                <li class="lc-pw-rule" data-rule="match"><span class="lc-pw-rule-mark" aria-hidden="true">○</span><span>两次输入一致</span></li>
                             </ul>
                         </div>
                     </div>
 
                     <div class="lc-form-row">
-                        <label for="password2" class="lc-cmd-label">password <span style="color:var(--a26-muted);">// again</span></label>
+                        <label for="password2" class="lc-cmd-label">确认密码 <span style="color:var(--a26-muted);">// 再输一次</span></label>
                         <div class="lc-input-shell">
                             <span class="lc-input-shell__prompt" aria-hidden="true">&gt;</span>
                             <input
@@ -169,30 +169,30 @@
                                 name="password2"
                                 class="lc-input"
                                 autocomplete="new-password"
-                                placeholder="••••••••"
+                                placeholder="再次输入密码"
                                 minlength="8"
                                 maxlength="72"
                                 required
                                 aria-describedby="password2-help">
                         </div>
                         <span id="password2-help" class="lc-pw-confirm-hint"
-                              data-state="empty">// type the password once more</span>
+                              data-state="empty">// 请再次输入密码以确认</span>
                     </div>
 
                     <div id="form-error" class="lc-form-error" role="alert" aria-live="polite"></div>
 
                     <div class="lc-form-actions">
                         <button type="submit" class="lc-cmd-submit" id="submit-btn">
-                            <span class="lc-prompt">&gt;</span> run ./register
+                            <span class="lc-prompt">&gt;</span> 运行 ./register
                         </button>
                     </div>
                 </form>
 
                 <div class="lc-auth-footer">
-                    <span>// already a user?</span>
-                    <a href="/login.html">login</a>
+                    <span>// 已有账号?</span>
+                    <a href="/login.html">立即登录</a>
                     <span class="lc-sep">·</span>
-                    <a href="/index.html">return home</a>
+                    <a href="/index.html">返回首页</a>
                 </div>
             </div>
         </section>
@@ -238,11 +238,11 @@
 
         function strengthLabel(score) {
             switch (score) {
-                case 0: return '// enter a password';
-                case 1: return '// weak · meets minimum only';
-                case 2: return '// fair · lengthen or add variety';
-                case 3: return '// good · most recommendations met';
-                case 4: return '// strong · all recommendations met';
+                case 0: return '// 请输入密码';
+                case 1: return '// 弱 · 仅满足最低要求';
+                case 2: return '// 一般 · 建议增加长度或字符种类';
+                case 3: return '// 良好 · 已满足大部分建议';
+                case 4: return '// 强 · 已满足全部建议';
                 default: return '';
             }
         }
@@ -352,14 +352,14 @@
                 var pw2 = password2El.value || '';
                 confirmHint.classList.remove('lc-pw-confirm-hint--ok','lc-pw-confirm-hint--bad');
                 if (pw2 === '') {
-                    confirmHint.textContent = '// type the password once more';
+                    confirmHint.textContent = '// 请再次输入密码以确认';
                     confirmHint.dataset.state = 'empty';
                 } else if (pw === pw2) {
-                    confirmHint.textContent = '✓ passwords match';
+                    confirmHint.textContent = '✓ 两次密码输入一致';
                     confirmHint.classList.add('lc-pw-confirm-hint--ok');
                     confirmHint.dataset.state = 'ok';
                 } else {
-                    confirmHint.textContent = '✗ passwords do not match';
+                    confirmHint.textContent = '✗ 两次密码输入不一致';
                     confirmHint.classList.add('lc-pw-confirm-hint--bad');
                     confirmHint.dataset.state = 'bad';
                 }
@@ -401,28 +401,28 @@
                 var password2 = password2El.value || '';
 
                 if (!isUsernameValid(username)) {
-                    setError('line 1: invalid identifier\nhint: 3-50 chars, [A-Za-z0-9_.-], no leading/trailing dot/dash', 'username');
+                    setError('line 1: 用户名格式不合法\n提示:3-50 个字符,仅支持字母、数字与 ._-,首尾不能为点或短横', 'username');
                     return;
                 }
                 if (!isEmailValid(email)) {
-                    setError('line 2: invalid email\nhint: format user@host.tld', 'email');
+                    setError('line 2: 邮箱格式不合法\n提示:格式应为 user@host.tld', 'email');
                     return;
                 }
                 if (!isPasswordStrongEnough(password)) {
-                    setError('line 3: password too weak\nhint: 8-72 chars, 1 letter + 1 digit', 'password');
+                    setError('line 3: 密码强度不足\n提示:8-72 个字符,至少 1 个字母 + 1 个数字', 'password');
                     return;
                 }
                 if (password !== password2) {
-                    setError('line 4: passwords do not match', 'password2');
+                    setError('line 4: 两次输入的密码不一致', 'password2');
                     return;
                 }
 
                 submit.disabled = true;
-                submit.innerHTML = '<span class="lc-prompt">~</span> minting user...';
+                submit.innerHTML = '<span class="lc-prompt">~</span> 注册中...';
 
                 litecode.api.auth.register(username, password, email || null)
                     .then(function () {
-                        litecode.toast.success('AC · welcome, ' + username);
+                        litecode.toast.success('AC · 欢迎,' + username);
                         window.location.replace(next);
                     })
                     .catch(function (err) {
@@ -430,24 +430,24 @@
                         var msg;
                         switch (err.code) {
                             case 'RATE_LIMITED':
-                                msg = 'line 0: too many attempts\nhint: wait a minute, then retry';
+                                msg = 'line 0: 尝试次数过多\n提示:请等待一分钟后重试';
                                 break;
                             case 'INVALID_INPUT':
-                                msg = err.message || 'input rejected by server';
+                                msg = err.message || '输入被服务端拒绝';
                                 if (field) { setError(msg, field); return; }
                                 break;
                             case 'CONFLICT':
                                 msg = (field === 'username')
-                                    ? 'line 1: identifier already taken\nhint: pick a different username'
+                                    ? 'line 1: 该用户名已被占用\n提示:请换一个用户名'
                                     : (field === 'email')
-                                        ? 'line 2: email already registered\nhint: use a different email or login instead'
-                                        : 'line ?: account already exists';
+                                        ? 'line 2: 该邮箱已注册\n提示:请使用其他邮箱,或直接登录'
+                                        : 'line ?: 账号已存在';
                                 break;
                             case 'INTERNAL_ERROR':
-                                msg = 'line 0: server unreachable\n' + (err.message || '');
+                                msg = 'line 0: 无法连接服务端\n' + (err.message || '');
                                 break;
                             default:
-                                msg = err.message || ('unexpected: HTTP ' + (err.status || 0));
+                                msg = err.message || ('异常:HTTP ' + (err.status || 0));
                         }
                         setError(msg, field);
                         if (err.status !== 401) {
@@ -456,7 +456,7 @@
                     })
                     .finally(function () {
                         submit.disabled = false;
-                        submit.innerHTML = '<span class="lc-prompt">&gt;</span> run ./register';
+                        submit.innerHTML = '<span class="lc-prompt">&gt;</span> 运行 ./register';
                     });
             });
         });

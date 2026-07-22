@@ -10,7 +10,7 @@
       any extra origin beyond 'self' + cdn.jsdelivr.net.
     -->
     <meta http-equiv="Content-Security-Policy"
-          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
+          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
 
     <title>LiteCode · 用户管理</title>
 
@@ -32,6 +32,7 @@
         <header class="lc-row lc-row--between"
                 style="margin-bottom: var(--lc-space-5);">
             <div class="lc-stack-sm">
+                <p class="lc-hero__eyebrow">管 理 台 · ADMIN</p>
                 <h1>用户管理</h1>
                 <p class="lc-form-help" id="header-summary">
                     浏览全部用户、调整角色与查看最近登录活动。
@@ -436,7 +437,7 @@
             ]));
 
             // Actions.
-            var me = litecode.auth.currentUser;
+            var me = litecode.api.auth.currentUser;
             var isSelf = me && me.id === id;
             var nextRole = (role === 'admin') ? 'user' : 'admin';
             var actionLabel = (role === 'admin')
@@ -603,7 +604,7 @@
         // delete-confirm.
         function onSetRole(u, nextRole) {
             if (!u || !u.id) return;
-            var me = litecode.auth.currentUser;
+            var me = litecode.api.auth.currentUser;
             if (me && me.id === u.id) {
                 litecode.toast.warn('不能修改自己的角色 — 请联系其他管理员');
                 return;

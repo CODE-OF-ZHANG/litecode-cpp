@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy"
-          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
+          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
     <title>LiteCode · 登录</title>
     <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. -->
     <script src="/js/theme-boot.js"></script>
@@ -92,11 +92,11 @@
                     <span class="lc-prompt">$</span> <span class="lc-bin">./litecode</span> --login
                 </p>
 
-                <p class="lc-auth-subtitle">// sign in to start judging</p>
+                <p class="lc-auth-subtitle">// 登录后即可开始刷题</p>
 
                 <form class="lc-form" id="login-form" novalidate>
                     <div class="lc-form-row">
-                        <label for="username" class="lc-cmd-label">username <span class="lc-required">*</span></label>
+                        <label for="username" class="lc-cmd-label">用户名 <span class="lc-required">*</span></label>
                         <div class="lc-input-shell">
                             <span class="lc-input-shell__prompt" aria-hidden="true">&gt;</span>
                             <input
@@ -108,7 +108,7 @@
                                 autocapitalize="off"
                                 autocorrect="off"
                                 spellcheck="false"
-                                placeholder="alice"
+                                placeholder="请输入用户名"
                                 required
                                 minlength="3"
                                 maxlength="50"
@@ -116,12 +116,12 @@
                                 aria-describedby="username-help">
                         </div>
                         <span id="username-help" class="lc-form-help">
-                            // 3-50 chars · [A-Za-z0-9_.-]
+                            // 3-50 个字符 · 仅支持字母、数字与 ._-
                         </span>
                     </div>
 
                     <div class="lc-form-row">
-                        <label for="password" class="lc-cmd-label">password <span class="lc-required">*</span></label>
+                        <label for="password" class="lc-cmd-label">密码 <span class="lc-required">*</span></label>
                         <div class="lc-input-shell" id="password-shell">
                             <span class="lc-input-shell__prompt" aria-hidden="true">&gt;</span>
                             <input
@@ -130,7 +130,7 @@
                                 name="password"
                                 class="lc-input"
                                 autocomplete="current-password"
-                                placeholder="••••••••"
+                                placeholder="请输入密码"
                                 required
                                 minlength="8"
                                 maxlength="72"
@@ -143,7 +143,7 @@
                                     style="border-right:0;border-left:1px solid var(--a26-border-soft);min-width:38px;cursor:pointer;">·</button>
                         </div>
                         <span id="password-help" class="lc-form-help">
-                            // 8-72 chars · case sensitive
+                            // 8-72 个字符 · 区分大小写
                         </span>
                     </div>
 
@@ -151,16 +151,16 @@
 
                     <div class="lc-form-actions">
                         <button type="submit" class="lc-cmd-submit" id="submit-btn">
-                            <span class="lc-prompt">&gt;</span> run ./login
+                            <span class="lc-prompt">&gt;</span> 运行 ./login
                         </button>
                     </div>
                 </form>
 
                 <div class="lc-auth-footer">
-                    <span>// no account?</span>
-                    <a href="/register.html">register</a>
+                    <span>// 还没有账号?</span>
+                    <a href="/register.html">立即注册</a>
                     <span class="lc-sep">·</span>
-                    <a href="/index.html">return home</a>
+                    <a href="/index.html">返回首页</a>
                 </div>
             </div>
         </section>
@@ -264,48 +264,48 @@
                 var password = passwordEl.value || '';
 
                 if (!username || !password) {
-                    setError('line 1: missing required field', username ? 'password' : 'username');
+                    setError('line 1: 缺少必填字段', username ? 'password' : 'username');
                     return;
                 }
                 if (!USERNAME_RE.test(username)) {
-                    setError('line 1: invalid identifier\nhint: 3-50 chars, [A-Za-z0-9_.-]', 'username');
+                    setError('line 1: 用户名格式不合法\n提示:3-50 个字符,仅支持字母、数字与 ._-', 'username');
                     return;
                 }
                 if (password.length < 8 || password.length > 72) {
-                    setError('line 2: invalid value\nhint: 8-72 chars required', 'password');
+                    setError('line 2: 密码格式不合法\n提示:长度需在 8-72 个字符之间', 'password');
                     return;
                 }
 
                 submit.disabled = true;
-                submit.innerHTML = '<span class="lc-prompt">~</span> running...';
+                submit.innerHTML = '<span class="lc-prompt">~</span> 登录中...';
 
                 litecode.api.auth.login(username, password)
                     .then(function (data) {
                         var uname = (data && data.user && data.user.username) || username;
-                        litecode.toast.success('AC · welcome back, ' + uname);
+                        litecode.toast.success('AC · 欢迎回来,' + uname);
                         window.location.replace(next);
                     })
                     .catch(function (err) {
                         var msg;
                         switch (err.code) {
                             case 'RATE_LIMITED':
-                                msg = 'line 0: too many attempts\nhint: wait a minute, then retry';
+                                msg = 'line 0: 尝试次数过多\n提示:请等待一分钟后重试';
                                 break;
                             case 'INVALID_INPUT':
-                                msg = err.message || 'input rejected by server';
+                                msg = err.message || '输入被服务端拒绝';
                                 if (err.details && err.details.field) {
                                     setError(msg, err.details.field);
                                     return;
                                 }
                                 break;
                             case 'UNAUTHORIZED':
-                                msg = 'line 2: rejected\nhint: invalid username or password';
+                                msg = 'line 2: 用户名或密码错误\n提示:请检查后重新输入';
                                 break;
                             case 'INTERNAL_ERROR':
-                                msg = 'line 0: server unreachable\n' + (err.message || '');
+                                msg = 'line 0: 无法连接服务端\n' + (err.message || '');
                                 break;
                             default:
-                                msg = err.message || ('unexpected: HTTP ' + (err.status || 0));
+                                msg = err.message || ('异常:HTTP ' + (err.status || 0));
                         }
                         setError(msg);
                         if (err.status !== 401) {
@@ -314,7 +314,7 @@
                     })
                     .finally(function () {
                         submit.disabled = false;
-                        submit.innerHTML = '<span class="lc-prompt">&gt;</span> run ./login';
+                        submit.innerHTML = '<span class="lc-prompt">&gt;</span> 运行 ./login';
                     });
             });
         });

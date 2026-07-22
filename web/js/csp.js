@@ -75,9 +75,29 @@
     // `style-src` mirrors `script-src` (both `self` + cdn.jsdelivr.net)
     // because problem.html ships CodeMirror's stylesheet from the
     // CDN with sha384 integrity (see STYLESHEETS below).
+    // ---- inline-script policy note ----
+    //   `script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'`
+    //   is intentionally NOT replaced with a stricter nonce/hash rule
+    //   yet. Every page ships 100-700 lines of SSR-style page-IIFE
+    //   inline (e.g. index.html's load() + renderHeroCta(), profile's
+    //   paginator, admin's editable rows). Without 'unsafe-inline'
+    //   the browser SILENTLY blocks the entire page-specific IIFE —
+    //   nav never mounts, hero CTA never fills, paginator never
+    //   fires — and the user sees a "half loaded" page with no
+    //   console error. 'unsafe-inline' here is acceptable because:
+    //     (1) No user-controlled content is reflected into an inline
+    //         <script> (the IIFE bodies are static at build time).
+    //     (2) The OTHER restrictive directives (default-src 'self',
+    //         connect-src 'self', object-src 'none', base-uri 'self',
+    //         frame-ancestors 'none') stay strict — they are the
+    //         load-bearing defences against reflected XSS → data
+    //         exfil / object-injection / base-hijack.
+    //   Future hardening: move each page-IIFE into web/js/page-*.js
+    //   and require a one-time build step to add a nonce — at which
+    //   point drop 'unsafe-inline' here AND in every HTML meta tag.
     var CSP_VALUE =
         "default-src 'self'; " +
-        "script-src 'self' https://cdn.jsdelivr.net; " +
+        "script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; " +
         "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
         "img-src 'self' data:; " +
         "font-src 'self'; " +

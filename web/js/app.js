@@ -737,13 +737,28 @@
         // boot-time gating use boot.shell({requireAdmin:true})
         // which re-uses the cached user (no extra request).
         requireAuth: function () {
-            if (!api.auth.isLoggedIn()) {
-                var next = nextUrl();
-                root.location.replace('/login.html?next=' + next);
-                return new Promise(function () {});
+            // 直接返回已登录用户 profile。
+            function proceed() {
+                return api.auth.fetchProfile().catch(function () { return null; });
             }
-            // Hydrate (or refresh) the user, then return it.
-            return api.auth.fetchProfile().catch(function () { return null; });
+            if (api.auth.isLoggedIn()) {
+                return proceed();
+            }
+            // 关键修复:access token 仅存内存,整页导航(如 login → profile)
+            // 会把它清空,于是 isLoggedIn() 恒为 false。此时若立刻跳登录页,
+            // 就会与 boot.shell() 触发的异步 /auth/refresh(读 HttpOnly
+            // cookie)赛跑并抢先重定向 → profile 永远 bounce 回 login,
+            // 登录后又整页跳转清空内存 → 死循环。
+            //   正确做法:先尝试一次 cookie 刷新,拿到 token 再放行;
+            // 只有刷新失败(无 cookie / 过期 / 撤销)才判定为未登录并跳转。
+            // api.js 的 refresh 有单飞互斥,与 boot.shell 的刷新会自动去重。
+            return api.auth.tryRefresh()
+                .then(proceed)
+                .catch(function () {
+                    var next = nextUrl();
+                    root.location.replace('/login.html?next=' + next);
+                    return new Promise(function () {});
+                });
         },
 
         requireAdmin: function () {
@@ -769,24 +784,54 @@
     //  module is a thin re-export so pages that depend on the legacy
     //  `litecode.markdown` API keep working without churn.
     //
-    //  Load order: csp.js → markdown.js → app.js. csp.js owns the
-    //  canonical page CSP value and the SRI registry; markdown.js owns
-    //  the sanitizer + allowlist. app.js doesn't reach into either —
-    //  it just hands the caller the same `litecode.markdown` object the
-    //  rest of the page already uses.
+    //  Load order: csp.js → (markdown.js) → api.js → app.js.
+    //    csp.js    owns the canonical page CSP value + SRI registry.
+    //    markdown.js owns the sanitizer + allowlist — only needed by
+    //    pages that render untrusted Markdown (problem description,
+    //    admin SPJ source, etc.). Pages that don't render Markdown
+    //    (problem list / profile / ranking / login / register / admin
+    //    dashboards) can safely skip it.
+    //    api.js / app.js don't reach into markdown.js — they just hand
+    //    the caller the same `litecode.markdown` object the rest of
+    //    the page already uses (or a no-op stub if it wasn't loaded).
     //
-    //  If a page forgets to load markdown.js, the SRI/allowlist
-    //  defaults aren't available and we throw so the misconfiguration
-    //  is loud rather than silently shipping a weakened policy.
+    //  Fail-soft policy: if a page forgot to load markdown.js we
+    //  DON'T throw at app-boot time. Throwing here used to kill the
+    //  entire IIFE for every page that didn't load it (problem list,
+    //  profile, ranking, login, register, admin dashboards — all of
+    //  which don't render Markdown), leaving the user with a blank
+    //  page where the nav never mounted, hero buttons are missing,
+    //  and the difficulty filter is a dead control. Instead we
+    //  install a no-op stub and let the page load cleanly. Pages
+    //  that DO need real Markdown (problem.html, admin/problem-edit)
+    //  already include it; if a future page adds Markdown rendering
+    //  it will get back `null` from renderSafe() and surface its own
+    //  "Markdown not loaded" error where it actually matters.
     // ────────────────────────────────────────────────────────────────────
 
     var markdown = root.litecode && root.litecode.markdown;
-    if (!markdown || typeof markdown.prewarm !== 'function' ||
-        typeof markdown.renderSafe !== 'function') {
-        throw new Error(
-            'litecode.app.js: markdown.js must be loaded before app.js ' +
-            '(defines the XSS sanitizer pipeline)'
+    var hasMarkdown = !!(markdown
+        && typeof markdown.prewarm === 'function'
+        && typeof markdown.renderSafe === 'function');
+    if (!hasMarkdown) {
+        // Quiet warning — operations folks scan console for these.
+        console.warn(
+            '[litecode] markdown.js not loaded — litecode.markdown will be a ' +
+            'no-op stub. Pages that render Markdown (problem.html, ' +
+            'admin/problem-edit) must include <script src="/js/markdown.js" ' +
+            'defer> before app.js.'
         );
+    }
+
+    // Re-export object: real Markdown pipeline if loaded, no-op stub otherwise.
+    var markdownExport = hasMarkdown ? markdown : {
+        prewarm:    function () { return Promise.resolve(false); },
+        renderSafe: function (_md) { return null; },
+        // expose a helper so callers can probe before calling renderSafe
+        isAvailable: function () { return false; },
+    };
+    if (hasMarkdown) {
+        markdownExport.isAvailable = function () { return true; };
     }
 
     // ────────────────────────────────────────────────────────────────────
@@ -834,5 +879,5 @@
     // call sites still work. The single source of truth is
     // `web/js/markdown.js` — app.js does not own a duplicate
     // implementation.
-    root.litecode.markdown = markdown;
+    root.litecode.markdown = markdownExport;
 })(window);
