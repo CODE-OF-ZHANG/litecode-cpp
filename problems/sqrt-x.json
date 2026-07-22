@@ -17,7 +17,7 @@
     {"input": "8\n", "expected_output": "2.828427\n", "judge_type": "float_eps", "float_epsilon": 0.0001},
     {"input": "9\n", "expected_output": "3.000000\n", "judge_type": "float_eps", "float_epsilon": 0.0001},
     {"input": "1000000\n", "expected_output": "1000.000000\n", "judge_type": "float_eps", "float_epsilon": 0.0001},
-    {"input": "2147483647\n", "expected_output": "46340.950001\n", "judge_type": "float_eps", "float_epsilon": 0.0001},
+    {"input": "2147483647\n", "expected_output": "46340.950001\n", "judge_type": "float_eps", "float_epsilon": 0.0001}
   ],
   "template": "#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    ios::sync_with_stdio(false);\n    cin.tie(nullptr);\n    // TODO: 实现 sqrt-x — 二分/牛顿迭代开方\n    return 0;\n}\n"
 }
