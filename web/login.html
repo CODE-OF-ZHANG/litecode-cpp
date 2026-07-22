@@ -7,177 +7,125 @@
           content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
     <title>LiteCode · 登录</title>
     <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. -->
-    <script src="/js/theme-boot.js"></script>
-    <link rel="stylesheet" href="/css/style.css">
-    <style>
-        /* Sync the .lc-auth-2026--light class with the global theme
-           immediately on first paint, so a user with light-mode
-           preference never sees a dark flash. theme-boot.js toggles
-           html.dark; we mirror that as .lc-auth-2026--light. */
-        html:not(.dark) .lc-auth-2026 { /* this selector intentionally empty
-            to keep specificity low; the actual light tokens live in
-            style.css section 10 (lc-auth-2026--light). */ }
-        html:not(.dark) .lc-auth-2026 { }
-    </style>
-    <script>
-        // Apply the --light modifier before first paint based on the
-        // theme-boot.js decision (which sets html.dark). The body
-        // class lc-auth-2026 then inherits the right tokens.
-        (function () {
-            try {
-                var t = localStorage.getItem('litecode:theme');
-                if (t !== 'dark') {
-                    document.documentElement.classList.add('lc-auth-2026--light-host');
-                }
-            } catch (_) { /* localStorage may be unavailable */ }
-        })();
-    </script>
+    <script src="/js/theme-boot.js?v=1.3.3.2"></script>
+    <link rel="stylesheet" href="/css/style.css?v=1.3.3.2">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%230B0E14'/%3E%3Ctext x='14' y='42' font-family='JetBrains Mono, monospace' font-size='28' font-weight='700' fill='%235DC9E2'%3E%26lt%3B/%3E%3C/svg%3E">
 </head>
-<body class="lc-auth-2026">
+<body>
     <!--
-      v1.2.49-a: redesigned /login.html under the "code is identity"
-      theme. Same backend endpoints, same anti-enumeration guarantees
-      (see auth_routes.h), same open-redirect guard on ?next=. Only
-      the visual layer changed.
+      v1.3.3.4 — 蓝白卡密型 auth split。
+      左侧:深蓝渐变 hero + 卖点 + 评价引用;
+      右侧:浅色背景 form card,简易输入字段。
+      API / 字段 ID 完全保留 v1.2.49-a 协议。
     -->
-    <main class="lc-auth-split">
-        <!-- ───── Left: KMP code hero ─────────────────────────────── -->
-        <section class="lc-auth-side lc-auth-side--code" aria-hidden="true">
-            <div class="lc-auth-logo" aria-label="LiteCode OJ">
-                <span class="lc-auth-logo__bracket">&gt;</span>
-                <span class="lc-auth-logo__name">LiteCode</span>
-                <span class="lc-auth-logo__sub">OJ · C++ Judge</span>
-            </div>
+    <div class="lc-v4-auth">
+        <aside class="lc-v4-auth__side">
+            <a class="lc-v4-auth__brand" href="/index.html">
+                <span>&gt;</span>
+                <span>LiteCode OJ</span>
+            </a>
 
-            <div class="lc-code-hero">
-                <div class="lc-code-hero__file"></div>
-                <div class="lc-code-hero__pane">
-<pre><span class="lc-syn-com">// KMP string matching — O(n + m)</span>
-<span class="lc-syn-com">// Never backtracks the pattern pointer.</span>
-<span class="lc-syn-kw">void</span> <span class="lc-syn-fn">kmp_search</span>(
-    <span class="lc-syn-kw">const char</span>* text, <span class="lc-syn-type">int</span> n,
-    <span class="lc-syn-kw">const char</span>* pat,  <span class="lc-syn-type">int</span> m) {
-
-    <span class="lc-syn-type">int</span> next[PAT_MAX] = {<span class="lc-syn-num">0</span>};
-    <span class="lc-syn-call">build_next</span>(pat, m, next);
-
-    <span class="lc-syn-type">int</span> j = <span class="lc-syn-num">0</span>;
-    <span class="lc-syn-kw">for</span> (<span class="lc-syn-type">int</span> i = <span class="lc-syn-num">0</span>; i &lt; n; i++) {
-        <span class="lc-syn-kw">while</span> (j &gt; <span class="lc-syn-num">0</span> &amp;&amp; text[i] != pat[j])
-            j = next[j - <span class="lc-syn-num">1</span>];
-        <span class="lc-syn-kw">if</span> (text[i] == pat[j]) j++;
-        <span class="lc-syn-kw">if</span> (j == m) {</pre>
-                </div>
-
-                <div class="lc-code-hero__status">
-                    <span><span class="lc-dot"></span>judge queue · <span class="lc-status-kw">idle</span></span>
-                    <span>warm pool · <span class="lc-status-kw">2 / 2</span></span>
-                    <span>build · <span class="lc-status-kw">ready</span></span>
-                    <span>session · <span class="lc-status-kw">guest</span></span>
-                </div>
-            </div>
-        </section>
-
-        <!-- ───── Right: form ──────────────────────────────────────── -->
-        <section class="lc-auth-side lc-auth-side--form">
-            <div class="lc-auth-form-wrap">
-                <div class="lc-auth-logo lc-auth-logo--center" aria-label="LiteCode OJ">
-                    <span class="lc-auth-logo__bracket">&gt;</span>
-                    <span class="lc-auth-logo__name">LiteCode</span>
-                    <span class="lc-auth-logo__sub">OJ</span>
-                </div>
-
-                <p class="lc-auth-heading">
-                    <span class="lc-prompt">$</span> <span class="lc-bin">./litecode</span> --login
+            <div class="lc-v4-auth__pitch">
+                <span class="lc-v4-eyebrow lc-v4-eyebrow--dark">
+                    自部署 C++ 在线判题
+                </span>
+                <h2 style="margin-top:16px;">写代码,<em>等判词</em>。</h2>
+                <p>
+                    20 道题起步 · 6 种判题模式 · Special Judge 支持 ·
+                    Docker 一键起。登录后开始刷题,提交即得反馈。
                 </p>
-
-                <p class="lc-auth-subtitle">// 登录后即可开始刷题</p>
-
-                <form class="lc-form" id="login-form" novalidate>
-                    <div class="lc-form-row">
-                        <label for="username" class="lc-cmd-label">用户名 <span class="lc-required">*</span></label>
-                        <div class="lc-input-shell">
-                            <span class="lc-input-shell__prompt" aria-hidden="true">&gt;</span>
-                            <input
-                                type="text"
-                                id="username"
-                                name="username"
-                                class="lc-input"
-                                autocomplete="username"
-                                autocapitalize="off"
-                                autocorrect="off"
-                                spellcheck="false"
-                                placeholder="请输入用户名"
-                                required
-                                minlength="3"
-                                maxlength="50"
-                                pattern="[A-Za-z0-9_.\-]+"
-                                aria-describedby="username-help">
-                        </div>
-                        <span id="username-help" class="lc-form-help">
-                            // 3-50 个字符 · 仅支持字母、数字与 ._-
-                        </span>
-                    </div>
-
-                    <div class="lc-form-row">
-                        <label for="password" class="lc-cmd-label">密码 <span class="lc-required">*</span></label>
-                        <div class="lc-input-shell" id="password-shell">
-                            <span class="lc-input-shell__prompt" aria-hidden="true">&gt;</span>
-                            <input
-                                type="password"
-                                id="password"
-                                name="password"
-                                class="lc-input"
-                                autocomplete="current-password"
-                                placeholder="请输入密码"
-                                required
-                                minlength="8"
-                                maxlength="72"
-                                aria-describedby="password-help">
-                            <button type="button"
-                                    id="password-toggle"
-                                    class="lc-input-shell__prompt"
-                                    aria-label="显示密码"
-                                    title="显示密码"
-                                    style="border-right:0;border-left:1px solid var(--a26-border-soft);min-width:38px;cursor:pointer;">·</button>
-                        </div>
-                        <span id="password-help" class="lc-form-help">
-                            // 8-72 个字符 · 区分大小写
-                        </span>
-                    </div>
-
-                    <div id="form-error" class="lc-form-error" role="alert" aria-live="polite"></div>
-
-                    <div class="lc-form-actions">
-                        <button type="submit" class="lc-cmd-submit" id="submit-btn">
-                            <span class="lc-prompt">&gt;</span> 运行 ./login
-                        </button>
-                    </div>
-                </form>
-
-                <div class="lc-auth-footer">
-                    <span>// 还没有账号?</span>
-                    <a href="/register.html">立即注册</a>
-                    <span class="lc-sep">·</span>
-                    <a href="/index.html">返回首页</a>
+                <div class="lc-v4-auth__chips">
+                    <span class="lc-v4-auth__chip">C++ / C</span>
+                    <span class="lc-v4-auth__chip">Special Judge</span>
+                    <span class="lc-v4-auth__chip">浮点容差</span>
+                    <span class="lc-v4-auth__chip">真实评测</span>
                 </div>
+                <blockquote class="lc-v4-auth__quote">
+                    把题交出去,判词马上回来 — 不是冷冰冰的 0 / 1,
+                    是哪一行过了、哪一行没过、用时多少。
+                    <span class="lc-v4-auth__quote-source">— v1.3.0 评测管道重构后</span>
+                </blockquote>
             </div>
-        </section>
-    </main>
 
-    <script src="/js/csp.js" defer></script>
-    <script src="/js/api.js" defer></script>
-    <script src="/js/app.js" defer></script>
+            <div class="lc-v4-auth__side-footer">
+                <a href="/index.html">首页</a>
+                <a href="/ranking.html">榜单</a>
+                <a href="/register.html">注册</a>
+            </div>
+        </aside>
+
+        <main class="lc-v4-auth__pane">
+            <form class="lc-v4-auth__form" id="login-form" novalidate>
+                <h1>欢迎回来</h1>
+                <p class="lc-v4-auth__form-sub">登录后即可继续刷题,提交历史自动归档。</p>
+
+                <div class="lc-v4-auth__field">
+                    <label class="lc-v4-auth__label" for="username">用户名</label>
+                    <input
+                        class="lc-v4-auth__input"
+                        type="text"
+                        id="username"
+                        name="username"
+                        autocomplete="username"
+                        autocapitalize="off"
+                        autocorrect="off"
+                        spellcheck="false"
+                        placeholder="3-50 个字符 · 仅支持字母、数字与 ._-"
+                        required
+                        minlength="3"
+                        maxlength="50"
+                        pattern="[A-Za-z0-9_.\-]+"
+                        aria-describedby="username-help">
+                    <span id="username-help" class="lc-v4-auth__field-help">
+                        这是你的标识,提交记录会出现在它下面。
+                    </span>
+                </div>
+
+                <div class="lc-v4-auth__field">
+                    <label class="lc-v4-auth__label" for="password">密码</label>
+                    <input
+                        class="lc-v4-auth__input"
+                        type="password"
+                        id="password"
+                        name="password"
+                        autocomplete="current-password"
+                        placeholder="8-72 个字符 · 区分大小写"
+                        required
+                        minlength="8"
+                        maxlength="72"
+                        aria-describedby="password-help">
+                    <span id="password-help" class="lc-v4-auth__field-help">
+                        忘记密码?目前不支持重置,请联系管理员。
+                    </span>
+                </div>
+
+                <div id="form-error" class="lc-v4-auth__err" role="alert" aria-live="polite"></div>
+
+                <button type="submit"
+                        class="lc-v4-btn lc-v4-btn--primary lc-v4-auth__submit"
+                        id="submit-btn">
+                    登录 LiteCode
+                </button>
+
+                <div class="lc-v4-auth__alt">
+                    还没有账号?<a href="/register.html">立即注册</a>
+                </div>
+            </form>
+        </main>
+    </div>
+
+    <script src="/js/csp.js?v=1.3.3.2" defer></script>
+    <script src="/js/api.js?v=1.3.3.2" defer></script>
+    <script src="/js/app.js?v=1.3.3.2" defer></script>
 
     <script>
     (function () {
         'use strict';
 
         // v1.2.49-a: same client-side validation as the legacy
-        // login.html (USERNAME_RE / open-redirect guard / message
-        // mapping). The visual layer is new; the contract is
-        // identical.
+        // login.html (USERNAME_RE / open-redirect guard). The visual
+        // layer is new in v1.3.3.4 (lc-v4-auth split); the contract
+        // is identical.
         var USERNAME_RE = /^[A-Za-z0-9_.\-]{3,50}$/;
 
         function resolveNext(rawNext) {
@@ -190,30 +138,18 @@
         }
 
         window.addEventListener('DOMContentLoaded', function () {
-            // v1.2.49-a: the v2 design doesn't use the shared nav, so
-            // guestOnly: true still bounces authed users to /, but
-            // skip the title override (the new heading shows the
-            // command line instead of "登录").
             litecode.boot.shell({ guestOnly: true });
-
-            // Sync .lc-auth-2026--light with html.dark.
-            if (!document.documentElement.classList.contains('dark')) {
-                document.body.classList.add('lc-auth-2026--light');
-            }
 
             var form       = document.getElementById('login-form');
             var submit     = document.getElementById('submit-btn');
             var errorBox   = document.getElementById('form-error');
             var usernameEl = document.getElementById('username');
             var passwordEl = document.getElementById('password');
-            var passwordShell = document.getElementById('password-shell');
-            var passwordToggle = document.getElementById('password-toggle');
 
             var next = resolveNext(
                 new URLSearchParams(window.location.search).get('next')
             );
 
-            // Auto-focus first empty required field.
             if (usernameEl && !usernameEl.value) {
                 usernameEl.focus();
             } else if (passwordEl && !passwordEl.value) {
@@ -222,35 +158,16 @@
                 usernameEl.focus();
             }
 
-            // v1.2.49-a: show / hide password toggle (decorative — the
-            // char is just "·" so the visual is consistent with the
-            // surrounding code-aesthetic, not a security-critical
-            // affordance).
-            if (passwordToggle && passwordEl) {
-                passwordToggle.addEventListener('click', function () {
-                    if (passwordEl.type === 'password') {
-                        passwordEl.type = 'text';
-                        passwordToggle.textContent = '·';
-                        passwordToggle.setAttribute('aria-label', '隐藏密码');
-                    } else {
-                        passwordEl.type = 'password';
-                        passwordToggle.textContent = '·';
-                        passwordToggle.setAttribute('aria-label', '显示密码');
-                    }
-                });
-            }
-
             function setError(msg, field) {
                 errorBox.textContent = msg || '';
-                errorBox.style.display = msg ? 'block' : 'none';
-                // Wrap each input in an error state (red border).
-                var shells = document.querySelectorAll('.lc-input-shell');
-                shells.forEach(function (s) { s.classList.remove('lc-input-shell--error'); });
+                errorBox.classList.toggle('lc-v4-auth__err--on', !!msg);
                 if (field) {
                     var target = document.getElementById(field);
                     if (target) {
-                        var shell = target.closest('.lc-input-shell');
-                        if (shell) shell.classList.add('lc-input-shell--error');
+                        target.style.borderColor = msg ? '#dc2626' : '';
+                        target.style.boxShadow    = msg
+                            ? '0 0 0 4px rgba(220, 38, 38, 0.14)'
+                            : '';
                         try { target.focus(); } catch (_) {}
                     }
                 }
@@ -264,20 +181,20 @@
                 var password = passwordEl.value || '';
 
                 if (!username || !password) {
-                    setError('line 1: 缺少必填字段', username ? 'password' : 'username');
+                    setError('缺少必填字段', username ? 'password' : 'username');
                     return;
                 }
                 if (!USERNAME_RE.test(username)) {
-                    setError('line 1: 用户名格式不合法\n提示:3-50 个字符,仅支持字母、数字与 ._-', 'username');
+                    setError('用户名格式不合法(3-50 个字符,仅支持字母、数字与 ._-)', 'username');
                     return;
                 }
                 if (password.length < 8 || password.length > 72) {
-                    setError('line 2: 密码格式不合法\n提示:长度需在 8-72 个字符之间', 'password');
+                    setError('密码长度需在 8-72 个字符之间', 'password');
                     return;
                 }
 
                 submit.disabled = true;
-                submit.innerHTML = '<span class="lc-prompt">~</span> 登录中...';
+                submit.textContent = '登录中…';
 
                 litecode.api.auth.login(username, password)
                     .then(function (data) {
@@ -289,7 +206,7 @@
                         var msg;
                         switch (err.code) {
                             case 'RATE_LIMITED':
-                                msg = 'line 0: 尝试次数过多\n提示:请等待一分钟后重试';
+                                msg = '尝试次数过多,请等待一分钟后重试';
                                 break;
                             case 'INVALID_INPUT':
                                 msg = err.message || '输入被服务端拒绝';
@@ -299,22 +216,22 @@
                                 }
                                 break;
                             case 'UNAUTHORIZED':
-                                msg = 'line 2: 用户名或密码错误\n提示:请检查后重新输入';
+                                msg = '用户名或密码错误';
                                 break;
                             case 'INTERNAL_ERROR':
-                                msg = 'line 0: 无法连接服务端\n' + (err.message || '');
+                                msg = '无法连接服务端:' + (err.message || '未知错误');
                                 break;
                             default:
                                 msg = err.message || ('异常:HTTP ' + (err.status || 0));
                         }
                         setError(msg);
                         if (err.status !== 401) {
-                            litecode.toast.error(msg.split('\n')[0]);
+                            litecode.toast.error(msg);
                         }
                     })
                     .finally(function () {
                         submit.disabled = false;
-                        submit.innerHTML = '<span class="lc-prompt">&gt;</span> 运行 ./login';
+                        submit.textContent = '登录 LiteCode';
                     });
             });
         });

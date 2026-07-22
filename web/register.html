@@ -6,210 +6,212 @@
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
     <title>LiteCode · 注册</title>
-    <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. -->
-    <script src="/js/theme-boot.js"></script>
-    <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/theme-boot.js?v=1.3.3.2"></script>
+    <link rel="stylesheet" href="/css/style.css?v=1.3.3.2">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%230B0E14'/%3E%3Ctext x='14' y='42' font-family='JetBrains Mono, monospace' font-size='28' font-weight='700' fill='%235DC9E2'%3E%26lt%3B/%3E%3C/svg%3E">
+    <style>
+        /* v4 表单本地补 — 密码强度条 + 规则列表(lc-auth-2026 没继承过来) */
+        .lc-v4-pw-strength {
+            margin-top: 8px;
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 4px;
+        }
+        .lc-v4-pw-bar {
+            height: 6px;
+            border-radius: 3px;
+            background: var(--lc-v4-slate-200);
+            transition: background 0.18s ease;
+        }
+        .lc-v4-pw-bar--on-1 { background: #f87171; }
+        .lc-v4-pw-bar--on-2 { background: #fbbf24; }
+        .lc-v4-pw-bar--on-3 { background: #34d399; }
+        .lc-v4-pw-bar--on-4 { background: #10b981; }
+        .lc-v4-pw-label {
+            grid-column: 1 / -1;
+            font-size: 12px;
+            color: var(--lc-v4-slate-500);
+            margin-top: 4px;
+            font-family: "JetBrains Mono", monospace;
+        }
+        .lc-v4-pw-rules {
+            grid-column: 1 / -1;
+            list-style: none; padding: 8px 0 0; margin: 0;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px 12px;
+        }
+        .lc-v4-pw-rule {
+            display: flex; align-items: center; gap: 6px;
+            font-size: 12px;
+            color: var(--lc-v4-slate-500);
+        }
+        .lc-v4-pw-rule__mark {
+            width: 16px; height: 16px;
+            border-radius: 50%;
+            background: var(--lc-v4-slate-100);
+            color: var(--lc-v4-slate-500);
+            font-size: 11px;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .lc-v4-pw-rule--ok .lc-v4-pw-rule__mark {
+            background: #d1fae5; color: #059669;
+        }
+    </style>
 </head>
-<body class="lc-auth-2026">
-    <!--
-      v1.2.49-a: redesigned /register.html under the "code is identity"
-      theme. Mirrors login.html's structure (50/50 split). Same backend
-      contract — username enumeration is INTENTIONALLY allowed on
-      /register (SPEC §6.3): the user picked their own username, so
-      telling them it's taken is required UX.
-    -->
-    <main class="lc-auth-split">
-        <!-- ───── Left: KMP code hero (same as login) ──────────── -->
-        <section class="lc-auth-side lc-auth-side--code" aria-hidden="true">
-            <div class="lc-auth-logo" aria-label="LiteCode OJ">
-                <span class="lc-auth-logo__bracket">&gt;</span>
-                <span class="lc-auth-logo__name">LiteCode</span>
-                <span class="lc-auth-logo__sub">OJ · C++ Judge</span>
-            </div>
+<body>
+    <div class="lc-v4-auth">
+        <aside class="lc-v4-auth__side">
+            <a class="lc-v4-auth__brand" href="/index.html">
+                <span>&gt;</span>
+                <span>LiteCode OJ</span>
+            </a>
 
-            <div class="lc-code-hero">
-                <div class="lc-code-hero__file"></div>
-                <div class="lc-code-hero__pane">
-<pre><span class="lc-syn-com">// KMP string matching — O(n + m)</span>
-<span class="lc-syn-com">// Never backtracks the pattern pointer.</span>
-<span class="lc-syn-kw">void</span> <span class="lc-syn-fn">kmp_search</span>(
-    <span class="lc-syn-kw">const char</span>* text, <span class="lc-syn-type">int</span> n,
-    <span class="lc-syn-kw">const char</span>* pat,  <span class="lc-syn-type">int</span> m) {
-
-    <span class="lc-syn-type">int</span> next[PAT_MAX] = {<span class="lc-syn-num">0</span>};
-    <span class="lc-syn-call">build_next</span>(pat, m, next);
-
-    <span class="lc-syn-type">int</span> j = <span class="lc-syn-num">0</span>;
-    <span class="lc-syn-kw">for</span> (<span class="lc-syn-type">int</span> i = <span class="lc-syn-num">0</span>; i &lt; n; i++) {
-        <span class="lc-syn-kw">while</span> (j &gt; <span class="lc-syn-num">0</span> &amp;&amp; text[i] != pat[j])
-            j = next[j - <span class="lc-syn-num">1</span>];
-        <span class="lc-syn-kw">if</span> (text[i] == pat[j]) j++;
-        <span class="lc-syn-kw">if</span> (j == m) {</pre>
-                </div>
-
-                <div class="lc-code-hero__status">
-                    <span><span class="lc-dot"></span>judge queue · <span class="lc-status-kw">idle</span></span>
-                    <span>warm pool · <span class="lc-status-kw">2 / 2</span></span>
-                    <span>build · <span class="lc-status-kw">ready</span></span>
-                    <span>session · <span class="lc-status-kw">guest</span></span>
-                </div>
-            </div>
-        </section>
-
-        <!-- ───── Right: register form ────────────────────────────── -->
-        <section class="lc-auth-side lc-auth-side--form">
-            <div class="lc-auth-form-wrap">
-                <div class="lc-auth-logo lc-auth-logo--center" aria-label="LiteCode OJ">
-                    <span class="lc-auth-logo__bracket">&gt;</span>
-                    <span class="lc-auth-logo__name">LiteCode</span>
-                    <span class="lc-auth-logo__sub">OJ</span>
-                </div>
-
-                <p class="lc-auth-heading">
-                    <span class="lc-prompt">$</span> <span class="lc-bin">./litecode</span> --register
+            <div class="lc-v4-auth__pitch">
+                <span class="lc-v4-eyebrow lc-v4-eyebrow--dark">
+                    新建账号
+                </span>
+                <h2 style="margin-top:16px;">30 秒 <em>开通</em> 刷题权限</h2>
+                <p>
+                    默认角色 user,提交即得反馈。注册免费,无任何邮箱 / 实名验证。
+                    你的提交历史会跟着账号走,卸载浏览器也不会丢。
                 </p>
-
-                <p class="lc-auth-subtitle">// 创建新用户,默认角色为 <code style="color: var(--a26-accent);">user</code></p>
-
-                <form class="lc-form" id="register-form" novalidate>
-                    <div class="lc-form-row">
-                        <label for="username" class="lc-cmd-label">用户名 <span class="lc-required">*</span></label>
-                        <div class="lc-input-shell">
-                            <span class="lc-input-shell__prompt" aria-hidden="true">&gt;</span>
-                            <input
-                                type="text"
-                                id="username"
-                                name="username"
-                                class="lc-input"
-                                autocomplete="username"
-                                autocapitalize="off"
-                                autocorrect="off"
-                                spellcheck="false"
-                                placeholder="请输入用户名"
-                                required
-                                minlength="3"
-                                maxlength="50"
-                                pattern="[A-Za-z0-9_.\-]+"
-                                aria-describedby="username-help">
-                        </div>
-                        <span id="username-help" class="lc-form-help">
-                            // 3-50 个字符 · 仅支持字母、数字与 ._- · 首尾不能为点或短横
-                        </span>
-                    </div>
-
-                    <div class="lc-form-row">
-                        <label for="email" class="lc-cmd-label">邮箱 <span style="color:var(--a26-muted);">// 选填</span></label>
-                        <div class="lc-input-shell">
-                            <span class="lc-input-shell__prompt" aria-hidden="true">&gt;</span>
-                            <input
-                                type="email"
-                                id="email"
-                                name="email"
-                                class="lc-input"
-                                autocomplete="email"
-                                placeholder="alice@example.com"
-                                maxlength="100"
-                                aria-describedby="email-help">
-                        </div>
-                        <span id="email-help" class="lc-form-help">
-                            // 用于找回密码 · 选填,但不可与其他账号重复
-                        </span>
-                    </div>
-
-                    <div class="lc-form-row">
-                        <label for="password" class="lc-cmd-label">密码 <span class="lc-required">*</span></label>
-                        <div class="lc-input-shell">
-                            <span class="lc-input-shell__prompt" aria-hidden="true">&gt;</span>
-                            <input
-                                type="password"
-                                id="password"
-                                name="password"
-                                class="lc-input"
-                                autocomplete="new-password"
-                                placeholder="请输入密码"
-                                minlength="8"
-                                maxlength="72"
-                                required
-                                aria-describedby="password-help password-strength">
-                        </div>
-                        <span id="password-help" class="lc-form-help">
-                            // 8-72 个字符 · 至少 1 个字母 + 1 个数字(bcrypt 上限 72)
-                        </span>
-
-                        <div class="lc-pw-strength"
-                             id="password-strength"
-                             aria-live="polite"
-                             aria-label="密码强度">
-                            <div class="lc-pw-strength-track" aria-hidden="true">
-                                <span class="lc-pw-strength-bar-fill" data-seg="0"></span>
-                                <span class="lc-pw-strength-bar-fill" data-seg="1"></span>
-                                <span class="lc-pw-strength-bar-fill" data-seg="2"></span>
-                                <span class="lc-pw-strength-bar-fill" data-seg="3"></span>
-                            </div>
-                            <div class="lc-pw-strength-label" id="pw-strength-label">
-                                // 请输入密码
-                            </div>
-                            <ul class="lc-pw-rules" id="pw-rules">
-                                <li class="lc-pw-rule" data-rule="length"><span class="lc-pw-rule-mark" aria-hidden="true">○</span><span>8-72 个字符</span></li>
-                                <li class="lc-pw-rule" data-rule="letter"><span class="lc-pw-rule-mark" aria-hidden="true">○</span><span>至少 1 个字母</span></li>
-                                <li class="lc-pw-rule" data-rule="digit"><span class="lc-pw-rule-mark" aria-hidden="true">○</span><span>至少 1 个数字</span></li>
-                                <li class="lc-pw-rule" data-rule="match"><span class="lc-pw-rule-mark" aria-hidden="true">○</span><span>两次输入一致</span></li>
-                            </ul>
-                        </div>
-                    </div>
-
-                    <div class="lc-form-row">
-                        <label for="password2" class="lc-cmd-label">确认密码 <span style="color:var(--a26-muted);">// 再输一次</span></label>
-                        <div class="lc-input-shell">
-                            <span class="lc-input-shell__prompt" aria-hidden="true">&gt;</span>
-                            <input
-                                type="password"
-                                id="password2"
-                                name="password2"
-                                class="lc-input"
-                                autocomplete="new-password"
-                                placeholder="再次输入密码"
-                                minlength="8"
-                                maxlength="72"
-                                required
-                                aria-describedby="password2-help">
-                        </div>
-                        <span id="password2-help" class="lc-pw-confirm-hint"
-                              data-state="empty">// 请再次输入密码以确认</span>
-                    </div>
-
-                    <div id="form-error" class="lc-form-error" role="alert" aria-live="polite"></div>
-
-                    <div class="lc-form-actions">
-                        <button type="submit" class="lc-cmd-submit" id="submit-btn">
-                            <span class="lc-prompt">&gt;</span> 运行 ./register
-                        </button>
-                    </div>
-                </form>
-
-                <div class="lc-auth-footer">
-                    <span>// 已有账号?</span>
-                    <a href="/login.html">立即登录</a>
-                    <span class="lc-sep">·</span>
-                    <a href="/index.html">返回首页</a>
+                <div class="lc-v4-auth__chips">
+                    <span class="lc-v4-auth__chip">账户自动归档</span>
+                    <span class="lc-v4-auth__chip">找回密码预留</span>
+                    <span class="lc-v4-auth__chip">5 分钟写完</span>
                 </div>
+                <blockquote class="lc-v4-auth__quote">
+                    注册送的第一个 <code>user</code> 角色,
+                    管理员可以改你的权限,权限反过来能改题、删题、批量导入。
+                    <span class="lc-v4-auth__quote-source">— v1.3.1 admin routes 接入后</span>
+                </blockquote>
             </div>
-        </section>
-    </main>
 
-    <script src="/js/csp.js" defer></script>
-    <script src="/js/api.js" defer></script>
-    <script src="/js/app.js" defer></script>
+            <div class="lc-v4-auth__side-footer">
+                <a href="/index.html">首页</a>
+                <a href="/login.html">登录</a>
+                <a href="/ranking.html">榜单</a>
+            </div>
+        </aside>
+
+        <main class="lc-v4-auth__pane">
+            <form class="lc-v4-auth__form" id="register-form" novalidate>
+                <h1>创建账号</h1>
+                <p class="lc-v4-auth__form-sub">3 步搞定,默认 <strong>user</strong> 角色 — 30 秒后即可提交第一题。</p>
+
+                <div class="lc-v4-auth__field">
+                    <label class="lc-v4-auth__label" for="username">用户名</label>
+                    <input class="lc-v4-auth__input"
+                        type="text"
+                        id="username"
+                        name="username"
+                        autocomplete="username"
+                        autocapitalize="off"
+                        autocorrect="off"
+                        spellcheck="false"
+                        placeholder="3-50 个字符 · 仅支持字母、数字与 ._-"
+                        required
+                        minlength="3"
+                        maxlength="50"
+                        pattern="[A-Za-z0-9_.\-]+"
+                        aria-describedby="username-help">
+                    <span id="username-help" class="lc-v4-auth__field-help">
+                        这是你的标识,提交记录会出现在它下面。
+                    </span>
+                </div>
+
+                <div class="lc-v4-auth__field">
+                    <label class="lc-v4-auth__label" for="email">
+                        邮箱 <span style="color: var(--lc-v4-slate-500); font-weight: 400;">// 选填</span>
+                    </label>
+                    <input class="lc-v4-auth__input"
+                        type="email"
+                        id="email"
+                        name="email"
+                        autocomplete="email"
+                        placeholder="alice@example.com"
+                        maxlength="100"
+                        aria-describedby="email-help">
+                    <span id="email-help" class="lc-v4-auth__field-help">
+                        找回密码用 — 选填,但填了就不可与他人重复。
+                    </span>
+                </div>
+
+                <div class="lc-v4-auth__field">
+                    <label class="lc-v4-auth__label" for="password">密码</label>
+                    <input class="lc-v4-auth__input"
+                        type="password"
+                        id="password"
+                        name="password"
+                        autocomplete="new-password"
+                        placeholder="8-72 个字符 · 至少 1 个字母 + 1 个数字"
+                        minlength="8"
+                        maxlength="72"
+                        required
+                        aria-describedby="password-help">
+                    <span id="password-help" class="lc-v4-auth__field-help">
+                        bcrypt 哈希后入库,密码本身不可逆 — 找回密码要走邮箱。
+                    </span>
+                    <div class="lc-v4-pw-strength" id="password-strength" aria-live="polite" aria-label="密码强度">
+                        <span class="lc-v4-pw-bar" data-seg="0"></span>
+                        <span class="lc-v4-pw-bar" data-seg="1"></span>
+                        <span class="lc-v4-pw-bar" data-seg="2"></span>
+                        <span class="lc-v4-pw-bar" data-seg="3"></span>
+                        <div class="lc-v4-pw-label" id="pw-strength-label">// 请输入密码</div>
+                        <ul class="lc-v4-pw-rules" id="pw-rules">
+                            <li class="lc-v4-pw-rule" data-rule="length"><span class="lc-v4-pw-rule__mark" aria-hidden="true">○</span><span>8-72 个字符</span></li>
+                            <li class="lc-v4-pw-rule" data-rule="letter"><span class="lc-v4-pw-rule__mark" aria-hidden="true">○</span><span>至少 1 个字母</span></li>
+                            <li class="lc-v4-pw-rule" data-rule="digit"><span class="lc-v4-pw-rule__mark" aria-hidden="true">○</span><span>至少 1 个数字</span></li>
+                            <li class="lc-v4-pw-rule" data-rule="match"><span class="lc-v4-pw-rule__mark" aria-hidden="true">○</span><span>两次输入一致</span></li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="lc-v4-auth__field">
+                    <label class="lc-v4-auth__label" for="password2">确认密码</label>
+                    <input class="lc-v4-auth__input"
+                        type="password"
+                        id="password2"
+                        name="password2"
+                        autocomplete="new-password"
+                        placeholder="再次输入密码"
+                        minlength="8"
+                        maxlength="72"
+                        required
+                        aria-describedby="password2-help">
+                    <span id="password2-help" class="lc-v4-auth__field-help">
+                        // 请再次输入密码以确认
+                    </span>
+                </div>
+
+                <div id="form-error" class="lc-v4-auth__err" role="alert" aria-live="polite"></div>
+
+                <button type="submit"
+                        class="lc-v4-btn lc-v4-btn--primary lc-v4-auth__submit"
+                        id="submit-btn">
+                    创建账号
+                </button>
+
+                <div class="lc-v4-auth__alt">
+                    已有账号?<a href="/login.html">立即登录</a>
+                </div>
+            </form>
+        </main>
+    </div>
+
+    <script src="/js/csp.js?v=1.3.3.2" defer></script>
+    <script src="/js/api.js?v=1.3.3.2" defer></script>
+    <script src="/js/app.js?v=1.3.3.2" defer></script>
 
     <script>
     (function () {
         'use strict';
 
-        // v1.2.49-a: keep the same client-side validators as the
-        // legacy register.html (USERNAME_PATTERN / EMAIL_PATTERN /
-        // PW_MIN/MAX). The visual layer is new; the contract is
-        // identical.
+        // v1.2.49-a: same client-side validators as the legacy
+        // register.html — USERNAME_PATTERN / EMAIL_PATTERN / PW_MIN/MAX.
+        // Visual layer is new in v1.3.3.4 (lc-v4-auth split); contract
+        // is identical.
         var USERNAME_PATTERN = /^[A-Za-z0-9_.\-]+$/;
         var EMAIL_PATTERN    = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         var PW_MIN = 8;
@@ -249,9 +251,6 @@
 
         window.addEventListener('DOMContentLoaded', function () {
             litecode.boot.shell({ guestOnly: true });
-            if (!document.documentElement.classList.contains('dark')) {
-                document.body.classList.add('lc-auth-2026--light');
-            }
 
             var form        = document.getElementById('register-form');
             var submit      = document.getElementById('submit-btn');
@@ -260,203 +259,149 @@
             var emailEl     = document.getElementById('email');
             var passwordEl  = document.getElementById('password');
             var password2El = document.getElementById('password2');
-            var strengthEl  = document.getElementById('password-strength');
             var strengthLabelEl = document.getElementById('pw-strength-label');
-            var confirmHint = document.getElementById('password2-help');
             var ruleEls = {
-                length: document.querySelector('.lc-pw-rule[data-rule="length"]'),
-                letter: document.querySelector('.lc-pw-rule[data-rule="letter"]'),
-                digit:  document.querySelector('.lc-pw-rule[data-rule="digit"]'),
-                match:  document.querySelector('.lc-pw-rule[data-rule="match"]'),
+                length: document.querySelector('.lc-v4-pw-rule[data-rule="length"]'),
+                letter: document.querySelector('.lc-v4-pw-rule[data-rule="letter"]'),
+                digit:  document.querySelector('.lc-v4-pw-rule[data-rule="digit"]'),
+                match:  document.querySelector('.lc-v4-pw-rule[data-rule="match"]'),
             };
 
             var next = resolveNext(
                 new URLSearchParams(window.location.search).get('next')
             );
 
-            if (usernameEl && !usernameEl.value) usernameEl.focus();
-            else if (emailEl && !emailEl.value) emailEl.focus();
-            else if (passwordEl && !passwordEl.value) passwordEl.focus();
-            else if (password2El && !password2El.value) password2El.focus();
-            else if (usernameEl) usernameEl.focus();
-
-            function isUsernameValid(u) {
-                if (!u || u.length < 3 || u.length > 50) return false;
-                if (u.charAt(0) === '.' || u.charAt(0) === '-' ||
-                    u.charAt(u.length - 1) === '.' ||
-                    u.charAt(u.length - 1) === '-') return false;
-                return USERNAME_PATTERN.test(u);
-            }
-            function isEmailValid(e) {
-                if (!e) return true;
-                if (e.length > 100) return false;
-                return EMAIL_PATTERN.test(e);
-            }
-            function isPasswordStrongEnough(p) {
-                if (!p) return false;
-                if (p.length < PW_MIN || p.length > PW_MAX) return false;
-                if (!HAS_LETTER.test(p)) return false;
-                if (!HAS_DIGIT.test(p)) return false;
-                return true;
-            }
-            function doPasswordsMatch() {
-                return passwordEl.value !== '' && passwordEl.value === password2El.value;
-            }
-
-            function renderStrength() {
-                var pw  = passwordEl.value  || '';
-                var pw2 = password2El.value || '';
-                var lengthOk = pw.length >= PW_MIN && pw.length <= PW_MAX;
-                var letterOk = pw.length > 0 && HAS_LETTER.test(pw);
-                var digitOk  = pw.length > 0 && HAS_DIGIT.test(pw);
-                var matchOk  = pw !== '' && pw === pw2;
-
-                setRule(ruleEls.length, lengthOk);
-                setRule(ruleEls.letter, letterOk);
-                setRule(ruleEls.digit,  digitOk);
-                setRule(ruleEls.match,  matchOk);
-
-                var score = scorePassword(pw);
-                var segs = strengthEl.querySelectorAll('.lc-pw-strength-bar-fill');
-                for (var i = 0; i < segs.length; i++) {
-                    if (i < score) segs[i].classList.add('lc-pw-strength-bar-fill--on');
-                    else           segs[i].classList.remove('lc-pw-strength-bar-fill--on');
-                }
-                strengthEl.classList.remove(
-                    'lc-pw-strength--empty','lc-pw-strength--weak',
-                    'lc-pw-strength--fair','lc-pw-strength--good','lc-pw-strength--strong');
-                var klass;
-                if      (score === 0) klass = 'lc-pw-strength--empty';
-                else if (score === 1) klass = 'lc-pw-strength--weak';
-                else if (score === 2) klass = 'lc-pw-strength--fair';
-                else if (score === 3) klass = 'lc-pw-strength--good';
-                else                  klass = 'lc-pw-strength--strong';
-                strengthEl.classList.add(klass);
-
-                strengthLabelEl.textContent = strengthLabel(score);
-            }
-            function setRule(el, ok) {
-                if (!el) return;
-                var mark = el.querySelector('.lc-pw-rule-mark');
-                el.classList.remove('lc-pw-rule--ok','lc-pw-rule--bad');
-                if (ok) {
-                    el.classList.add('lc-pw-rule--ok');
-                    if (mark) mark.textContent = '✓';
-                } else {
-                    el.classList.add('lc-pw-rule--bad');
-                    if (mark) mark.textContent = '○';
-                }
-            }
-            function renderConfirmHint() {
-                var pw  = passwordEl.value  || '';
-                var pw2 = password2El.value || '';
-                confirmHint.classList.remove('lc-pw-confirm-hint--ok','lc-pw-confirm-hint--bad');
-                if (pw2 === '') {
-                    confirmHint.textContent = '// 请再次输入密码以确认';
-                    confirmHint.dataset.state = 'empty';
-                } else if (pw === pw2) {
-                    confirmHint.textContent = '✓ 两次密码输入一致';
-                    confirmHint.classList.add('lc-pw-confirm-hint--ok');
-                    confirmHint.dataset.state = 'ok';
-                } else {
-                    confirmHint.textContent = '✗ 两次密码输入不一致';
-                    confirmHint.classList.add('lc-pw-confirm-hint--bad');
-                    confirmHint.dataset.state = 'bad';
-                }
-            }
-
-            passwordEl.addEventListener('input', function () {
-                renderStrength();
-                renderConfirmHint();
-            });
-            password2El.addEventListener('input', function () {
-                renderStrength();
-                renderConfirmHint();
-            });
-            renderStrength();
-            renderConfirmHint();
-
             function setError(msg, field) {
                 errorBox.textContent = msg || '';
-                errorBox.style.display = msg ? 'block' : 'none';
-                var shells = document.querySelectorAll('.lc-input-shell');
-                shells.forEach(function (s) { s.classList.remove('lc-input-shell--error'); });
+                errorBox.classList.toggle('lc-v4-auth__err--on', !!msg);
                 if (field) {
                     var target = document.getElementById(field);
                     if (target) {
-                        var shell = target.closest('.lc-input-shell');
-                        if (shell) shell.classList.add('lc-input-shell--error');
+                        target.style.borderColor = msg ? '#dc2626' : '';
+                        target.style.boxShadow    = msg
+                            ? '0 0 0 4px rgba(220, 38, 38, 0.14)'
+                            : '';
                         try { target.focus(); } catch (_) {}
                     }
                 }
             }
 
+            function paintRules() {
+                var pw  = passwordEl.value;
+                var pw2 = password2El.value;
+                var okLength = pw.length >= PW_MIN && pw.length <= PW_MAX;
+                var okLetter = HAS_LETTER.test(pw);
+                var okDigit  = HAS_DIGIT.test(pw);
+                var okMatch  = pw2.length > 0 && pw === pw2;
+
+                ruleEls.length.classList.toggle('lc-v4-pw-rule--ok', okLength);
+                ruleEls.letter.classList.toggle('lc-v4-pw-rule--ok', okLetter);
+                ruleEls.digit.classList.toggle('lc-v4-pw-rule--ok', okDigit);
+                ruleEls.match.classList.toggle('lc-v4-pw-rule--ok', okMatch);
+                [ruleEls.length, ruleEls.letter, ruleEls.digit, ruleEls.match].forEach(function (el) {
+                    var on = el.classList.contains('lc-v4-pw-rule--ok');
+                    el.querySelector('.lc-v4-pw-rule__mark').textContent = on ? '✓' : '○';
+                });
+            }
+
+            function paintStrength() {
+                var pw = passwordEl.value;
+                var score = scorePassword(pw);
+                var bars = document.querySelectorAll('.lc-v4-pw-bar');
+                bars.forEach(function (b, i) {
+                    b.classList.remove(
+                        'lc-v4-pw-bar--on-1', 'lc-v4-pw-bar--on-2',
+                        'lc-v4-pw-bar--on-3', 'lc-v4-pw-bar--on-4');
+                    if (i < score && score > 0) {
+                        b.classList.add('lc-v4-pw-bar--on-' + score);
+                    }
+                });
+                strengthLabelEl.textContent = strengthLabel(score);
+            }
+
+            if (usernameEl) usernameEl.focus();
+
+            passwordEl.addEventListener('input', function () {
+                paintStrength();
+                paintRules();
+            });
+            password2El.addEventListener('input', paintRules);
+
             form.addEventListener('submit', function (e) {
                 e.preventDefault();
                 setError('');
 
-                var username  = (usernameEl.value  || '').trim();
-                var email     = (emailEl.value     || '').trim();
-                var password  = passwordEl.value  || '';
+                var username = (usernameEl.value || '').trim();
+                var email    = (emailEl.value || '').trim();
+                var password = passwordEl.value || '';
                 var password2 = password2El.value || '';
 
-                if (!isUsernameValid(username)) {
-                    setError('line 1: 用户名格式不合法\n提示:3-50 个字符,仅支持字母、数字与 ._-,首尾不能为点或短横', 'username');
+                if (!username || !password || !password2) {
+                    setError('缺少必填字段');
                     return;
                 }
-                if (!isEmailValid(email)) {
-                    setError('line 2: 邮箱格式不合法\n提示:格式应为 user@host.tld', 'email');
+                if (!USERNAME_PATTERN.test(username) ||
+                    username.length < 3 || username.length > 50) {
+                    setError('用户名格式不合法(3-50 个字符,仅支持字母、数字与 ._-)', 'username');
                     return;
                 }
-                if (!isPasswordStrongEnough(password)) {
-                    setError('line 3: 密码强度不足\n提示:8-72 个字符,至少 1 个字母 + 1 个数字', 'password');
+                if (email && !EMAIL_PATTERN.test(email)) {
+                    setError('邮箱格式不合法', 'email');
+                    return;
+                }
+                if (password.length < PW_MIN || password.length > PW_MAX) {
+                    setError('密码长度需在 8-72 个字符之间', 'password');
+                    return;
+                }
+                if (!HAS_LETTER.test(password) || !HAS_DIGIT.test(password)) {
+                    setError('密码必须至少含 1 个字母 + 1 个数字', 'password');
                     return;
                 }
                 if (password !== password2) {
-                    setError('line 4: 两次输入的密码不一致', 'password2');
+                    setError('两次密码输入不一致', 'password2');
                     return;
                 }
 
                 submit.disabled = true;
-                submit.innerHTML = '<span class="lc-prompt">~</span> 注册中...';
+                submit.textContent = '创建中…';
 
-                litecode.api.auth.register(username, password, email || null)
+                litecode.api.auth.register(username, password, email)
                     .then(function () {
-                        litecode.toast.success('AC · 欢迎,' + username);
+                        litecode.toast.success('注册成功 · 欢迎,' + username);
                         window.location.replace(next);
                     })
                     .catch(function (err) {
-                        var field = (err.details && err.details.field) || null;
                         var msg;
                         switch (err.code) {
                             case 'RATE_LIMITED':
-                                msg = 'line 0: 尝试次数过多\n提示:请等待一分钟后重试';
+                                msg = '尝试次数过多,请稍后再试';
+                                break;
+                            case 'CONFLICT':
+                                msg = '用户名或邮箱已被使用';
+                                if (err.details && err.details.field) {
+                                    setError(msg, err.details.field);
+                                    return;
+                                }
                                 break;
                             case 'INVALID_INPUT':
                                 msg = err.message || '输入被服务端拒绝';
-                                if (field) { setError(msg, field); return; }
-                                break;
-                            case 'CONFLICT':
-                                msg = (field === 'username')
-                                    ? 'line 1: 该用户名已被占用\n提示:请换一个用户名'
-                                    : (field === 'email')
-                                        ? 'line 2: 该邮箱已注册\n提示:请使用其他邮箱,或直接登录'
-                                        : 'line ?: 账号已存在';
+                                if (err.details && err.details.field) {
+                                    setError(msg, err.details.field);
+                                    return;
+                                }
                                 break;
                             case 'INTERNAL_ERROR':
-                                msg = 'line 0: 无法连接服务端\n' + (err.message || '');
+                                msg = '无法连接服务端:' + (err.message || '未知错误');
                                 break;
                             default:
                                 msg = err.message || ('异常:HTTP ' + (err.status || 0));
                         }
-                        setError(msg, field);
-                        if (err.status !== 401) {
-                            litecode.toast.error(msg.split('\n')[0]);
-                        }
+                        setError(msg);
+                        litecode.toast.error(msg);
                     })
                     .finally(function () {
                         submit.disabled = false;
-                        submit.innerHTML = '<span class="lc-prompt">&gt;</span> 运行 ./register';
+                        submit.textContent = '创建账号';
                     });
             });
         });

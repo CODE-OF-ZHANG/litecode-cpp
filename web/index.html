@@ -32,10 +32,10 @@
       for the contract. External script keeps CSP strict (no
       'unsafe-inline' needed).
     -->
-    <script src="/js/theme-boot.js"></script>
+    <script src="/js/theme-boot.js?v=1.3.3.2"></script>
     <!-- preload 让浏览器并发抓 CSS,避免 headless screenshot 截在 CSS 到达前 -->
-    <link rel="preload" href="/css/style.css?v=20260722-1" as="style">
-    <link rel="stylesheet" href="/css/style.css?v=20260722-1">
+    <link rel="preload" href="/css/style.css?v=1.3.3.2" as="style">
+    <link rel="stylesheet" href="/css/style.css?v=1.3.3.2">
 </head>
 <body>
     <!-- Navigation slot — app.js injects the shared nav here. -->
@@ -50,163 +50,117 @@
         - 加"快速入口"四块,把 hero 视觉锤落到可点的东西上。
     -->
     <main class="lc-container">
+
         <!--
-          Hero — split layout.
-          文案区:eyebrow + 衬线大标题 + lede + 双 CTA + 元信息。
-          Stat 区:实时统计卡片 (题数 / 6 种判题 / 默认 2s / 256MB) +
-                  "今日新增"小条 + "上次更新"时间戳。
+          v1.3.3.4 — Hero 重做(蓝白卡密型):深蓝渐变 + 大字 + 浮动代码 + 右栏 sample 卡片。
+          重用 id="hero-stat-total" 保持原 JS 兼容。CTA 填充保留 #hero-cta 容器。
         -->
-        <section class="lc-hero" id="hero" aria-label="欢迎">
-            <div class="lc-hero__inner">
-                <div class="lc-hero__copy">
-                    <p class="lc-hero__eyebrow">
-                        <span class="lc-hero__dot" aria-hidden="true"></span>
-                        判 席 · JUDGE'S BENCH
-                    </p>
-                    <h2 class="lc-hero__title">写代码,<em>等判词</em>。</h2>
-                    <p class="lc-hero__lede">
-                        C++ 实战判题平台。提交 → 编译 → 跑测 → 拿到一份清晰的判词。
-                        6 种判题模式覆盖精确比对、浮点容差、行末空格忽略、大小写归一、行内多空格折叠,
-                        以及自定义 Special Judge。
+        <section class="lc-v4-hero" id="hero" aria-label="欢迎">
+            <div class="lc-v4-hero__inner">
+                <div class="lc-v4-hero__copy">
+                    <span class="lc-v4-eyebrow lc-v4-eyebrow--dark">
+                        ⌘ 自部署 C++ 在线判题
+                    </span>
+                    <h1 class="lc-v4-hero__display">
+                        写代码,<em>等判词</em>。
+                    </h1>
+                    <p class="lc-v4-hero__lede">
+                        C++ 实战判题平台。提交即编译、跑测、出判词。
+                        6 种判题模式覆盖精确比对、浮点容差、行末空格忽略、
+                        大小写归一、行内多空格折叠,以及自定义 Special Judge。
                     </p>
 
-                    <div class="lc-hero__cta" id="hero-cta">
-                        <!-- 占位:JS 根据登录态填充 (登录 / 注册 / 继续刷题 / 开始刷题) -->
+                    <div class="lc-v4-hero__cta" id="hero-cta">
+                        <!-- 占位:JS 根据登录态填充 -->
                     </div>
 
-                    <ul class="lc-hero__facts" aria-label="平台特性">
+                    <ul class="lc-v4-hero__facts" aria-label="平台特性">
                         <li>
-                            <span class="lc-hero__facts-num" id="hero-stat-total">—</span>
-                            <span class="lc-hero__facts-label">道题</span>
+                            <span class="lc-v4-hero__facts-num" id="hero-stat-total">—</span>
+                            <span class="lc-v4-hero__facts-label">道题</span>
                         </li>
                         <li>
-                            <span class="lc-hero__facts-num">6</span>
-                            <span class="lc-hero__facts-label">种判题</span>
+                            <span class="lc-v4-hero__facts-num">6</span>
+                            <span class="lc-v4-hero__facts-label">种判题</span>
                         </li>
                         <li>
-                            <span class="lc-hero__facts-num">2s</span>
-                            <span class="lc-hero__facts-label">默认时限</span>
+                            <span class="lc-v4-hero__facts-num">2s</span>
+                            <span class="lc-v4-hero__facts-label">默认时限</span>
                         </li>
                         <li>
-                            <span class="lc-hero__facts-num">256 MB</span>
-                            <span class="lc-hero__facts-label">默认内存</span>
+                            <span class="lc-v4-hero__facts-num">256 MB</span>
+                            <span class="lc-v4-hero__facts-label">默认内存</span>
                         </li>
                     </ul>
                 </div>
 
-                <aside class="lc-hero__stat" aria-label="实时数据">
-                    <div class="lc-hero__stat-card">
-                        <p class="lc-hero__stat-eyebrow">实时 · LIVE</p>
-                        <h3 class="lc-hero__stat-title">题库总览</h3>
-                        <div class="lc-hero__stat-grid">
-                            <div class="lc-hero__stat-cell">
-                                <span class="lc-hero__stat-num" id="hero-stat-problems">—</span>
-                                <span class="lc-hero__stat-label">题目总数</span>
-                            </div>
-                            <div class="lc-hero__stat-cell">
-                                <span class="lc-hero__stat-num" id="hero-stat-difficulty">—</span>
-                                <span class="lc-hero__stat-label">难度分布</span>
-                            </div>
-                            <div class="lc-hero__stat-cell">
-                                <span class="lc-hero__stat-num" id="hero-stat-judges">6</span>
-                                <span class="lc-hero__stat-label">判题模式</span>
-                            </div>
-                            <div class="lc-hero__stat-cell">
-                                <span class="lc-hero__stat-num" id="hero-stat-stack">11</span>
-                                <span class="lc-hero__stat-label">服务栈</span>
-                            </div>
-                        </div>
-                        <p class="lc-hero__stat-foot">
-                            <span class="lc-hero__dot lc-hero__dot--ok" aria-hidden="true"></span>
-                            Docker 一键起 · 自部署友好
-                        </p>
+                <aside class="lc-v4-hero__card" aria-label="实时判题示例">
+                    <div class="lc-v4-hero__card-head">
+                        <span class="lc-v4-hero__card-dot lc-v4-hero__card-dot--green" aria-hidden="true"></span>
+                        <span class="lc-v4-hero__card-title">two-sum · AC</span>
+                        <span class="lc-v4-hero__card-meta">0.18 s · 18 MB</span>
                     </div>
+<pre><span class="tok-cmt">// judge.sh / Section A · 提交样例</span>
+<span class="tok-key">int</span> n, target;
+cin <span class="tok-key">&gt;&gt;</span> n <span class="tok-key">&gt;&gt;</span> target;
+<span class="tok-cmt">// two-sum AC path</span>
+<span class="tok-key">for</span> (<span class="tok-key">int</span> i = <span class="tok-num">0</span>; i &lt; n; ++i) {
+    <span class="tok-key">int</span> x; cin <span class="tok-key">&gt;&gt;</span> x;
+    <span class="tok-cmt">// O(n) hashmap lookup</span>
+}
+cout <span class="tok-key">&lt;&lt;</span> ans <span class="tok-key">&lt;&lt;</span> endl;
+<span class="tok-cmt">// ✓ verdict: AC (12/12 cases)</span>
+</pre>
                 </aside>
             </div>
-            <!--
-              v1.3.2 — borrowed visual idea (deco-only) from
-              cpp-oj-vibecoding-teach README: 6 floating code fragments
-              behind hero content. We use raw C++ idioms (NOT copied
-              strings); z-index 0 + opacity ~0.08 so they read as
-              texture, not text. `aria-hidden` because they convey no
-              semantic info. prefers-reduced-motion hides the lot.
-            -->
-            <div class="lc-hero__code-bg" aria-hidden="true">
-                <code>#include &lt;iostream&gt;</code>
+
+            <!-- 浮动代码片段装饰(deep 蓝底上加亮版,opacity 0.32) -->
+            <div class="lc-v4-hero__code-bg" aria-hidden="true">
+                <code>#include &lt;bits/stdc++.h&gt;</code>
                 <code>using namespace std;</code>
                 <code>int main() { ... }</code>
                 <code>while (cin &gt;&gt; n) {</code>
                 <code>    // solve it</code>
-                <code>}</code>
-                <code>cout &lt;&lt; ans &lt;&lt; '\n';</code>
+                <code>cout &lt;&lt; ans;</code>
+                <code>// judge.sh expects ASCII</code>
+                <code>std::sort(v.begin(), v.end());</code>
             </div>
         </section>
 
         <!--
-          快速入口 — 4 个 chip,直接落到常用目的。
-          已登录:全部可见;未登录:第一块显示"开始刷题"(无需登录就能浏览题目)。
+          v1.3.3.4 — 6 status grid 用 v4 stat-card 风格重做。
+          hover 时浮起 + 边框着色 + 数字色更醒目,屏幕左侧外缘带颜色。
         -->
-        <nav class="lc-quick" id="quick-nav" aria-label="快速入口">
-            <a href="#problem-list" class="lc-quick__chip" data-quick="browse">
-                <span class="lc-quick__chip-ico" aria-hidden="true">▤</span>
-                <span class="lc-quick__chip-body">
-                    <span class="lc-quick__chip-title">浏览题库</span>
-                    <span class="lc-quick__chip-hint">从下方 20 道题开始</span>
-                </span>
+        <section class="lc-v4-stat-grid" aria-label="判题结果一览" style="margin: 64px 0;">
+            <a href="/?status=ac"  class="lc-v4-stat-card lc-v4-stat-card--ac">
+                <span class="lc-v4-stat-card__num">AC</span>
+                <span class="lc-v4-stat-card__label">通过</span>
+                <span class="lc-v4-stat-card__meta">12 cases · 0 fail</span>
             </a>
-            <a href="/ranking.html" class="lc-quick__chip" data-quick="ranking">
-                <span class="lc-quick__chip-ico" aria-hidden="true">★</span>
-                <span class="lc-quick__chip-body">
-                    <span class="lc-quick__chip-title">查看榜单</span>
-                    <span class="lc-quick__chip-hint">谁在刷、刷了多少</span>
-                </span>
+            <a href="/?status=wa"  class="lc-v4-stat-card lc-v4-stat-card--wa">
+                <span class="lc-v4-stat-card__num">WA</span>
+                <span class="lc-v4-stat-card__label">答案错误</span>
+                <span class="lc-v4-stat-card__meta">case-by-case diff</span>
             </a>
-            <a href="#" class="lc-quick__chip" data-quick="easy" id="quick-easy">
-                <span class="lc-quick__chip-ico" aria-hidden="true">◇</span>
-                <span class="lc-quick__chip-body">
-                    <span class="lc-quick__chip-title">只看简单</span>
-                    <span class="lc-quick__chip-hint">新手友好的入口</span>
-                </span>
+            <a href="/?status=tle" class="lc-v4-stat-card lc-v4-stat-card--tle">
+                <span class="lc-v4-stat-card__num">TLE</span>
+                <span class="lc-v4-stat-card__label">超时</span>
+                <span class="lc-v4-stat-card__meta">rejected by limit</span>
             </a>
-            <a href="/profile.html" class="lc-quick__chip" data-quick="profile" id="quick-profile">
-                <span class="lc-quick__chip-ico" aria-hidden="true">◉</span>
-                <span class="lc-quick__chip-body">
-                    <span class="lc-quick__chip-title">个人主页</span>
-                    <span class="lc-quick__chip-hint">我的提交与历史</span>
-                </span>
+            <a href="/?status=re"  class="lc-v4-stat-card lc-v4-stat-card--re">
+                <span class="lc-v4-stat-card__num">RE</span>
+                <span class="lc-v4-stat-card__label">运行错误</span>
+                <span class="lc-v4-stat-card__meta">segfault / panic</span>
             </a>
-        </nav>
-
-        <!--
-          v1.3.2 — 6 status grid: explicit visual inventory of the
-          judge verdicts the platform issues (AC / WA / TLE / RE /
-          CE / SCF). Each cell links to `/?status=X` so a logged-in
-          user can jump straight to their submissions filtered to
-          that verdict via the existing `?status=` query param.
-          SCF is reserved for SPEC §11.2 "system catastrophe" —
-          when the judge pipeline itself blew up before any sample
-          case could run. We pin it to --lc-color-judge-info
-          (pending/running) because semantically it's an infra
-          failure, not a problem-attributable verdict.
-        -->
-        <section class="lc-status-grid" aria-label="判题结果一览">
-            <a href="/?status=ac"  class="lc-status-cell lc-status-cell--ac">
-                <span class="lc-status-cell__num">AC</span><span class="lc-status-cell__label">通过</span>
+            <a href="/?status=ce"  class="lc-v4-stat-card lc-v4-stat-card--ce">
+                <span class="lc-v4-stat-card__num">CE</span>
+                <span class="lc-v4-stat-card__label">编译错误</span>
+                <span class="lc-v4-stat-card__meta">g++ stderr captured</span>
             </a>
-            <a href="/?status=wa"  class="lc-status-cell lc-status-cell--wa">
-                <span class="lc-status-cell__num">WA</span><span class="lc-status-cell__label">答案错误</span>
-            </a>
-            <a href="/?status=tle" class="lc-status-cell lc-status-cell--tle">
-                <span class="lc-status-cell__num">TLE</span><span class="lc-status-cell__label">超时</span>
-            </a>
-            <a href="/?status=re"  class="lc-status-cell lc-status-cell--re">
-                <span class="lc-status-cell__num">RE</span><span class="lc-status-cell__label">运行错误</span>
-            </a>
-            <a href="/?status=ce"  class="lc-status-cell lc-status-cell--ce">
-                <span class="lc-status-cell__num">CE</span><span class="lc-status-cell__label">编译错误</span>
-            </a>
-            <a href="/?status=scf" class="lc-status-cell lc-status-cell--scf">
-                <span class="lc-status-cell__num">SCF</span><span class="lc-status-cell__label">系统故障</span>
+            <a href="/?status=scf" class="lc-v4-stat-card lc-v4-stat-card--scf">
+                <span class="lc-v4-stat-card__num">SCF</span>
+                <span class="lc-v4-stat-card__label">系统故障</span>
+                <span class="lc-v4-stat-card__meta">infra-side failure</span>
             </a>
         </section>
 
@@ -334,50 +288,68 @@
           front-end informational blocks. Phrasing is OUR own
           (not copied); only the grid + step-card pattern is.
         -->
-        <section class="lc-usecases" aria-label="适用场景">
-            <h2 class="lc-section-title">适合谁用</h2>
-            <div class="lc-usecases__grid">
-                <article class="lc-usecase-card">
-                    <h3>初学者</h3>
-                    <p>第一次写代码?从 hello world 起步,看判题给反馈。</p>
+        <!--
+          v1.3.3.4 — Use Cases v4 card(图标 + 大字 + hover 浮起)
+        -->
+        <section class="lc-v4-section" aria-label="适用场景">
+            <div class="lc-v4-section-header">
+                <span class="lc-v4-eyebrow">适合谁用 · USE CASES</span>
+                <h2>不只是判题,是 <em>陪伴</em></h2>
+                <p>从 hello world 到算法竞赛,平台随你成长。</p>
+            </div>
+            <div class="lc-v4-usecases">
+                <article class="lc-v4-usecase">
+                    <div class="lc-v4-usecase__icon">🌱</div>
+                    <h3 class="lc-v4-usecase__title">初学者</h3>
+                    <p class="lc-v4-usecase__desc">第一次写代码?从 FizzBuzz 起步,看判题给反馈 — 不是对错,而是哪里错了。</p>
                 </article>
-                <article class="lc-usecase-card">
-                    <h3>计科学生</h3>
-                    <p>课内作业 / 数据结构练习,刷题记录自动归档。</p>
+                <article class="lc-v4-usecase">
+                    <div class="lc-v4-usecase__icon lc-v4-usecase__icon--indigo">🎓</div>
+                    <h3 class="lc-v4-usecase__title">计科学生</h3>
+                    <p class="lc-v4-usecase__desc">课内作业 / 数据结构练习,刷题记录自动归档,作业也能看清自己进步。</p>
                 </article>
-                <article class="lc-usecase-card">
-                    <h3>在线授课</h3>
-                    <p>出题 + 一键批量导入,学生提交后看到判词与耗时。</p>
+                <article class="lc-v4-usecase">
+                    <div class="lc-v4-usecase__icon lc-v4-usecase__icon--cyan">👩‍🏫</div>
+                    <h3 class="lc-v4-usecase__title">在线授课</h3>
+                    <p class="lc-v4-usecase__desc">出题 + 一键批量导入(JSON),学生提交后立刻看到判词与耗时,作业批改交给平台。</p>
                 </article>
-                <article class="lc-usecase-card">
-                    <h3>算法竞赛</h3>
-                    <p>Special Judge + 容差比较 + 行末忽略,贴近 ICPC 风格。</p>
+                <article class="lc-v4-usecase">
+                    <div class="lc-v4-usecase__icon lc-v4-usecase__icon--violet">🏆</div>
+                    <h3 class="lc-v4-usecase__title">算法竞赛</h3>
+                    <p class="lc-v4-usecase__desc">Special Judge + 浮点容差 + 行末空格 + 大小写归一 + 行内多空格折叠,贴近 ICPC 风格。</p>
                 </article>
             </div>
         </section>
 
-        <section class="lc-how" aria-label="使用流程">
-            <h2 class="lc-section-title">四步上手</h2>
-            <ol class="lc-how__steps">
-                <li class="lc-how__step">
-                    <span class="lc-how__step-num">1</span>
-                    <h3>注册</h3>
-                    <p>邮箱 + 密码,30 秒开通。</p>
+        <!--
+          v1.3.3.4 — How it works v4(数字 + 大字 + 步骤卡)
+        -->
+        <section class="lc-v4-section" aria-label="使用流程" style="background: var(--lc-v4-slate-50);">
+            <div class="lc-v4-section-header">
+                <span class="lc-v4-eyebrow">四步上手 · HOW IT WORKS</span>
+                <h2>从注册到第一次 <em>AC</em> 只要 60 秒</h2>
+                <p>不用配环境,不用 docker 文件,打开浏览器就开刷。</p>
+            </div>
+            <ol class="lc-v4-how">
+                <li class="lc-v4-how__step">
+                    <span class="lc-v4-how__num">1</span>
+                    <h3 class="lc-v4-how__title">注册账号</h3>
+                    <p class="lc-v4-how__desc">邮箱 + 密码 30 秒搞定,无需实名。</p>
                 </li>
-                <li class="lc-how__step">
-                    <span class="lc-how__step-num">2</span>
-                    <h3>选题</h3>
-                    <p>从题库挑一道,按难度筛。</p>
+                <li class="lc-v4-how__step">
+                    <span class="lc-v4-how__num">2</span>
+                    <h3 class="lc-v4-how__title">挑一道题</h3>
+                    <p class="lc-v4-how__desc">20 题起步,可按难度 + tag 筛选。</p>
                 </li>
-                <li class="lc-how__step">
-                    <span class="lc-how__step-num">3</span>
-                    <h3>写代码</h3>
-                    <p>在线编辑器,带语法高亮。</p>
+                <li class="lc-v4-how__step">
+                    <span class="lc-v4-how__num">3</span>
+                    <h3 class="lc-v4-how__title">写代码</h3>
+                    <p class="lc-v4-how__desc">浏览器内编辑器,语法高亮,自动保存。</p>
                 </li>
-                <li class="lc-how__step">
-                    <span class="lc-how__step-num">4</span>
-                    <h3>提交</h3>
-                    <p>看 AC / WA / TLE 反馈。</p>
+                <li class="lc-v4-how__step">
+                    <span class="lc-v4-how__num">4</span>
+                    <h3 class="lc-v4-how__title">提交拿判词</h3>
+                    <p class="lc-v4-how__desc">看 AC / WA / TLE 反馈 + 哪个 case 没过。</p>
                 </li>
             </ol>
         </section>
@@ -409,9 +381,9 @@
       the [data-nav] slot. `?v=20260722-1` cache-busts the cached
       old (buggy) versions on clients that previously loaded.
     -->
-    <script src="/js/csp.js?v=20260722-1" defer></script>
-    <script src="/js/api.js?v=20260722-1" defer></script>
-    <script src="/js/app.js?v=20260722-1" defer></script>
+    <script src="/js/csp.js?v=1.3.3.2" defer></script>
+    <script src="/js/api.js?v=1.3.3.2" defer></script>
+    <script src="/js/app.js?v=1.3.3.2" defer></script>
 
     <!--
       Boot sentinel — diagnostics if the framework didn't load.
