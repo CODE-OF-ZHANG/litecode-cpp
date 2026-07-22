@@ -150,6 +150,33 @@ inline std::optional<std::string> require_string(const nlohmann::json& body,
     return body[field].get<std::string>();
 }
 
+// optional_string — extract an OPTIONAL string field from the body.
+// Same shape as require_string, but absent / null → std::nullopt
+// (caller falls back to the empty/default value). Non-string when
+// present is a 400 envelope. Used by v1.3.2's `template` field.
+inline std::optional<std::string> optional_string(const nlohmann::json& body,
+                                                   httplib::Response& res,
+                                                   const char* field) {
+    if (!body.contains(field) || body[field].is_null()) {
+        return std::nullopt;
+    }
+    if (!body[field].is_string()) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   std::string("field '") + field +
+                   "' must be a string when present",
+                   {{"field", field}});
+        return std::nullopt;
+    }
+    return body[field].get<std::string>();
+}
+
+// Per SPEC §4.2 — template body is MEDIUMTEXT but the admin route
+// applies a practical 64 KB cap so a runaway copy-paste from a
+// 700-page book doesn't blow the request body. The repo accepts
+// whatever comes through; this is a request-shape guard, not a DB
+// constraint. SPJ source uses 256 KB (SPEC §4.4 — kMaxSpjSourceLenAdmin).
+inline constexpr std::size_t kMaxProblemTemplateAdmin = 64 * 1024;
+
 // require_judge_type — validate against the SPEC §4.3 ENUM. Empty
 // (absent / null) maps to "exact" to match the column DEFAULT. Any
 // non-empty value outside the enum is a 400.
@@ -552,6 +579,19 @@ inline void admin_create_problem_handler(
     if (!difficulty_v)  return;
     const auto description_v = detail::require_string(*body, res, "description");
     if (!description_v) return;
+    // v1.3.2: optional per-problem code template, capped at 64 KB.
+    // Absent / null / "" → empty row.template_, which the public
+    // detail endpoint surfaces as JSON "" and problem.html treats as
+    // "fall back to the built-in C++/C skeleton".
+    const auto template_v    = detail::optional_string(*body, res, "template");
+    if (!template_v)    return;
+    if (template_v->size() > detail::kMaxProblemTemplateAdmin) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   "template exceeds 64 KB ceiling",
+                   {{"field", "template"},
+                    {"size",  std::to_string(template_v->size())}});
+        return;
+    }
     const auto tags_v        = detail::parse_tags_array(*body, res);
     if (!tags_v)        return;
     const auto samples_v     = detail::parse_samples_array(*body, res);
@@ -562,6 +602,7 @@ inline void admin_create_problem_handler(
     row.title       = *title_v;
     row.difficulty  = *difficulty_v;
     row.description = *description_v;
+    row.template_   = *template_v;          // v1.3.2: per-problem code template
     // time_limit / memory_limit: optional in the body. The repo
     // applies the SPEC defaults (1000 / 256) when the field is 0,
     // so we leave the row at 0 when the body omitted the field.
@@ -795,6 +836,21 @@ inline void admin_update_problem_handler(
     if (!difficulty_v)  return;
     const auto description_v = detail::require_string(*body, res, "description");
     if (!description_v) return;
+    // v1.3.2: optional per-problem code template, capped at 64 KB.
+    // PUT is "full replace" — absent ⇒ "" (overwrites any previous
+    // value with the empty string). The front-end admin form always
+    // round-trips the existing template from GET /problems/:slug,
+    // so on a stable edit path the value comes back unchanged.
+    // A null template here would break the "last write wins" contract.
+    const auto template_v    = detail::optional_string(*body, res, "template");
+    if (!template_v)    return;
+    if (template_v->size() > detail::kMaxProblemTemplateAdmin) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   "template exceeds 64 KB ceiling",
+                   {{"field", "template"},
+                    {"size",  std::to_string(template_v->size())}});
+        return;
+    }
     const auto tags_v        = detail::parse_tags_array(*body, res);
     if (!tags_v)        return;
     const auto samples_v     = detail::parse_samples_array(*body, res);
@@ -805,6 +861,7 @@ inline void admin_update_problem_handler(
     patch.title       = *title_v;
     patch.difficulty  = *difficulty_v;
     patch.description = *description_v;
+    patch.template_   = *template_v;          // v1.3.2: full-replace, "" if absent
     {
         const auto t = detail::optional_int_field(
             *body, res, "time_limit_ms",

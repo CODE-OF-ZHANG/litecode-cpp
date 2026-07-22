@@ -103,12 +103,17 @@ namespace litecode {
 //  fields are std::string for safe lifetime — callers can copy, move,
 //  or store the row across async boundaries.
 //
-//  Field semantics (mirrors SPEC §4.2 + V004):
+//  Field semantics (mirrors SPEC §4.2 + V004 + V012):
 //    - id: the row's primary key; 0 ⇒ "not yet inserted"
 //    - slug: required, never empty once loaded, UNIQUE in the DB
 //    - title: required, never empty
 //    - difficulty: "easy" | "medium" | "hard" (matches the MySQL ENUM)
 //    - description: Markdown body (NOT NULL, MEDIUMTEXT in the DB)
+//    - template_ : v1.3.2 — per-problem code template (MEDIUMTEXT NULL).
+//                  problem.html injects this into the CodeMirror editor on
+//                  load; NULL/empty ⇒ fallback to the built-in C++/C
+//                  skeleton in web/js/editor.js. Routed through admin
+//                  POST/PUT and admin bulk-import as an optional field.
 //    - time_limit: ms; SPEC §2.2 default 1000
 //    - memory_limit: MB; SPEC §2.2 default 256
 //    - accepted_count, submission_count: maintenance counters; updated
@@ -128,6 +133,9 @@ struct ProblemRow {
     std::string         title;
     std::string         difficulty;         // "easy" | "medium" | "hard"
     std::string         description;       // MEDIUMTEXT (Markdown)
+    std::string         template_;         // v1.3.2: MEDIUMTEXT NULL (per-problem code template)
+                                           // C++ reserved-word shadow — the trailing underscore is
+                                           // intentional and matches the project's C++ style.
     int                 time_limit     = 1000;
     int                 memory_limit   = 256;
     int                 accepted_count = 0;
@@ -382,23 +390,43 @@ inline bool req_bool(const mysqlx::Row& row, std::size_t idx,
     }
 }
 
+// opt_string — read a possibly-NULL string column as std::optional<std::string>.
+// Returns std::nullopt when the cell is SQL NULL; throws ProblemRepoError
+// on non-string cells (mirrors req_string's contract but for nullable
+// columns — typically MEDIUMTEXT NULL). Used by v1.3.2's ProblemRow.template_;
+// raw `row[idx].get<std::string>()` throws on NULL, which would mask our
+// "fall back to editor skeleton" contract on the public detail endpoint.
+inline std::optional<std::string> opt_string(const mysqlx::Row& row,
+                                              std::size_t idx,
+                                              const char* field) {
+    try {
+        const auto& v = row[idx];
+        if (v.isNull()) return std::nullopt;
+        return v.get<std::string>();
+    } catch (const std::exception& e) {
+        throw ProblemRepoError(std::string("problem_repo: optional field '") +
+                               field + "' is not a string: " + e.what());
+    }
+}
+
 // Column order, used by every SELECT in this file. Centralized so a
 // schema change here is a one-liner.
 //
-//   0 id
-//   1 slug
-//   2 title
-//   3 difficulty
-//   4 description
-//   5 time_limit
-//   6 memory_limit
-//   7 accepted_count
-//   8 submission_count
-//   9 is_deleted
-//  10 created_at   (DATE_FORMAT'd → text)
-//  11 updated_at   (DATE_FORMAT'd → text)
+//   0  id
+//   1  slug
+//   2  title
+//   3  difficulty
+//   4  description
+//   5  template          ← v1.3.2: per-problem code template (NULL allowed MEDIUMTEXT)
+//   6  time_limit        ← was 5 before v1.3.2 (shifted by +1 after template)
+//   7  memory_limit      ← was 6
+//   8  accepted_count    ← was 7
+//   9  submission_count  ← was 8
+//  10  is_deleted        ← was 9
+//  11  created_at        (DATE_FORMAT'd → text)
+//  12  updated_at        (DATE_FORMAT'd → text)
 inline constexpr const char* kProblemSelectColumns =
-    "id, slug, title, difficulty, description, time_limit, memory_limit, "
+    "id, slug, title, difficulty, description, template, time_limit, memory_limit, "
     "accepted_count, submission_count, is_deleted, "
     "DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at, "
     "DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') AS updated_at";
@@ -410,13 +438,19 @@ inline ProblemRow row_to_problem(const mysqlx::Row& row) {
     p.title           = req_string(row, 2,  "title");
     p.difficulty      = req_string(row, 3,  "difficulty");
     p.description     = req_string(row, 4,  "description");
-    p.time_limit      = req_int   (row, 5,  "time_limit");
-    p.memory_limit    = req_int   (row, 6,  "memory_limit");
-    p.accepted_count  = req_int   (row, 7,  "accepted_count");
-    p.submission_count= req_int   (row, 8,  "submission_count");
-    p.is_deleted      = req_bool  (row, 9,  "is_deleted");
-    p.created_at      = req_string(row, 10, "created_at");
-    p.updated_at      = req_string(row, 11, "updated_at");
+    {
+        // v1.3.2: nullable MEDIUMTEXT — opt_string returns std::nullopt on SQL
+        // NULL; we coalesce to empty so the editor skeleton fallback runs.
+        auto opt_t = detail::opt_string(row, 5, "template");
+        p.template_ = opt_t.value_or(std::string());
+    }
+    p.time_limit      = req_int   (row, 6,  "time_limit");
+    p.memory_limit    = req_int   (row, 7,  "memory_limit");
+    p.accepted_count  = req_int   (row, 8,  "accepted_count");
+    p.submission_count= req_int   (row, 9,  "submission_count");
+    p.is_deleted      = req_bool  (row, 10, "is_deleted");
+    p.created_at      = req_string(row, 11, "created_at");
+    p.updated_at      = req_string(row, 12, "updated_at");
     return p;
 }
 
@@ -480,12 +514,13 @@ inline int create(ConnectionPool& pool, const ProblemRow& row) {
     try {
         auto rs = conn.execute(
             "INSERT INTO problems "
-            "(slug, title, difficulty, description, time_limit, memory_limit) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "(slug, title, difficulty, description, template, time_limit, memory_limit) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             row.slug,
             row.title,
             row.difficulty,
             row.description,
+            row.template_,          // v1.3.2: MEDIUMTEXT NULL — empty string is fine
             time_limit,
             memory_limit);
         // mysqlx surfaces the auto-increment value via getAutoIncrement().
@@ -621,12 +656,13 @@ inline bool update(ConnectionPool& pool,
         auto rs = conn.execute(
             "UPDATE problems "
             "SET slug = ?, title = ?, difficulty = ?, description = ?, "
-            "    time_limit = ?, memory_limit = ? "
+            "    template = ?, time_limit = ?, memory_limit = ? "
             "WHERE slug = ? AND is_deleted = FALSE",
             patch.slug,
             patch.title,
             patch.difficulty,
             patch.description,
+            patch.template_,         // v1.3.2: per-problem code template
             patch.time_limit,
             patch.memory_limit,
             std::string(current_slug));
@@ -750,12 +786,13 @@ inline UpsertResult upsert(ConnectionPool& pool, const ProblemRow& row) {
     try {
         auto rs = conn.execute(
             "INSERT INTO problems "
-            "(slug, title, difficulty, description, time_limit, memory_limit) "
-            "VALUES (?, ?, ?, ?, ?, ?) "
+            "(slug, title, difficulty, description, template, time_limit, memory_limit) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
             "ON DUPLICATE KEY UPDATE "
             "title = VALUES(title), "
             "difficulty = VALUES(difficulty), "
             "description = VALUES(description), "
+            "template = VALUES(template), "
             "time_limit = VALUES(time_limit), "
             "memory_limit = VALUES(memory_limit), "
             "is_deleted = FALSE, "
@@ -764,6 +801,7 @@ inline UpsertResult upsert(ConnectionPool& pool, const ProblemRow& row) {
             row.title,
             row.difficulty,
             row.description,
+            row.template_,          // v1.3.2: per-problem code template
             time_limit,
             memory_limit);
         // Disambiguate created vs overwritten via the affected-rows

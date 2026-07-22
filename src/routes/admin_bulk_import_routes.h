@@ -346,6 +346,41 @@ inline std::optional<int> optional_int_field(const nlohmann::json& body,
     return v;
 }
 
+// optional_string_field — extract an optional string field with a
+// size guard. Absent / null → std::nullopt (caller writes no
+// override / column NULL). Present-and-malformed → fills failure and
+// returns std::nullopt. Mirrors optional_int_field's contract but
+// for free-form body text. Used by v1.3.2's per-problem `template`
+// field (capped at 64 KB to match admin_problem_routes.h's
+// kMaxProblemTemplateAdmin; SPJ source uses a different ceiling).
+inline std::optional<std::string> optional_string_field(
+        const nlohmann::json& body,
+        ImportFileResult& failure,
+        const char* field,
+        std::size_t max_size) {
+    if (!body.contains(field) || body[field].is_null()) {
+        return std::nullopt;
+    }
+    if (!body[field].is_string()) {
+        failure.stage   = "validate";
+        failure.reason  = std::string("field '") + field +
+                          "' must be a string when present";
+        failure.details = {{"field", field}};
+        return std::nullopt;
+    }
+    const std::string v = body[field].get<std::string>();
+    if (v.size() > max_size) {
+        failure.stage   = "validate";
+        failure.reason  = std::string("field '") + field +
+                          "' exceeds max size of " +
+                          std::to_string(max_size) + " bytes";
+        failure.details = {{"field", field},
+                           {"size",  std::to_string(v.size())}};
+        return std::nullopt;
+    }
+    return v;
+}
+
 // parse_tags_array — optional, defaults to []. Each entry must be
 // a non-empty string (1..50 chars after trimming). Bad shapes fill
 // `failure` and return std::nullopt. Returns the trimmed canonical
@@ -685,6 +720,14 @@ inline ImportFileResult process_one_file(ConnectionPool& pool,
     if (!difficulty_v) { result.slug = *slug_v; return result; }
     const auto description_v = require_description (body, result);
     if (!description_v) { result.slug = *slug_v; return result; }
+    // v1.3.2: per-problem code template (optional, capped 64 KB).
+    // Absent → nullopt → row.template_ stays ""; import lands the
+    // empty string into MEDIUMTEXT, which the public detail endpoint
+    // surfaces as JSON "" and problem.html treats as "fall back to
+    // the built-in skeleton".
+    const auto template_v    = optional_string_field(
+        body, result, "template", 64 * 1024);
+    if (!template_v) { result.slug = *slug_v; return result; }
     const auto tags_v        = parse_tags_array    (body, result);
     if (!tags_v) { result.slug = *slug_v; return result; }
     const auto samples_v     = parse_samples_array (body, result);
@@ -697,6 +740,7 @@ inline ImportFileResult process_one_file(ConnectionPool& pool,
     row.title       = *title_v;
     row.difficulty  = *difficulty_v;
     row.description = *description_v;
+    row.template_   = *template_v;       // v1.3.2: per-problem code template
     // optional_int_field returns std::nullopt in TWO cases:
     //   (1) field is absent / null → no value (use SPEC defaults);
     //   (2) field is present but malformed → 400-equivalent failure.

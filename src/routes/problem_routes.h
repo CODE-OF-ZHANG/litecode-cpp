@@ -500,6 +500,7 @@ inline nlohmann::json serialize_problem_detail(
         {"title",              p.title},
         {"difficulty",         p.difficulty},
         {"description",        p.description},
+        {"template",           p.template_},     // v1.3.2: per-problem code template
         {"time_limit",         p.time_limit},
         {"memory_limit",       p.memory_limit},
         {"accepted_count",     p.accepted_count},
