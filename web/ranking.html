@@ -9,7 +9,7 @@
       Canonical CSP pinned in `web/js/csp.js` (single source of truth).
     -->
     <meta http-equiv="Content-Security-Policy"
-          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
+          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
 
     <title>LiteCode · 排行榜</title>
 
@@ -42,9 +42,16 @@
     <div data-nav></div>
 
     <main class="lc-container">
-        <header class="lc-stack" style="margin-bottom: 20px;">
-            <h1>排行榜</h1>
-            <p class="lc-form-help" id="subtitle" aria-live="polite">按解题数排名，通过率为辅助排序。</p>
+        <header class="lc-stack" style="margin-bottom: var(--lc-space-6);">
+            <p class="lc-hero__eyebrow">排 行 · RANKING</p>
+            <h1 class="lc-hero__title" style="font-family: var(--lc-font-display);
+                                              font-size: var(--lc-font-size-3xl);
+                                              font-weight: 600;
+                                              margin: 0 0 var(--lc-space-3);
+                                              letter-spacing: -0.01em;">
+                排行榜
+            </h1>
+            <p class="lc-form-help" id="subtitle" aria-live="polite">按解题数排名,通过率为辅助排序。</p>
         </header>
 
         <!-- Loading -->

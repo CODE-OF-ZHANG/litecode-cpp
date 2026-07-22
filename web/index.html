@@ -11,9 +11,16 @@
       from Caddyfile, intersectionally. csp.js runtime-checks this
       tag against its expected value at load — if a future edit
       drifts, the browser console logs a clear error.
+
+      v1.3.1+ frontend-polish: cache-busting `?v=` query on all script
+      tags. Bump after any deploy that changes api.js / app.js / csp.js
+      so old browsers can't serve the cached buggy version.
     -->
     <meta http-equiv="Content-Security-Policy"
-          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
+          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
+
+    <meta name="description" content="LiteCode · 自部署 C++ 在线判题平台。20 道题 · 6 种判题模式 · Special Judge 支持 · Docker 一键起。">
+    <meta name="theme-color" content="#1f4ed8">
 
     <title>LiteCode · 题库</title>
 
@@ -26,16 +33,194 @@
       'unsafe-inline' needed).
     -->
     <script src="/js/theme-boot.js"></script>
-    <link rel="stylesheet" href="/css/style.css">
+    <!-- preload 让浏览器并发抓 CSS,避免 headless screenshot 截在 CSS 到达前 -->
+    <link rel="preload" href="/css/style.css?v=20260722-1" as="style">
+    <link rel="stylesheet" href="/css/style.css?v=20260722-1">
 </head>
 <body>
     <!-- Navigation slot — app.js injects the shared nav here. -->
     <div data-nav></div>
 
+    <!--
+      v1.3.1+ · frontend-design pass:
+        - Hero 用 split layout (文案左 / stat 卡片右),
+          桌面 grid-template-columns 1.05fr 0.95fr,移动端单列堆叠。
+        - 装饰元素用 ::before / ::after (单元素、双图层),不靠位图。
+        - CTA 直接锚到 #problem-list,不再把用户迷在 hero。
+        - 加"快速入口"四块,把 hero 视觉锤落到可点的东西上。
+    -->
     <main class="lc-container">
-        <header class="lc-stack" style="margin-bottom: var(--lc-space-5);">
-            <h1>题库</h1>
-            <p class="lc-form-help">浏览所有已发布题目；登录后可提交代码。</p>
+        <!--
+          Hero — split layout.
+          文案区:eyebrow + 衬线大标题 + lede + 双 CTA + 元信息。
+          Stat 区:实时统计卡片 (题数 / 6 种判题 / 默认 2s / 256MB) +
+                  "今日新增"小条 + "上次更新"时间戳。
+        -->
+        <section class="lc-hero" id="hero" aria-label="欢迎">
+            <div class="lc-hero__inner">
+                <div class="lc-hero__copy">
+                    <p class="lc-hero__eyebrow">
+                        <span class="lc-hero__dot" aria-hidden="true"></span>
+                        判 席 · JUDGE'S BENCH
+                    </p>
+                    <h2 class="lc-hero__title">写代码,<em>等判词</em>。</h2>
+                    <p class="lc-hero__lede">
+                        C++ 实战判题平台。提交 → 编译 → 跑测 → 拿到一份清晰的判词。
+                        6 种判题模式覆盖精确比对、浮点容差、行末空格忽略、大小写归一、行内多空格折叠,
+                        以及自定义 Special Judge。
+                    </p>
+
+                    <div class="lc-hero__cta" id="hero-cta">
+                        <!-- 占位:JS 根据登录态填充 (登录 / 注册 / 继续刷题 / 开始刷题) -->
+                    </div>
+
+                    <ul class="lc-hero__facts" aria-label="平台特性">
+                        <li>
+                            <span class="lc-hero__facts-num" id="hero-stat-total">—</span>
+                            <span class="lc-hero__facts-label">道题</span>
+                        </li>
+                        <li>
+                            <span class="lc-hero__facts-num">6</span>
+                            <span class="lc-hero__facts-label">种判题</span>
+                        </li>
+                        <li>
+                            <span class="lc-hero__facts-num">2s</span>
+                            <span class="lc-hero__facts-label">默认时限</span>
+                        </li>
+                        <li>
+                            <span class="lc-hero__facts-num">256 MB</span>
+                            <span class="lc-hero__facts-label">默认内存</span>
+                        </li>
+                    </ul>
+                </div>
+
+                <aside class="lc-hero__stat" aria-label="实时数据">
+                    <div class="lc-hero__stat-card">
+                        <p class="lc-hero__stat-eyebrow">实时 · LIVE</p>
+                        <h3 class="lc-hero__stat-title">题库总览</h3>
+                        <div class="lc-hero__stat-grid">
+                            <div class="lc-hero__stat-cell">
+                                <span class="lc-hero__stat-num" id="hero-stat-problems">—</span>
+                                <span class="lc-hero__stat-label">题目总数</span>
+                            </div>
+                            <div class="lc-hero__stat-cell">
+                                <span class="lc-hero__stat-num" id="hero-stat-difficulty">—</span>
+                                <span class="lc-hero__stat-label">难度分布</span>
+                            </div>
+                            <div class="lc-hero__stat-cell">
+                                <span class="lc-hero__stat-num" id="hero-stat-judges">6</span>
+                                <span class="lc-hero__stat-label">判题模式</span>
+                            </div>
+                            <div class="lc-hero__stat-cell">
+                                <span class="lc-hero__stat-num" id="hero-stat-stack">11</span>
+                                <span class="lc-hero__stat-label">服务栈</span>
+                            </div>
+                        </div>
+                        <p class="lc-hero__stat-foot">
+                            <span class="lc-hero__dot lc-hero__dot--ok" aria-hidden="true"></span>
+                            Docker 一键起 · 自部署友好
+                        </p>
+                    </div>
+                </aside>
+            </div>
+            <!--
+              v1.3.2 — borrowed visual idea (deco-only) from
+              cpp-oj-vibecoding-teach README: 6 floating code fragments
+              behind hero content. We use raw C++ idioms (NOT copied
+              strings); z-index 0 + opacity ~0.08 so they read as
+              texture, not text. `aria-hidden` because they convey no
+              semantic info. prefers-reduced-motion hides the lot.
+            -->
+            <div class="lc-hero__code-bg" aria-hidden="true">
+                <code>#include &lt;iostream&gt;</code>
+                <code>using namespace std;</code>
+                <code>int main() { ... }</code>
+                <code>while (cin &gt;&gt; n) {</code>
+                <code>    // solve it</code>
+                <code>}</code>
+                <code>cout &lt;&lt; ans &lt;&lt; '\n';</code>
+            </div>
+        </section>
+
+        <!--
+          快速入口 — 4 个 chip,直接落到常用目的。
+          已登录:全部可见;未登录:第一块显示"开始刷题"(无需登录就能浏览题目)。
+        -->
+        <nav class="lc-quick" id="quick-nav" aria-label="快速入口">
+            <a href="#problem-list" class="lc-quick__chip" data-quick="browse">
+                <span class="lc-quick__chip-ico" aria-hidden="true">▤</span>
+                <span class="lc-quick__chip-body">
+                    <span class="lc-quick__chip-title">浏览题库</span>
+                    <span class="lc-quick__chip-hint">从下方 20 道题开始</span>
+                </span>
+            </a>
+            <a href="/ranking.html" class="lc-quick__chip" data-quick="ranking">
+                <span class="lc-quick__chip-ico" aria-hidden="true">★</span>
+                <span class="lc-quick__chip-body">
+                    <span class="lc-quick__chip-title">查看榜单</span>
+                    <span class="lc-quick__chip-hint">谁在刷、刷了多少</span>
+                </span>
+            </a>
+            <a href="#" class="lc-quick__chip" data-quick="easy" id="quick-easy">
+                <span class="lc-quick__chip-ico" aria-hidden="true">◇</span>
+                <span class="lc-quick__chip-body">
+                    <span class="lc-quick__chip-title">只看简单</span>
+                    <span class="lc-quick__chip-hint">新手友好的入口</span>
+                </span>
+            </a>
+            <a href="/profile.html" class="lc-quick__chip" data-quick="profile" id="quick-profile">
+                <span class="lc-quick__chip-ico" aria-hidden="true">◉</span>
+                <span class="lc-quick__chip-body">
+                    <span class="lc-quick__chip-title">个人主页</span>
+                    <span class="lc-quick__chip-hint">我的提交与历史</span>
+                </span>
+            </a>
+        </nav>
+
+        <!--
+          v1.3.2 — 6 status grid: explicit visual inventory of the
+          judge verdicts the platform issues (AC / WA / TLE / RE /
+          CE / SCF). Each cell links to `/?status=X` so a logged-in
+          user can jump straight to their submissions filtered to
+          that verdict via the existing `?status=` query param.
+          SCF is reserved for SPEC §11.2 "system catastrophe" —
+          when the judge pipeline itself blew up before any sample
+          case could run. We pin it to --lc-color-judge-info
+          (pending/running) because semantically it's an infra
+          failure, not a problem-attributable verdict.
+        -->
+        <section class="lc-status-grid" aria-label="判题结果一览">
+            <a href="/?status=ac"  class="lc-status-cell lc-status-cell--ac">
+                <span class="lc-status-cell__num">AC</span><span class="lc-status-cell__label">通过</span>
+            </a>
+            <a href="/?status=wa"  class="lc-status-cell lc-status-cell--wa">
+                <span class="lc-status-cell__num">WA</span><span class="lc-status-cell__label">答案错误</span>
+            </a>
+            <a href="/?status=tle" class="lc-status-cell lc-status-cell--tle">
+                <span class="lc-status-cell__num">TLE</span><span class="lc-status-cell__label">超时</span>
+            </a>
+            <a href="/?status=re"  class="lc-status-cell lc-status-cell--re">
+                <span class="lc-status-cell__num">RE</span><span class="lc-status-cell__label">运行错误</span>
+            </a>
+            <a href="/?status=ce"  class="lc-status-cell lc-status-cell--ce">
+                <span class="lc-status-cell__num">CE</span><span class="lc-status-cell__label">编译错误</span>
+            </a>
+            <a href="/?status=scf" class="lc-status-cell lc-status-cell--scf">
+                <span class="lc-status-cell__num">SCF</span><span class="lc-status-cell__label">系统故障</span>
+            </a>
+        </section>
+
+        <header class="lc-stack lc-section-head">
+            <div>
+                <h1>题库</h1>
+                <p class="lc-form-help">浏览所有已发布题目;登录后可提交代码。</p>
+            </div>
+            <button type="button"
+                    class="lc-btn lc-btn--ghost lc-btn--sm"
+                    id="retry-btn-top"
+                    aria-label="刷新题库">
+                <span aria-hidden="true">↻</span> 刷新
+            </button>
         </header>
 
         <!--
@@ -95,8 +280,30 @@
         </section>
 
         <!-- Result list / states. Exactly one of these is visible at a time. -->
-        <section class="lc-stack-lg" aria-label="题目列表">
-            <div class="lc-problem-list" id="problem-list" role="list"></div>
+        <section class="lc-stack-lg" id="problem-list-wrap" aria-label="题目列表">
+            <div class="lc-problem-list" id="problem-list" role="list">
+                <!--
+                  Server-rendered skeleton hint — visible only while JS is
+                  still loading OR if the JS bundle fails entirely. Once
+                  `litecode.api` is defined, renderRows() replaces this
+                  with the real list or hides it (showing empty/error).
+                  Purpose: even with broken JS, users can SEE that there
+                  ARE problems below the fold — and the visible anchor
+                  `id="problem-list"` lets the "浏览题库" chip jump here
+                  before renderRows finishes.
+                -->
+                <div class="lc-problem-row lc-problem-row--skeleton" aria-hidden="true">
+                    <div class="lc-problem-row__main">
+                        <div class="lc-problem-row__head">
+                            <span class="lc-pill">…</span>
+                            <span class="lc-problem-row__title">正在加载题库…</span>
+                        </div>
+                    </div>
+                    <div class="lc-problem-row__meta">
+                        <span class="lc-problem-row__metric">— / —</span>
+                    </div>
+                </div>
+            </div>
 
             <div class="lc-empty" id="empty-state" hidden>
                 <p class="lc-empty__title">没有符合条件的题目</p>
@@ -119,7 +326,77 @@
             <nav class="lc-pagination" id="pagination"
                  aria-label="分页" hidden></nav>
         </section>
+
+        <!--
+          v1.3.2 — "适合谁用" + "四步上手" sections (borrowed
+          structural idea from cpp-oj-vibecoding-teach README:
+          Use Cases 2x2 + How-it-works 4 列). Server-less, pure
+          front-end informational blocks. Phrasing is OUR own
+          (not copied); only the grid + step-card pattern is.
+        -->
+        <section class="lc-usecases" aria-label="适用场景">
+            <h2 class="lc-section-title">适合谁用</h2>
+            <div class="lc-usecases__grid">
+                <article class="lc-usecase-card">
+                    <h3>初学者</h3>
+                    <p>第一次写代码?从 hello world 起步,看判题给反馈。</p>
+                </article>
+                <article class="lc-usecase-card">
+                    <h3>计科学生</h3>
+                    <p>课内作业 / 数据结构练习,刷题记录自动归档。</p>
+                </article>
+                <article class="lc-usecase-card">
+                    <h3>在线授课</h3>
+                    <p>出题 + 一键批量导入,学生提交后看到判词与耗时。</p>
+                </article>
+                <article class="lc-usecase-card">
+                    <h3>算法竞赛</h3>
+                    <p>Special Judge + 容差比较 + 行末忽略,贴近 ICPC 风格。</p>
+                </article>
+            </div>
+        </section>
+
+        <section class="lc-how" aria-label="使用流程">
+            <h2 class="lc-section-title">四步上手</h2>
+            <ol class="lc-how__steps">
+                <li class="lc-how__step">
+                    <span class="lc-how__step-num">1</span>
+                    <h3>注册</h3>
+                    <p>邮箱 + 密码,30 秒开通。</p>
+                </li>
+                <li class="lc-how__step">
+                    <span class="lc-how__step-num">2</span>
+                    <h3>选题</h3>
+                    <p>从题库挑一道,按难度筛。</p>
+                </li>
+                <li class="lc-how__step">
+                    <span class="lc-how__step-num">3</span>
+                    <h3>写代码</h3>
+                    <p>在线编辑器,带语法高亮。</p>
+                </li>
+                <li class="lc-how__step">
+                    <span class="lc-how__step-num">4</span>
+                    <h3>提交</h3>
+                    <p>看 AC / WA / TLE 反馈。</p>
+                </li>
+            </ol>
+        </section>
     </main>
+
+    <!--
+      No-JS fallback — shown when the browser has scripts disabled.
+      Without this the user sees the skeleton hint and nothing else,
+      which looks like the page is broken. Lists the basics so they
+      know what to do (enable JS, or browse problem slugs directly).
+    -->
+    <noscript>
+        <div style="max-width:680px;margin:32px auto;padding:16px;border:1px solid #d33;border-radius:8px;color:#222;background:#fff8f8;font:14px/1.5 system-ui;">
+            <strong>LiteCode 需要 JavaScript 才能加载题目。</strong>
+            请在浏览器启用脚本后刷新本页。如需离线查看,直接访问
+            <a href="/problems">/problems</a> API 或
+            <a href="/api/v1/problems">/api/v1/problems</a>。
+        </div>
+    </noscript>
 
     <!--
       Frontend framework — load order is mandatory:
@@ -129,11 +406,46 @@
                   on both above; markdown loader reads integrity hashes
                   from litecode.csp.SCRIPTS)
       All script tags use `defer` so none runs until the DOM has parsed
-      the [data-nav] slot.
+      the [data-nav] slot. `?v=20260722-1` cache-busts the cached
+      old (buggy) versions on clients that previously loaded.
     -->
-    <script src="/js/csp.js" defer></script>
-    <script src="/js/api.js" defer></script>
-    <script src="/js/app.js" defer></script>
+    <script src="/js/csp.js?v=20260722-1" defer></script>
+    <script src="/js/api.js?v=20260722-1" defer></script>
+    <script src="/js/app.js?v=20260722-1" defer></script>
+
+    <!--
+      Boot sentinel — diagnostics if the framework didn't load.
+      Runs at parse time (synchronous, no defer). If litecode.api
+      isn't defined after a microtask tick, surface a friendly
+      banner asking the user to hard-refresh. Belt-and-braces
+      defense against stale cached JS from older deploys.
+    -->
+    <script>
+    (function () {
+        function check() {
+            if (!window.litecode || !window.litecode.api) {
+                var b = document.createElement('div');
+                b.setAttribute('role', 'alert');
+                b.style.cssText = 'position:fixed;left:16px;right:16px;top:16px;z-index:9999;'
+                    + 'padding:12px 16px;border:1px solid #d33;border-radius:8px;'
+                    + 'background:#fff8f8;color:#900;font:14px/1.5 system-ui;'
+                    + 'box-shadow:0 4px 16px rgba(0,0,0,.15);';
+                b.innerHTML = '<strong>LiteCode 前端加载失败。</strong>'
+                    + '可能浏览器缓存了旧版本。请按 <kbd>Ctrl+Shift+R</kbd> (Mac: <kbd>⌘⇧R</kbd>) 强制刷新,'
+                    + '或 <button onclick="location.reload(true)" '
+                    + 'style="margin-left:8px;padding:2px 10px;border:1px solid #900;background:#fff;'
+                    + 'border-radius:4px;cursor:pointer;">点这里重试</button>';
+                document.body && document.body.appendChild(b);
+            }
+        }
+        // Give defer scripts a chance to run; if they didn't, surface it.
+        if (document.readyState === 'complete' || document.readyState === 'interactive') {
+            setTimeout(check, 0);
+        } else {
+            document.addEventListener('DOMContentLoaded', function () { setTimeout(check, 0); });
+        }
+    })();
+    </script>
 
     <script>
     // ────────────────────────────────────────────────────────────────────
@@ -152,6 +464,14 @@
     //    5) Show loading / empty / error states and surface API failures
     //       through the standard `litecode:api-error` channel (app.js
     //       toast layer picks it up).
+    //
+    //  v1.3.1+ frontend-polish changes:
+    //    - Hooked retry button at the top of the list to `load()` so
+    //      users don't have to scroll down to retry on slow networks.
+    //    - "只看简单" quick chip → clicks the easy seg tab and
+    //      scrolls the list into view.
+    //    - Skeleton row shows immediately so users see something is
+    //      coming (instead of "empty list" before the first response).
     //
     //  Out of scope (later commits):
     //    - Per-problem tag chips on the list rows (the public list API
@@ -361,7 +681,11 @@
 
         function renderRows() {
             var list = $('problem-list');
-            while (list.firstChild) list.removeChild(list.firstChild);
+            // Remove skeleton placeholder rows (lc-problem-row--skeleton)
+            // AND any stale content. Then either render rows or fall
+            // through to the empty-state below.
+            var nodes = Array.prototype.slice.call(list.children);
+            nodes.forEach(function (n) { list.removeChild(n); });
 
             var items = (lastPayload && Array.isArray(lastPayload.items)) ? lastPayload.items : [];
 
@@ -377,12 +701,12 @@
                 : items;
 
             if (!filtered.length) {
-                $('problem-list').hidden = true;
+                list.hidden = true;
                 $('empty-state').hidden = false;
                 return;
             }
             $('empty-state').hidden = true;
-            $('problem-list').hidden = false;
+            list.hidden = false;
             filtered.forEach(function (p) {
                 list.appendChild(renderProblemRow(p));
             });
@@ -579,6 +903,8 @@
                     renderSummary();
                     renderRows();
                     renderPagination();
+                    // Hero 题数填充 — 题库变化让 hero 实时跟
+                    renderHeroStats();
                     $('problem-list').hidden = false;
                     $('loading-state').hidden = true;
                 })
@@ -591,10 +917,88 @@
                 });
         }
 
+        // ── Hero CTA + stat sidebar — 根据登录态 + 题库填充 ─────────
+        // v1.3.1+: hero 显式承接主 CTA,而不是只靠右上角 nav。
+        //   - 未登录: 主 CTA = 开始刷题(锚 #problem-list),次 = 注册
+        //   - 已登录: 主 CTA = 继续刷题 (跳到上一道题或第一道),
+        //             次 CTA = 个人主页,旁标 username
+        function renderHeroCta() {
+            var slot = $('hero-cta');
+            if (!slot) return;
+            while (slot.firstChild) slot.removeChild(slot.firstChild);
+
+            var user = litecode.api.auth.currentUser;
+            if (user) {
+                slot.appendChild(el('a', {
+                    href: '#problem-list',
+                    class: 'lc-btn lc-btn--primary',
+                    text: '继续刷题',
+                }));
+                slot.appendChild(el('a', {
+                    href: '/profile.html',
+                    class: 'lc-btn lc-btn--ghost',
+                    text: '个人主页',
+                }));
+                var tag = el('span', {
+                    class: 'lc-form-help',
+                    style: 'margin-left: var(--lc-space-3);',
+                    text: '已以 ' + String(user.username || '') + ' 登录',
+                });
+                slot.appendChild(tag);
+            } else {
+                slot.appendChild(el('a', {
+                    href: '#problem-list',
+                    class: 'lc-btn lc-btn--primary',
+                    text: '开始刷题',
+                }));
+                slot.appendChild(el('a', {
+                    href: '/register.html',
+                    class: 'lc-btn lc-btn--ghost',
+                    text: '注册账号',
+                }));
+                var tag = el('span', {
+                    class: 'lc-form-help',
+                    style: 'margin-left: var(--lc-space-3);',
+                    text: '游客可浏览,提交代码需登录',
+                });
+                slot.appendChild(tag);
+            }
+        }
+
+        // Populate hero stat cards from lastPayload. Falls back to
+        // — placeholders if no payload yet (the placeholders are what
+        // the HTML ships with, so we don't *need* this to run early).
+        function renderHeroStats() {
+            var p = lastPayload;
+            if (!p) return;
+            var total = (typeof p.total === 'number') ? p.total : 0;
+            var items = Array.isArray(p.items) ? p.items : [];
+            var diff = { easy: 0, medium: 0, hard: 0 };
+            items.forEach(function (it) {
+                if (it && diff[it.difficulty] != null) diff[it.difficulty]++;
+            });
+            var totalEl  = $('hero-stat-total');
+            var probEl   = $('hero-stat-problems');
+            var diffEl   = $('hero-stat-difficulty');
+            if (totalEl) totalEl.textContent = String(total);
+            if (probEl)  probEl.textContent  = String(total);
+            if (diffEl)  diffEl.textContent  = (diff.easy + diff.medium + diff.hard > 0)
+                ? '简 ' + diff.easy + ' · 中 ' + diff.medium + ' · 难 ' + diff.hard
+                : '—';
+        }
+
         // ── Boot ────────────────────────────────────────────────────
         document.addEventListener('DOMContentLoaded', function () {
             // Phase 5 framework: theme + nav + global error wiring.
             litecode.boot.shell({ title: 'LiteCode · 题库' });
+
+            // Hero CTA — 必须在 boot.shell 之后,这样 hydrateUser 已经
+            // 把 currentUser 填好了(否则永远是游客态)。auth 状态变化
+            // (登录/登出) 时也要重绘 hero。
+            renderHeroCta();
+            if (litecode.api.auth && litecode.api.auth.onAuthChanged) {
+                litecode.api.auth.onAuthChanged(function () { renderHeroCta(); });
+            }
 
             // Hydrate state from URL.
             var u = readUrl();
@@ -613,6 +1017,18 @@
             els.searchInput.addEventListener('input', onSearchInput);
             $('reset-filters-btn').addEventListener('click', resetFilters);
             $('retry-btn').addEventListener('click', function () { load(); });
+            $('retry-btn-top').addEventListener('click', function () { load(); });
+
+            // Quick chip — "只看简单" 触发 easy 标签 + 滚到列表
+            var qe = $('quick-easy');
+            if (qe) {
+                qe.addEventListener('click', function (ev) {
+                    ev.preventDefault();
+                    onDifficultyChange('easy');
+                    var list = $('problem-list-wrap');
+                    if (list && list.scrollIntoView) list.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                });
+            }
 
             // Back/forward: re-hydrate from URL and refetch. We tag the
             // user-initiated `pushState` ourselves by always using

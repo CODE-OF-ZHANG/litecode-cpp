@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy"
-          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
+          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
     <title>LiteCode · 个人主页</title>
     <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. -->
     <script src="/js/theme-boot.js"></script>
@@ -46,7 +46,8 @@
     <div data-nav></div>
 
     <main class="lc-container">
-        <header class="lc-stack" style="margin-bottom: 20px;">
+        <header class="lc-stack" style="margin-bottom: var(--lc-space-6);">
+            <p class="lc-hero__eyebrow">个 人 · PROFILE</p>
             <h1 id="page-title">个人主页</h1>
             <p id="page-subtitle" class="lc-form-help" aria-live="polite">正在加载做题统计…</p>
         </header>
@@ -101,6 +102,47 @@
                 <h3 class="lc-section-title" style="margin-top:0;">提交状态分布</h3>
                 <div class="lc-breakdown" id="status-breakdown"></div>
                 <p class="lc-form-help" id="status-empty" hidden>还没有任何提交记录。</p>
+                <!-- v1.3.2 — short cut strip to filter by verdict.
+                     Server-less; the 6 cells below mirror index.html's
+                     hero status grid (compact form, links to /index.html
+                     ?status=X). Hidden when the user has no submissions
+                     (the empty-state block above already covers that
+                     case but we double-belt-and-braces here). -->
+                <div class="lc-status-grid"
+                     style="grid-template-columns: repeat(6, minmax(0, 1fr));
+                            margin-top: var(--lc-space-4);"
+                     aria-label="按状态筛选">
+                    <a href="/index.html?status=ac"
+                       class="lc-status-cell lc-status-cell--ac">
+                        <span class="lc-status-cell__num">AC</span>
+                        <span class="lc-status-cell__label">通过</span>
+                    </a>
+                    <a href="/index.html?status=wa"
+                       class="lc-status-cell lc-status-cell--wa">
+                        <span class="lc-status-cell__num">WA</span>
+                        <span class="lc-status-cell__label">答案错误</span>
+                    </a>
+                    <a href="/index.html?status=tle"
+                       class="lc-status-cell lc-status-cell--tle">
+                        <span class="lc-status-cell__num">TLE</span>
+                        <span class="lc-status-cell__label">超时</span>
+                    </a>
+                    <a href="/index.html?status=re"
+                       class="lc-status-cell lc-status-cell--re">
+                        <span class="lc-status-cell__num">RE</span>
+                        <span class="lc-status-cell__label">运行错误</span>
+                    </a>
+                    <a href="/index.html?status=ce"
+                       class="lc-status-cell lc-status-cell--ce">
+                        <span class="lc-status-cell__num">CE</span>
+                        <span class="lc-status-cell__label">编译错误</span>
+                    </a>
+                    <a href="/index.html?status=mle"
+                       class="lc-status-cell lc-status-cell--mle">
+                        <span class="lc-status-cell__num">MLE</span>
+                        <span class="lc-status-cell__label">内存超限</span>
+                    </a>
+                </div>
             </section>
 
             <section class="lc-card">

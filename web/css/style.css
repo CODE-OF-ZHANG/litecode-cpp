@@ -25,6 +25,33 @@
                      icon buttons honored
 
    ============================================================================
+   Global [hidden] safety net — must be declared BEFORE any class
+   that uses display: flex / block / grid on a hiddable element.
+
+   Author stylesheets with display: flex (e.g. `.lc-loading`,
+   `.lc-empty`, `.lc-error`, `.lc-modal`) win against the UA
+   stylesheet's `[hidden] { display: none }` by specificity tie +
+   source order. If a class is set before [hidden] is declared (or
+   re-declared later), the [hidden] becomes useless and the element
+   renders even though the DOM says it shouldn't.
+
+   Repro: open web/index.html, query `.lc-loading#loading-state` in
+   DevTools — `hidden` attribute is set but the element is `display:
+   flex` because `.lc-loading { display: flex }` overrides the UA
+   `[hidden]` rule. Page shows "加载中…" even when no fetch is
+   running.
+
+   Fix: re-state the UA default explicitly here at the top of the
+   stylesheet so it wins against every class below it. !important is
+   the only sane tool here — without it, we'd have to remember to
+   re-declare `[hidden]` after every new `display: …` class.
+   [hidden] is a structural property of the DOM ("this element is
+   not in the layout tree") so over-promoting it is safe; nothing
+   reasonable relies on `[hidden]` elements *not* being hidden.
+   ============================================================================ */
+[hidden] { display: none !important; }
+
+   ============================================================================
    Verdict → role token map (v1.2.47-b):
      AC       → --lc-color-judge-pass    (forest green)
      WA       → --lc-color-judge-fail    (crimson)
@@ -67,16 +94,16 @@
     --lc-color-surface-1:    #ffffff;
     --lc-color-border:       #e6e1d7;
     --lc-color-border-2:     #d8d2c4;
-    --lc-color-text:         #0e1116;
-    --lc-color-text-2:       #4a525c;
-    --lc-color-text-muted:   #6a7280;
-    --lc-color-link:         #0e1116;
-    --lc-color-link-hover:   #000000;
+    --lc-color-text:         #1a1814;       /* 判席: 钢笔黑,比纯黑暖一档 */
+    --lc-color-text-2:       #4a4338;       /* 判席: 浅墨 */
+    --lc-color-text-muted:   #9b8e78;       /* 判席: 铅笔灰 (替代冷灰) */
+    --lc-color-link:         #1e3a8a;       /* 判席: 钢笔水彩蓝 (替代 SaaS 蓝) */
+    --lc-color-link-hover:   #1a2f6e;       /* 判席: 加深 */
     --lc-color-success:      #16a34a;
     --lc-color-warning:      #d97706;
     --lc-color-danger:       #dc2626;
-    --lc-color-info:         #0284c7;
-    --lc-color-focus-ring:   rgba(15, 23, 42, 0.20);
+    --lc-color-info:         #1e3a8a;       /* 同步到判席蓝 */
+    --lc-color-focus-ring:   rgba(30, 58, 138, 0.22);
 
     /* v1.2.47-d: tighten radii by 2px across the board — more precise,
        less "card-y". */
@@ -101,6 +128,13 @@
     --lc-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI',
                     'PingFang SC', 'Microsoft Yahei', system-ui, sans-serif;
     --lc-font-mono: 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
+
+    /* 判席: 中文章页衬线 (Songti / Source Han Serif). 风险点 — 99% 的 OJ
+       用黑体无衬线,这里走宋体反而是"试卷批改"的独特氛围。fallback
+       链覆盖 macOS / Windows / 装过 Noto Serif CJK 的 Linux。 */
+    --lc-font-display: 'Songti SC', 'STSong', 'Source Han Serif SC',
+                       'Noto Serif CJK SC', 'Noto Serif SC',
+                       'Source Han Serif CN', serif;
 
     --lc-transition-fast:  120ms ease;
     --lc-transition-base:  180ms ease;
@@ -172,17 +206,16 @@ html.dark {
     /* v1.2.47-d: cooler hairline border (less olive, more "blue-black"). */
     --lc-color-border:       #262c36;
     --lc-color-border-2:     #353c47;
-    --lc-color-text:         #e6e9ee;
-    --lc-color-text-2:       #b6bcc6;
-    --lc-color-text-muted:   #7d8590;
-    /* v1.2.47-d: muted-bone link in dark — no SaaS blue. */
-    --lc-color-link:         #b6bcc6;
+    --lc-color-text:         #f5efe2;       /* 判席 dark: 墨色淡米黄 (像旧纸夜读) */
+    --lc-color-text-2:       #c4baa3;       /* 判席 dark: 浅墨 */
+    --lc-color-text-muted:   #8a7e69;       /* 判席 dark: 铅笔灰 (暖) */
+    --lc-color-link:         #93b4ff;       /* 判席 dark: 钢笔水彩蓝 (提亮) */
     --lc-color-link-hover:   #ffffff;
     --lc-color-success:      #4ade80;
     --lc-color-warning:      #fbbf24;
     --lc-color-danger:       #f87171;
-    --lc-color-info:         #38bdf8;
-    --lc-color-focus-ring:   rgba(230, 233, 238, 0.30);
+    --lc-color-info:         #93b4ff;
+    --lc-color-focus-ring:   rgba(147, 180, 255, 0.32);
 
     --lc-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --lc-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
@@ -205,13 +238,13 @@ html.dark {
         --lc-color-bg:         #0e1116;
         --lc-color-surface:    #161a22;
         --lc-color-surface-2:  #1f2530;
-        /* v1.2.47-d: matches html.dark above (cooler hairline, no SaaS blue link) */
+        /* 判席 dark: 同步 :root dark 的暖墨色调 */
         --lc-color-border:     #262c36;
         --lc-color-border-2:   #353c47;
-        --lc-color-text:       #e6e9ee;
-        --lc-color-text-2:     #b6bcc6;
-        --lc-color-text-muted: #7d8590;
-        --lc-color-link:       #b6bcc6;
+        --lc-color-text:       #f5efe2;
+        --lc-color-text-2:     #c4baa3;
+        --lc-color-text-muted: #8a7e69;
+        --lc-color-link:       #93b4ff;
         --lc-color-link-hover: #ffffff;
     }
 }
@@ -3784,4 +3817,632 @@ html.lc-route-pending body {
     content: "// ";
     color: var(--a26-syn-com);
     font-style: normal;
+}
+
+/* =====================================================================
+   v1.3.1+ · 判席 (Judge's Bench) — 首页 hero & 落地 CTA
+
+   设计意图:
+   - 让访客第一眼看到"这是一个判题平台",而不是一个通用 SaaS
+   - 衬线中文章页标题 + 钢笔墨水蓝的判席蓝,跟其他 OJ 区分开
+   - 已登录用户:hero 折叠为"继续刷题"快捷入口
+   - 未登录用户:hero 显式两个主 CTA(登录/注册),不靠藏在 nav 里
+
+   Signature element: 标题旁的细"判席红线"——像批改试卷的红笔在
+   标题上轻轻划了一笔,提示"这是要被打分的内容"。点击后会呼吸式
+   闪烁一次,作为页面级 affordance。
+   ===================================================================== */
+
+.lc-hero {
+    position: relative;
+    margin: var(--lc-space-8) 0 var(--lc-space-7);
+    padding: var(--lc-space-9) var(--lc-space-8);
+    background:
+        linear-gradient(180deg,
+            var(--lc-color-surface) 0%,
+            var(--lc-color-surface) 100%);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-lg);
+    box-shadow: var(--lc-shadow-rest);
+    overflow: hidden;
+}
+.lc-hero::before {
+    /* 判席红线 — 标题下方那条线,就是"判官在卷面上划的那一笔" */
+    content: "";
+    position: absolute;
+    left: var(--lc-space-8);
+    right: var(--lc-space-8);
+    bottom: var(--lc-space-5);
+    height: 2px;
+    background:
+        linear-gradient(90deg,
+            var(--lc-color-judge-fail) 0%,
+            var(--lc-color-judge-fail) 18%,
+            transparent 18%,
+            transparent 22%,
+            var(--lc-color-judge-fail) 22%,
+            var(--lc-color-judge-fail) 24%,
+            transparent 24%,
+            transparent 100%);
+    opacity: 0.55;
+    pointer-events: none;
+}
+.lc-hero__eyebrow {
+    /* "判席" 二字作 eyebrow — 小字宋体,带分量 */
+    font-family: var(--lc-font-display);
+    font-size: var(--lc-font-size-sm);
+    letter-spacing: 0.4em;
+    color: var(--lc-color-text-muted);
+    margin: 0 0 var(--lc-space-3);
+    text-transform: none;
+}
+.lc-hero__title {
+    /* 衬线中文大标题 — 整个 hero 的 signature */
+    font-family: var(--lc-font-display);
+    font-size: clamp(28px, 4vw, 40px);
+    font-weight: 600;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+    color: var(--lc-color-text);
+    margin: 0 0 var(--lc-space-3);
+}
+.lc-hero__title em {
+    font-style: normal;
+    color: var(--lc-color-judge-fail);
+    border-bottom: 2px solid var(--lc-color-judge-fail);
+    padding-bottom: 2px;
+}
+.lc-hero__lede {
+    font-size: var(--lc-font-size-md);
+    line-height: var(--lc-line-height-base);
+    color: var(--lc-color-text-2);
+    max-width: 60ch;
+    margin: 0 0 var(--lc-space-6);
+}
+.lc-hero__cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--lc-space-3);
+    align-items: center;
+}
+.lc-hero__cta .lc-btn--primary {
+    /* 主 CTA 用判席红 — "提交" 语义 + 评审感 */
+    background: var(--lc-color-judge-fail);
+    border-color: var(--lc-color-judge-fail);
+    color: #fff;
+}
+.lc-hero__cta .lc-btn--primary:hover {
+    background: #8a1c12;
+    border-color: #8a1c12;
+}
+.lc-hero__cta .lc-btn--ghost {
+    border-color: var(--lc-color-border-2);
+}
+.lc-hero__meta {
+    margin-top: var(--lc-space-5);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--lc-space-4);
+    font-size: var(--lc-font-size-sm);
+    color: var(--lc-color-text-muted);
+}
+.lc-hero__meta-item strong {
+    color: var(--lc-color-text);
+    font-family: var(--lc-font-mono);
+    font-weight: 600;
+    margin-right: 4px;
+}
+@media (max-width: 640px) {
+    .lc-hero { padding: var(--lc-space-6) var(--lc-space-5); }
+    .lc-hero::before { left: var(--lc-space-5); right: var(--lc-space-5); }
+}
+
+/* =====================================================================
+   4.5 Hero — split layout (v1.3.1+ frontend-design pass)
+
+   在原有 hero 单列骨架上叠加 `.lc-hero__inner` (grid 两栏):
+     - 左 (1.05fr) 文案:eyebrow + 标题 + lede + CTA + facts
+     - 右 (0.95fr) 实时 stat 卡片 (LC 调色板深底,和白底文案区分)
+
+   装饰:
+     - ::before 红线保留 (signature 不变)
+     - 新增 ::after 右上角淡蓝渐入光晕,纯 CSS,不靠位图
+     - facts 用等宽数字 + 小字 label,像 GitHub README 的 stats
+   ===================================================================== */
+
+.lc-hero__inner {
+    display: grid;
+    grid-template-columns: 1.05fr 0.95fr;
+    gap: var(--lc-space-8);
+    align-items: center;
+    position: relative;
+    z-index: 1;             /* 浮在 hero::before 红线之上 */
+}
+.lc-hero__copy { min-width: 0; }
+
+.lc-hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+.lc-hero__dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--lc-color-judge-fail);
+    box-shadow: 0 0 0 3px rgba(176, 32, 18, 0.18);
+    animation: lc-hero-pulse 2.4s ease-in-out infinite;
+}
+.lc-hero__dot--ok {
+    background: var(--lc-color-judge-pass, #2f7d2f);
+    box-shadow: 0 0 0 3px rgba(47, 125, 47, 0.18);
+    animation: none;
+}
+@keyframes lc-hero-pulse {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(176, 32, 18, 0.18); }
+    50%      { box-shadow: 0 0 0 6px rgba(176, 32, 18, 0.05); }
+}
+
+/* facts — 4 列等宽 stat 行,取代旧的 .lc-hero__meta 横排 */
+.lc-hero__facts {
+    list-style: none;
+    margin: var(--lc-space-6) 0 0;
+    padding: var(--lc-space-4) 0 0;
+    border-top: 1px dashed var(--lc-color-border);
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--lc-space-4);
+}
+.lc-hero__facts li {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.lc-hero__facts-num {
+    font-family: var(--lc-font-mono);
+    font-size: var(--lc-font-size-lg);
+    font-weight: 600;
+    color: var(--lc-color-text);
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+}
+.lc-hero__facts-label {
+    font-size: var(--lc-font-size-xs);
+    color: var(--lc-color-text-muted);
+}
+
+/* ── Stat 卡片 ────────────────────────────────────────── */
+.lc-hero__stat { min-width: 0; }
+.lc-hero__stat-card {
+    /* 显式红色兜底 + 渐变,即使 gradient 不生效也能看出色彩 */
+    background-color: var(--lc-color-judge-fail);
+    background-image: linear-gradient(160deg,
+        var(--lc-color-judge-fail) 0%,
+        #6b1810 100%);
+    color: #fff5f3;
+    border-radius: var(--lc-radius-md);
+    padding: var(--lc-space-6);
+    box-shadow:
+        0 1px 0 rgba(255,255,255,0.08) inset,
+        0 12px 32px -16px rgba(176, 32, 18, 0.55);
+    position: relative;
+    overflow: hidden;
+}
+.lc-hero__stat-card::after {
+    /* 右上角淡光晕,装饰用,不靠位图 */
+    content: "";
+    position: absolute;
+    top: -40%;
+    right: -10%;
+    width: 60%;
+    height: 80%;
+    background: radial-gradient(closest-side,
+        rgba(255, 235, 230, 0.18),
+        transparent 70%);
+    pointer-events: none;
+}
+.lc-hero__stat-eyebrow {
+    font-family: var(--lc-font-mono);
+    font-size: var(--lc-font-size-xs);
+    letter-spacing: 0.18em;
+    color: rgba(255, 245, 243, 0.7);
+    margin: 0 0 var(--lc-space-2);
+    text-transform: uppercase;
+}
+.lc-hero__stat-title {
+    font-family: var(--lc-font-display);
+    font-size: var(--lc-font-size-lg);
+    font-weight: 600;
+    margin: 0 0 var(--lc-space-4);
+    color: #fff;
+}
+.lc-hero__stat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--lc-space-4) var(--lc-space-5);
+    margin-bottom: var(--lc-space-4);
+    position: relative;
+    z-index: 1;
+}
+.lc-hero__stat-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.lc-hero__stat-num {
+    font-family: var(--lc-font-mono);
+    font-size: clamp(20px, 2.4vw, 26px);
+    font-weight: 600;
+    color: #fff;
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+}
+.lc-hero__stat-label {
+    font-size: var(--lc-font-size-xs);
+    color: rgba(255, 245, 243, 0.72);
+}
+.lc-hero__stat-foot {
+    margin: 0;
+    padding-top: var(--lc-space-3);
+    border-top: 1px dashed rgba(255, 245, 243, 0.25);
+    font-size: var(--lc-font-size-sm);
+    color: rgba(255, 245, 243, 0.85);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* ── 快速入口 chips ────────────────────────────────────── */
+.lc-quick {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--lc-space-3);
+    margin: 0 0 var(--lc-space-6);
+}
+.lc-quick__chip {
+    display: flex;
+    align-items: center;
+    gap: var(--lc-space-3);
+    padding: var(--lc-space-3) var(--lc-space-4);
+    background: var(--lc-color-surface);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-md);
+    text-decoration: none;
+    color: var(--lc-color-text);
+    transition: border-color var(--lc-transition-fast),
+                transform var(--lc-transition-fast),
+                box-shadow var(--lc-transition-fast);
+    box-shadow: var(--lc-shadow-rest);
+}
+.lc-quick__chip:hover {
+    border-color: var(--lc-color-link);
+    transform: translateY(-1px);
+    box-shadow: var(--lc-shadow-hover);
+}
+.lc-quick__chip-ico {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    background: var(--lc-color-surface-2);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-sm);
+    font-family: var(--lc-font-mono);
+    color: var(--lc-color-link);
+    font-size: 16px;
+    line-height: 1;
+}
+.lc-quick__chip-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.lc-quick__chip-title {
+    font-size: var(--lc-font-size-base);
+    font-weight: 500;
+}
+.lc-quick__chip-hint {
+    font-size: var(--lc-font-size-xs);
+    color: var(--lc-color-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* section header + 顶部刷新按钮 (在题库标题右侧) */
+.lc-section-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--lc-space-4);
+    flex-wrap: wrap;
+    margin-top: var(--lc-space-6);
+}
+
+/* 题目行 skeleton — JS 加载期间占位,避免"空白屏 = 加载失败"误判 */
+.lc-problem-row--skeleton {
+    opacity: 0.55;
+    pointer-events: none;
+    background: linear-gradient(90deg,
+        var(--lc-color-surface) 0%,
+        var(--lc-color-surface-2) 50%,
+        var(--lc-color-surface) 100%);
+    background-size: 200% 100%;
+    animation: lc-problem-skel 1.6s ease-in-out infinite;
+}
+@keyframes lc-problem-skel {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* ── 响应式:≤768 单列堆叠 ── */
+@media (max-width: 768px) {
+    .lc-hero__inner {
+        grid-template-columns: 1fr;
+        gap: var(--lc-space-5);
+    }
+    .lc-hero__facts { grid-template-columns: repeat(2, 1fr); }
+    .lc-quick       { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 480px) {
+    .lc-quick__chip-hint { display: none; }
+    .lc-hero__stat-grid  { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .lc-hero__dot,
+    .lc-problem-row--skeleton {
+        animation: none;
+    }
+}
+
+/* 整页 heading 改用衬线 (h1 / h2) — 让"题库 / 个人主页 / 排行榜 /
+   管理后台 / 登录 / 注册"标题都跟 hero 一个调性 */
+.lc-stack > h1,
+.lc-auth-card h1,
+main > h1 {
+    font-family: var(--lc-font-display);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+/* 题卡左侧的 verdict strip 加强 — 让"通过率 0/0"也有一道淡灰底线,
+   通过率上升时颜色渐入。signature 是 hero 红线的微观对应物 */
+.lc-problem-row {
+    position: relative;
+    border-left: 3px solid var(--lc-color-border);
+    transition: border-left-color var(--lc-transition-base);
+}
+.lc-problem-row:hover {
+    border-left-color: var(--lc-color-judge-pass);
+}
+.lc-problem-row[data-difficulty="easy"]   { border-left-color: var(--lc-color-judge-pass); }
+.lc-problem-row[data-difficulty="medium"] { border-left-color: var(--lc-color-judge-warn); }
+.lc-problem-row[data-difficulty="hard"]   { border-left-color: var(--lc-color-judge-fail); }
+
+/* 错误 / 空状态文案 — 让"没有题目"也显得像邀请而非冷漠 */
+.lc-empty {
+    padding: var(--lc-space-9) var(--lc-space-7);
+    text-align: center;
+    border: 1px dashed var(--lc-color-border-2);
+    border-radius: var(--lc-radius-lg);
+    background: var(--lc-color-surface);
+}
+.lc-empty__title {
+    font-family: var(--lc-font-display);
+    font-size: var(--lc-font-size-xl);
+    color: var(--lc-color-text);
+    margin: 0 0 var(--lc-space-2);
+}
+.lc-error {
+    padding: var(--lc-space-7);
+    border: 1px solid var(--lc-color-judge-fail-bg);
+    background: var(--lc-color-judge-fail-bg);
+    border-radius: var(--lc-radius-lg);
+    color: var(--lc-color-judge-fail);
+}
+.lc-error__title {
+    font-family: var(--lc-font-display);
+    margin: 0 0 var(--lc-space-2);
+}
+
+/* ============================================================================
+ * v1.3.2 — frontend redesign/borrowings (do NOT touch :root paper palette,
+ * hero §4.5, judge role §4.2, or CodeMirror overrides above this line).
+ * ----------------------------------------------------------------------------
+ *   Added under §4.6:
+ *     - .lc-status-grid + .lc-status-cell (AC / WA / TLE / RE / CE / SCF)
+ *     - .lc-usecases + .lc-usecase-card  (Use Cases 2x2)
+ *     - .lc-how + .lc-how__step           (How-it-works 4 列)
+ *     - .lc-hero__code-bg                 (hero 浮动代码片段装饰,
+ *                                          借鉴 zhibite-edu/cpp-oj-vibecoding-teach)
+ *     - .lc-md-editor__preview--code      (admin problem-edit template
+ *                                          等宽 textarea 预览)
+ *   All of these read semantic tokens (--lc-color-judge-*, --lc-space-*, etc.);
+ *   none introduce new color primitives.
+ * ============================================================================ */
+
+.lc-status-grid {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: var(--lc-space-3);
+    margin: 0 0 var(--lc-space-6);
+}
+.lc-status-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: var(--lc-space-4) var(--lc-space-3);
+    background: var(--lc-color-surface);
+    border: 1px solid var(--lc-color-border);
+    border-left: 4px solid var(--lc-color-border-2);
+    border-radius: var(--lc-radius-md);
+    text-decoration: none;
+    color: var(--lc-color-text);
+    transition: transform var(--lc-transition-fast),
+                box-shadow var(--lc-transition-fast);
+    box-shadow: var(--lc-shadow-rest);
+}
+.lc-status-cell:hover,
+.lc-status-cell:focus-visible {
+    transform: translateY(-1px);
+    box-shadow: var(--lc-shadow-hover);
+}
+.lc-status-cell__num {
+    font-family: var(--lc-font-mono);
+    font-size: var(--lc-font-size-lg);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+}
+.lc-status-cell__label {
+    margin-top: 4px;
+    font-size: var(--lc-font-size-xs);
+    color: var(--lc-color-text-muted);
+}
+.lc-status-cell--ac  { border-left-color: var(--lc-color-judge-pass); }
+.lc-status-cell--ac  .lc-status-cell__num { color: var(--lc-color-judge-pass); }
+.lc-status-cell--wa  { border-left-color: var(--lc-color-judge-fail); }
+.lc-status-cell--wa  .lc-status-cell__num { color: var(--lc-color-judge-fail); }
+.lc-status-cell--tle { border-left-color: var(--lc-color-judge-warn); }
+.lc-status-cell--tle .lc-status-cell__num { color: var(--lc-color-judge-warn); }
+.lc-status-cell--re  { border-left-color: var(--lc-color-judge-fail); }
+.lc-status-cell--re  .lc-status-cell__num { color: var(--lc-color-judge-fail); }
+.lc-status-cell--ce  { border-left-color: var(--lc-color-judge-neutral); }
+.lc-status-cell--ce  .lc-status-cell__num { color: var(--lc-color-judge-neutral); }
+.lc-status-cell--scf { border-left-color: var(--lc-color-judge-info); }
+.lc-status-cell--scf .lc-status-cell__num { color: var(--lc-color-judge-info); }
+.lc-status-cell--mle { border-left-color: var(--lc-color-judge-violet); }
+.lc-status-cell--mle .lc-status-cell__num { color: var(--lc-color-judge-violet); }
+@media (max-width: 768px) {
+    .lc-status-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 480px) {
+    .lc-status-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* Use Cases 2x2 */
+
+.lc-usecases { margin: 0 0 var(--lc-space-7); }
+.lc-section-title {
+    font-family: var(--lc-font-display);
+    font-size: var(--lc-font-size-2xl);
+    font-weight: 600;
+    margin: 0 0 var(--lc-space-4);
+    letter-spacing: -0.01em;
+}
+.lc-usecases__grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--lc-space-4);
+}
+.lc-usecase-card {
+    background: var(--lc-color-surface);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-md);
+    padding: var(--lc-space-5);
+    box-shadow: var(--lc-shadow-rest);
+}
+.lc-usecase-card h3 {
+    font-family: var(--lc-font-display);
+    font-size: var(--lc-font-size-lg);
+    margin: 0 0 var(--lc-space-2);
+}
+.lc-usecase-card p {
+    margin: 0;
+    color: var(--lc-color-text-2);
+    font-size: var(--lc-font-size-sm);
+    line-height: var(--lc-line-height-base);
+}
+@media (max-width: 640px) {
+    .lc-usecases__grid { grid-template-columns: 1fr; }
+}
+
+/* How-it-works 4 列 */
+
+.lc-how { margin: 0 0 var(--lc-space-7); }
+.lc-how__steps {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--lc-space-4);
+}
+.lc-how__step {
+    background: var(--lc-color-surface);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-md);
+    padding: var(--lc-space-5);
+    box-shadow: var(--lc-shadow-rest);
+}
+.lc-how__step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--lc-color-judge-fail-bg);
+    color: var(--lc-color-judge-fail);
+    font-family: var(--lc-font-mono);
+    font-weight: 600;
+    margin-bottom: var(--lc-space-3);
+}
+.lc-how__step h3 {
+    font-family: var(--lc-font-display);
+    font-size: var(--lc-font-size-base);
+    margin: 0 0 var(--lc-space-2);
+}
+.lc-how__step p {
+    margin: 0;
+    color: var(--lc-color-text-2);
+    font-size: var(--lc-font-size-sm);
+}
+@media (max-width: 768px) {
+    .lc-how__steps { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* Hero 浮动代码片段装饰 (deco-only, aria-hidden 由 HTML 提供)
+   父 .lc-hero 是 position: relative + overflow: hidden; 我们叠在 .lc-hero
+   内容下面 (z-index 0) 用 opacity 0.08 当底纹,不是文字。 */
+
+.lc-hero__code-bg {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    overflow: hidden;
+    opacity: 0.08;
+}
+.lc-hero__code-bg code {
+    position: absolute;
+    font-family: var(--lc-font-mono);
+    font-size: var(--lc-font-size-sm);
+    color: var(--lc-color-text);
+    white-space: nowrap;
+}
+.lc-hero__code-bg code:nth-child(1) { top:  8%; left:  4%; transform: rotate(-3deg); }
+.lc-hero__code-bg code:nth-child(2) { top: 22%; right: 8%; transform: rotate( 2deg); }
+.lc-hero__code-bg code:nth-child(3) { top: 38%; left: 12%; transform: rotate(-1deg); }
+.lc-hero__code-bg code:nth-child(4) { top: 55%; right: 14%; transform: rotate( 3deg); }
+.lc-hero__code-bg code:nth-child(5) { top: 70%; left:  6%; transform: rotate(-2deg); }
+.lc-hero__code-bg code:nth-child(6) { top: 84%; right: 4%; transform: rotate( 1deg); }
+@media (prefers-reduced-motion: reduce) {
+    .lc-hero__code-bg { display: none; }
+}
+
+/* admin problem-edit: template 等宽预览 (textContent, 不解析 HTML) */
+
+.lc-md-editor__preview--code {
+    font-family: var(--lc-font-mono);
+    font-size: var(--lc-font-size-sm);
+    white-space: pre;
+    overflow: auto;
+    background: var(--lc-color-surface-2);
+    border-radius: var(--lc-radius-sm);
+    padding: var(--lc-space-3);
 }
