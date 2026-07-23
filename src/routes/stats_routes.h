@@ -498,18 +498,17 @@ inline constexpr int kLeaderboardDefaultLimit = 100;
 inline constexpr int kLeaderboardMaxLimit     = 200;
 
 // count_ranked_users — returns the total # of users that appear in
-// the leaderboard (i.e. have ≥ 1 AC on a live problem). Mirrors the
-// WHERE clause in list_leaderboard() so the response `total` field
-// matches the actual listable population.
+// the leaderboard.
+//
+// v1.3.4: 排行榜改成"全员上榜"(从 users 出发 LEFT JOIN submissions
+// 聚合)。零提交 / 零 AC 的用户也会出现,排在尾部。这里返回 users
+// 总数,与 list_leaderboard() 的查询语义保持一致 — 否则分页 total
+// 字段会与列表不一致。
 inline int count_ranked_users(ConnectionPool& pool) {
     auto conn = pool.acquire();
     try {
         const auto v = conn.fetch_scalar<std::int64_t>(
-            "SELECT COUNT(DISTINCT s.user_id) "
-            "FROM submissions s "
-            "JOIN problems p ON p.id = s.problem_id "
-            "WHERE s.status = 'ac' "
-            "  AND p.is_deleted = FALSE");
+            "SELECT COUNT(*) FROM users");
         return v.has_value() ? static_cast<int>(*v) : 0;
     } catch (const mysqlx::Error& e) {
         throw std::runtime_error(
@@ -520,28 +519,32 @@ inline int count_ranked_users(ConnectionPool& pool) {
 // list_leaderboard — returns one page of LeaderboardRow, ordered
 // solved_count DESC, submission_count ASC, user_id ASC.
 //
+// v1.3.4: 从 `users` 出发 LEFT JOIN 聚合,**所有用户都上榜**;零提交
+// / 零 AC 用户排在尾部。原来的 HAVING solved_count > 0 会过滤掉所有
+// 没 AC 的用户,导致 zhangxu 这种还在解题的注册用户从不出现 — 这是
+// 用户报"排行榜全是匿名用户"的独立根因(另一个根因是前端嵌套字段
+// 读取 bug,在 web/ranking.html:194 修)。
+//
 // The query:
 //   SELECT u.id, u.username, u.role,
-//          agg.solved_count, agg.submission_count
-//   FROM (
+//          COALESCE(agg.solved_count, 0)     AS solved_count,
+//          COALESCE(agg.submission_count, 0) AS submission_count
+//   FROM users u
+//   LEFT JOIN (
 //     SELECT s.user_id,
-//            COUNT(DISTINCT CASE WHEN s.status='ac' THEN s.problem_id END)
-//              AS solved_count,
-//            COUNT(*) AS submission_count
+//            COUNT(DISTINCT CASE WHEN s.status = 'ac' AND p.is_deleted = FALSE
+//                                THEN s.problem_id END) AS solved_count,
+//            COUNT(CASE WHEN p.is_deleted = FALSE THEN 1 END) AS submission_count
 //     FROM submissions s
-//     JOIN problems p ON p.id = s.problem_id AND p.is_deleted = FALSE
+//     LEFT JOIN problems p ON p.id = s.problem_id
 //     GROUP BY s.user_id
-//     HAVING solved_count > 0
-//   ) agg
-//   JOIN users u ON u.id = agg.user_id
+//   ) agg ON agg.user_id = u.id
 //   ORDER BY solved_count DESC, submission_count ASC, u.id ASC
 //   LIMIT ? OFFSET ?
 //
-// We use a derived table (a) so MySQL evaluates the GROUP BY once
-// and the outer SELECT can be small + deterministic, (b) so the
-// HAVING clause filters out zero-solve users in the same pass
-// (otherwise we'd see them at rank > total and the WHERE user_id
-// in (SELECT ...) approach would be slower).
+// COALESCE 让 LEFT JOIN 出来的 NULL 转成 0,前端不用处理 null;
+// `ORDER BY u.id ASC` 在 solved_count/submission_count 都相同时
+// 保证分页结果确定性。
 inline std::vector<LeaderboardRow> list_leaderboard(
         ConnectionPool& pool, int limit, int offset) {
     std::vector<LeaderboardRow> out;
@@ -549,22 +552,24 @@ inline std::vector<LeaderboardRow> list_leaderboard(
     try {
         mysqlx::SqlResult rs = conn.execute(
             "SELECT u.id, u.username, u.role, "
-            "       agg.solved_count, agg.submission_count "
-            "FROM ( "
+            "       COALESCE(agg.solved_count, 0), "
+            "       COALESCE(agg.submission_count, 0) "
+            "FROM users u "
+            "LEFT JOIN ( "
             "  SELECT s.user_id, "
             "         COUNT(DISTINCT CASE WHEN s.status = 'ac' "
+            "                              AND p.is_deleted = FALSE "
             "                              THEN s.problem_id END) "
             "           AS solved_count, "
-            "         COUNT(*) AS submission_count "
+            "         COUNT(CASE WHEN p.is_deleted = FALSE "
+            "                    THEN 1 END) "
+            "           AS submission_count "
             "  FROM submissions s "
-            "  JOIN problems p ON p.id = s.problem_id "
-            "                    AND p.is_deleted = FALSE "
+            "  LEFT JOIN problems p ON p.id = s.problem_id "
             "  GROUP BY s.user_id "
-            "  HAVING solved_count > 0 "
-            ") agg "
-            "JOIN users u ON u.id = agg.user_id "
-            "ORDER BY agg.solved_count DESC, "
-            "         agg.submission_count ASC, "
+            ") agg ON agg.user_id = u.id "
+            "ORDER BY solved_count DESC, "
+            "         submission_count ASC, "
             "         u.id ASC "
             "LIMIT ? OFFSET ?",
             limit, offset);
@@ -581,15 +586,17 @@ inline std::vector<LeaderboardRow> list_leaderboard(
                 // doesn't tank the whole page.
                 continue;
             }
-            // acceptance_rate = submissions / solved (an "average
-            // attempts per AC" number, not a percentage). Capped
-            // to 100.0 for legibility: a user with 80 ACs / 80
-            // submissions is 100% (no retries); a user with 25
-            // ACs / 80 submissions is 31.25%.
+            // v1.3.4: 修正 acceptance_rate 语义。之前的实现算的是
+            //   submission_count * 100 / solved_count
+            // 注释把它叫做"average attempts per AC",但 acceptance
+            // rate 顾名思义是"通过率",应该是
+            //   solved_count * 100 / submission_count
+            // 数值 0..100 百分比。前端展示时除以 100 显示百分比。
+            // 零提交用户固定 0.0(无法计算)。
             r.acceptance_rate =
-                (r.solved_count > 0)
-                    ? (static_cast<double>(r.submission_count) * 100.0 /
-                       static_cast<double>(r.solved_count))
+                (r.submission_count > 0)
+                    ? (static_cast<double>(r.solved_count) * 100.0 /
+                       static_cast<double>(r.submission_count))
                     : 0.0;
             out.push_back(std::move(r));
         }

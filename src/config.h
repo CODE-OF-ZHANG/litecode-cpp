@@ -51,7 +51,18 @@ namespace litecode {
 struct ServerConfig {
     std::string host = "0.0.0.0";
     std::uint16_t port = 8080;
-    int thread_pool_size = 8;
+    // v1.3.4 PR 2 — restore bounded concurrency.
+    //   - 8 was a placeholder when we ran on a SyncTaskQueue (single
+    //     request at a time, the queue size never mattered).
+    //   - 16 reserves enough worker threads so a PR 3 sample-run
+    //     request (up to 3s of stuck-in-while-loop CPU inside a
+    //     worker) can sit idle without starving login / health /
+    //     ranking reads. With 16 workers, even if 2 sample-runs are
+    //     in-flight (gated by `sample_max_concurrent`), there are
+    //     still 14 free workers for the rest of the API.
+    //   - Hard upper bound is whatever the operator passes via
+    //     `SERVER_THREAD_POOL_SIZE`; recommended ceiling 32.
+    int thread_pool_size = 16;
 };
 
 struct DatabaseConfig {
@@ -126,6 +137,15 @@ struct JudgeConfig {
     // CE / RE error truncation (SPEC §7.4)
     int compile_error_truncate_bytes = 4 * 1024;
     int runtime_error_truncate_bytes = 2 * 1024;
+
+    // v1.3.4 PR 3 — synchronous run-samples endpoint tunables.
+    // Hard caps enforced at the SampleRunner layer; env vars can dial
+    // DOWN but never UP (a careless operator can't widen the attack
+    // surface by setting SAMPLE_MAX_CASES=999).
+    int sample_max_cases            = 3;        // hard cap 4 (tested at handler)
+    int sample_case_timeout_ms      = 3000;     // per-case wall clock
+    int sample_max_concurrent       = 2;        // semaphore size; > concurrent runners
+    int sample_compile_timeout_ms   = 10'000;   // compile bomb guard (matches async)
 };
 
 struct RedisConfig {
@@ -164,6 +184,10 @@ struct RateLimitConfig {
     int admin_users_role_per_minute        = 10;   // PUT /api/v1/admin/users/:id/role (SPEC §5.5)
     int admin_audit_logs_per_minute        = 60;   // GET /api/v1/admin/audit-logs (SPEC §5.5, §15.6)
     int admin_queue_per_minute             = 60;   // GET /api/v1/admin/queue (SPEC §5.5, §11 Phase 6 ★ v1.2.44)
+    // v1.3.4 PR 3 — synchronous run-samples rate cap. Per-user, generous
+    // default (60/min) so a LeetCode-style "iterate-on-a-problem"
+    // session isn't punished; tighten in CI / exam scenarios via env.
+    int sample_run_per_minute_per_user     = 60;
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -589,6 +613,22 @@ inline AppConfig load_config(const std::string& env_file_path = ".env",
         detail::getenv_int_or<int>("JUDGE_RE_TRUNCATE_BYTES",
                                    cfg.judge.runtime_error_truncate_bytes);
 
+    // v1.3.4 PR 3 — synchronous run-samples tunables. Defaults are
+    // sized for the "instant feedback while iterating" UX without
+    // letting a careless operator widen the attack surface.
+    cfg.judge.sample_max_cases =
+        detail::getenv_int_or<int>("SAMPLE_MAX_CASES",
+                                   cfg.judge.sample_max_cases);
+    cfg.judge.sample_case_timeout_ms =
+        detail::getenv_int_or<int>("SAMPLE_CASE_TIMEOUT_MS",
+                                   cfg.judge.sample_case_timeout_ms);
+    cfg.judge.sample_max_concurrent =
+        detail::getenv_int_or<int>("SAMPLE_MAX_CONCURRENT",
+                                   cfg.judge.sample_max_concurrent);
+    cfg.judge.sample_compile_timeout_ms =
+        detail::getenv_int_or<int>("SAMPLE_COMPILE_TIMEOUT_MS",
+                                   cfg.judge.sample_compile_timeout_ms);
+
     if (cfg.judge.max_concurrent_judges < 1)
         throw ConfigError("JUDGE_MAX_CONCURRENT must be >= 1");
     if (cfg.judge.warm_pool_size < 0 ||
@@ -606,6 +646,21 @@ inline AppConfig load_config(const std::string& env_file_path = ".env",
         throw ConfigError("JUDGE_DEFAULT_MEMORY_LIMIT_MB must be >= 16");
     if (cfg.judge.output_limit_bytes < 1024)
         throw ConfigError("JUDGE_OUTPUT_LIMIT_BYTES must be >= 1024");
+    // Sample-runner range guards. The hard upper bound on
+    // sample_max_cases is 4 (matches what LeetCode shows per problem
+    // — more than that, and the front-end result panel becomes
+    // unreadable). The per-case timeout has no hard upper bound but
+    // anything > 30 s defeats the "synchronous" UX.
+    if (cfg.judge.sample_max_cases < 1 || cfg.judge.sample_max_cases > 4)
+        throw ConfigError("SAMPLE_MAX_CASES must be in [1, 4]");
+    if (cfg.judge.sample_case_timeout_ms < 100 ||
+        cfg.judge.sample_case_timeout_ms > 30'000)
+        throw ConfigError("SAMPLE_CASE_TIMEOUT_MS must be in [100, 30000]");
+    if (cfg.judge.sample_max_concurrent < 1 ||
+        cfg.judge.sample_max_concurrent > 8)
+        throw ConfigError("SAMPLE_MAX_CONCURRENT must be in [1, 8]");
+    if (cfg.judge.sample_compile_timeout_ms < 1000)
+        throw ConfigError("SAMPLE_COMPILE_TIMEOUT_MS must be >= 1000");
 
     // ── Redis ───────────────────────────────────────────────────────────────
     cfg.redis.host     = detail::getenv_or("REDIS_HOST", cfg.redis.host);
@@ -679,6 +734,10 @@ inline AppConfig load_config(const std::string& env_file_path = ".env",
     cfg.rate_limit.admin_queue_per_minute =
         detail::getenv_int_or<int>("RATE_LIMIT_ADMIN_QUEUE_PER_MIN",
                                    cfg.rate_limit.admin_queue_per_minute);
+    // v1.3.4 PR 3 — synchronous run-samples rate cap.
+    cfg.rate_limit.sample_run_per_minute_per_user =
+        detail::getenv_int_or<int>("SAMPLE_RUN_RATE_PER_MINUTE_PER_USER",
+                                   cfg.rate_limit.sample_run_per_minute_per_user);
 
     // ── Login lockout (Phase 6 ☆ v1.2.46 — SPEC §15.1) ──────────────────
     cfg.login_lockout.enabled =
@@ -709,7 +768,8 @@ inline AppConfig load_config(const std::string& env_file_path = ".env",
                   cfg.rate_limit.admin_users_list_per_minute,
                   cfg.rate_limit.admin_users_role_per_minute,
                   cfg.rate_limit.admin_audit_logs_per_minute,
-                  cfg.rate_limit.admin_queue_per_minute}) {
+                  cfg.rate_limit.admin_queue_per_minute,
+                  cfg.rate_limit.sample_run_per_minute_per_user}) {
         if (q < 1)
             throw ConfigError("rate-limit quotas must be >= 1");
     }

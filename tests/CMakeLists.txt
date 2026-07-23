@@ -1007,3 +1007,63 @@ target_include_directories(test_audit_log_helpers PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/db)
 add_test(NAME audit_log_helpers    COMMAND test_audit_log_helpers)
+
+# ───────────────────────────────────────────────────────────────────────────
+#  v1.3.4 PR 2 — HTTP ThreadPool 恢复
+#  ───────────────────────────────────────────────────────────────────────────
+#  test_http_concurrency.cpp — concurrency regression suite for the new
+#  `httplib::ThreadPool` task queue. Three layers of coverage:
+#    1. ConcurrentHealthShouldAllSucceed: 50 parallel /health all 200.
+#    2. SerialVsParallelShouldShowTrueParallelism: parallel_time < serial/2.
+#    3. MixedLaneShouldParallelizeAcrossRoutes: health + problems fan-out
+#       under 2x of one serial round.
+#    4. RepeatedStartStopCyclesShouldNotLeak: 50 cycles of start()/~HttpServer
+#       complete within a bound (catches heap corruption + listener leaks).
+#
+#  Link set mirrors test_health: server.h pulls system_routes.h which
+#  includes connection_pool.h's mysqlx headers, so we link mysql::concpp
+#  for header path even though no SQL is opened (probes are noop lambdas).
+add_executable(test_http_concurrency unit/test_http_concurrency.cpp)
+target_link_libraries(test_http_concurrency PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp)
+target_include_directories(test_http_concurrency PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db)
+add_test(NAME http_concurrency     COMMAND test_http_concurrency)
+
+# ─────────────────────────────────────────────────────────────────────────
+#  v1.3.4 PR 3 — synchronous run-samples runner
+#  ─────────────────────────────────────────────────────────────────────────
+#  test_sample_runner.cpp — pure-unit tests for SampleRunner + the
+#  extended parse_judge_result_json (case_results[] readback). The
+#  SampleRunner's docker choreography is identical to JudgeScheduler's
+#  run_one_task (which already has integration coverage in
+#  test_judge_scheduler.cpp / scripts/demo_submission.sh), so this
+#  binary focuses on:
+#    - the null-docker / no-infrastructure path
+#    - the JudgeResult::case_results parser's lenient readback
+#    - legacy-envelope / empty-logs / prefix-noise defensive paths
+#
+#  Link set mirrors test_judge_scheduler: SampleRunner pulls in
+#  judge_scheduler.h (for JudgeTask + JudgeResult +
+#  parse_judge_result_json) + docker_client.h (transitively via
+#  JudgeScheduler). No real docker calls are made; the integration
+#  path is covered by scripts/demo_submission.sh.
+add_executable(test_sample_runner    unit/test_sample_runner.cpp)
+target_link_libraries(test_sample_runner PRIVATE
+    GTest::gtest_main
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp)
+target_include_directories(test_sample_runner PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/db
+    ${CMAKE_SOURCE_DIR}/src/judge)
+add_test(NAME sample_runner        COMMAND test_sample_runner)

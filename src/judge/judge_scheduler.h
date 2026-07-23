@@ -243,6 +243,32 @@ struct JudgeTask {
 //  ladder at every call site.
 // ────────────────────────────────────────────────────────────────────────────
 
+// v1.3.4 PR 3 — per-case payload populated by judge.sh's `case_results`
+// JSONL and surfaced through the synchronous run-samples endpoint. The
+// base JudgeScheduler (async path) does NOT serialize these fields — it
+// keeps the small envelope — because the existing `submissions` row
+// only persists aggregate verdict + timings. The SampleRunner fills
+// the full CaseResult vector and lets the route handler stream it as
+// the wire response.
+struct CaseResult {
+    int         index           = 0;
+    std::string status;                     // "ac" | "wa" | "tle" | "mle" | "re" | "ole" | "pe" | "se" | "skipped"
+    int         time_ms         = 0;
+    int         mem_kb          = 0;
+    std::string info;                       // short reason string; non-null only on failure
+    // Populated ONLY by synchronous run-samples; judge.sh writes these
+    // into case_results.jsonl on disk. Truncated to ~4 KB / 1 KB by
+    // judge.sh to keep the JSONL line well under any sensible buffer.
+    std::string input;                      // raw stdin fed to user program
+    std::string expected_output;
+    std::string actual_output;
+    // NOTE: field is `case_stderr`, NOT `stderr`. The latter is a
+    // POSIX macro defined by `<cstdio>` to a FILE* and breaks MSVC
+    // parsing ("error C2059: 语法错误:'常数'"). Wire JSON key stays
+    // "stderr" — only the C++ identifier is renamed.
+    std::string case_stderr;
+};
+
 struct JudgeResult {
     std::string status            = "se";
     int         time_used_ms      = 0;
@@ -250,6 +276,10 @@ struct JudgeResult {
     std::string error_message;
     int         failed_case_index = -1;     // -1 ⇒ no case failed
     bool        parsed            = false;  // true ⇒ came from a clean JSON parse
+    // v1.3.4 PR 3 — populated by parse_judge_result_json() whenever
+    // judge.sh emits a `case_results` array (which is now always). Empty
+    // for backward compatibility (legacy judges without the array).
+    std::vector<CaseResult> case_results;
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1138,6 +1168,9 @@ public:
         if (logs.empty()) {
             r.status = "se";
             r.error_message = "judge produced no stdout";
+            if (wait_exit_code != 0) {
+                r.error_message += " (wait exit=" + std::to_string(wait_exit_code) + ")";
+            }
             return r;
         }
         // Walk backwards looking for the last line starting with '{'.
@@ -1192,6 +1225,45 @@ public:
                 if (j.contains("failed_case_index") &&
                     j["failed_case_index"].is_number()) {
                     r.failed_case_index = j["failed_case_index"].get<int>();
+                }
+                // v1.3.4 PR 3 — parse `case_results[]` if present. Each
+                // element is read leniently: missing or wrong-typed
+                // fields fall back to defaults rather than dropping the
+                // whole row, so a partial upgrade of judge.sh on one
+                // node can't sink the wire response.
+                if (j.contains("case_results") && j["case_results"].is_array()) {
+                    for (const auto& cj : j["case_results"]) {
+                        if (!cj.is_object()) continue;
+                        CaseResult c;
+                        if (cj.contains("index") && cj["index"].is_number()) {
+                            c.index = cj["index"].get<int>();
+                        }
+                        if (cj.contains("status") && cj["status"].is_string()) {
+                            c.status = cj["status"].get<std::string>();
+                        }
+                        if (cj.contains("time_ms") && cj["time_ms"].is_number()) {
+                            c.time_ms = cj["time_ms"].get<int>();
+                        }
+                        if (cj.contains("mem_kb") && cj["mem_kb"].is_number()) {
+                            c.mem_kb = cj["mem_kb"].get<int>();
+                        }
+                        if (cj.contains("info") && cj["info"].is_string()) {
+                            c.info = cj["info"].get<std::string>();
+                        }
+                        if (cj.contains("input") && cj["input"].is_string()) {
+                            c.input = cj["input"].get<std::string>();
+                        }
+                        if (cj.contains("expected_output") && cj["expected_output"].is_string()) {
+                            c.expected_output = cj["expected_output"].get<std::string>();
+                        }
+                        if (cj.contains("actual_output") && cj["actual_output"].is_string()) {
+                            c.actual_output = cj["actual_output"].get<std::string>();
+                        }
+                        if (cj.contains("stderr") && cj["stderr"].is_string()) {
+                            c.case_stderr = cj["stderr"].get<std::string>();
+                        }
+                        r.case_results.push_back(std::move(c));
+                    }
                 }
                 r.parsed = true;
                 return r;

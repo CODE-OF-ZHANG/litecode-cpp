@@ -18,6 +18,8 @@
 #include <filesystem>
 #include "judge/warm_pool.h"
 
+#include "judge/sample_runner.h"          // v1.3.4 PR 3 — sync run-samples
+
 #include <iostream>
 
 namespace litecode {
@@ -83,6 +85,16 @@ JudgeDeps build_judge_deps(const JudgeConfig& cfg,
                       << std::endl;
         }
     }
+
+    // v1.3.4 PR 3 — synchronous run-samples runner. Always constructed
+    // (cheap: a counting_semaphore + 4 pointers); when docker_client
+    // is null the runner short-circuits every call to a SE result.
+    // We pass cfg directly so the SampleRunner sees the same
+    // task_dir_parent / judge_image / network_mode / task_volume_name
+    // the async JudgeScheduler is using — a future "promote sample to
+    // submission" feature would also reuse these.
+    out.sample_runner = std::make_unique<judge::SampleRunner>(
+        out.docker_client.get(), cfg, /*metrics=*/nullptr);
 
     return out;
 }

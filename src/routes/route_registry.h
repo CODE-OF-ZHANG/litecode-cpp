@@ -56,7 +56,8 @@ HttpServer& register_stats_routes(
 // `litecode::` directly — NOT `litecode::detail`.
 HttpServer& register_submission_routes(
     HttpServer&, ConnectionPool&, RateLimiter&, const RateLimitConfig&,
-    const JwtConfig&, judge::JudgeScheduler*, judge::JudgeNotifier*);
+    const JwtConfig&, judge::JudgeScheduler*, judge::JudgeNotifier*,
+    judge::SampleRunner* = nullptr);
 
 // admin_audit_log_routes.h: register_admin_audit_log_routes is in
 // namespace litecode::admin_audit_log_routes.

@@ -107,23 +107,27 @@ def hash_password(pw: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# MySQL 执行后端 — 默认走 docker exec,fallback 到 host mysql 客户端
+# MySQL 执行后端 — 默认走 docker compose exec,fallback 到 host mysql 客户端
 # ─────────────────────────────────────────────────────────────────────────
 # v1.3.3.7 真实踩坑:host 上如果碰巧装了 MySQL 占用了 3306 端口(Windows
 # 用户常见),docker-compose 把 MySQL 容器的 3306 host 映射会失败,host
 # 上的 mysql 客户端会连到本机 MySQL 而不是容器 — 数据完全错位!
 #
-# 所以默认走 `docker exec -e MYSQL_PWD=... litecode-mysql mysql ...`,
-# 密码通过 env 传(不进 process list / 不进 shell history),100% 进
-# 容器内的 MySQL。
-#
-# 如果用户显式设了 MYSQL_HOST env(非默认),就走 host mysql 客户端
-# (适合 CI runner / 无 docker 场景)。
+# v1.3.4 进一步收紧:默认先尝试 `docker compose exec -T mysql`(用
+# compose 服务名而非容器名,兼容 Compose project name 改写);失败再
+# 回退 `docker exec -i litecode-mysql`(兼容旧 compose 文件);只有
+# 显式 `LITECODE_DB_BACKEND=host` 才允许走 host 客户端(适合 CI /
+# 无 docker 场景)。这样:
+#   - 默认 100% 进容器内 MySQL,与 start.sh §3 / web 服务一致
+#   - 不再有"auto 静默 fallback 到 host"导致的数据错位
+#   - 密码通过 env 传(不进 process list / 不进 shell history)
 # ─────────────────────────────────────────────────────────────────────────
 
 DEFAULT_CONTAINER = "litecode-mysql"
 DEFAULT_DB        = "litecode"
 DEFAULT_ROOT_PWD   = "123456"  # 与 .env / docker-compose 一致
+# v1.3.4 默认 compose project 名 = 仓库目录名,与 docker compose 默认一致
+DEFAULT_COMPOSE_FILE = "docker-compose.yml"
 
 
 def _backend() -> str:
@@ -131,17 +135,37 @@ def _backend() -> str:
     return os.environ.get("LITECODE_DB_BACKEND", "auto")
 
 
+def _compose_file() -> str:
+    return os.environ.get("LITECODE_COMPOSE_FILE", DEFAULT_COMPOSE_FILE)
+
+
+def _compose_mysql_cmd() -> Optional[List[str]]:
+    """v1.3.4 优先路径 — 用 compose 服务名 `mysql`,不写死容器名。"""
+    pwd = os.environ.get("MYSQL_ROOT_PASSWORD", DEFAULT_ROOT_PWD)
+    return [
+        "docker", "compose", "-f", _compose_file(),
+        "exec", "-T", "-e", f"MYSQL_PWD={pwd}",
+        "mysql",
+        "mysql", "-uroot", "--protocol=socket",
+        "--batch", "--skip-column-names",
+        os.environ.get("LITECODE_MYSQL_DATABASE", DEFAULT_DB),
+    ]
+
+
 def _docker_mysql_cmd() -> List[str]:
+    """v1.3.4 第二回退 — 直接 docker exec 容器(容器名兼容)。"""
     pwd = os.environ.get("MYSQL_ROOT_PASSWORD", DEFAULT_ROOT_PWD)
     return [
         "docker", "exec", "-i", "-e", f"MYSQL_PWD={pwd}",
         os.environ.get("LITECODE_MYSQL_CONTAINER", DEFAULT_CONTAINER),
-        "mysql", "-uroot", "--batch", "--skip-column-names",
+        "mysql", "-uroot", "--protocol=socket",
+        "--batch", "--skip-column-names",
         os.environ.get("LITECODE_MYSQL_DATABASE", DEFAULT_DB),
     ]
 
 
 def _host_mysql_cmd() -> List[str]:
+    """v1.3.4 仅在 LITECODE_DB_BACKEND=host 时启用。"""
     return [
         "mysql",
         "-h", os.environ.get("MYSQL_HOST", "127.0.0.1"),
@@ -157,14 +181,21 @@ def _host_mysql_cmd() -> List[str]:
 def _exec_sql(sql: str) -> str:
     """执行 SQL,返回 stdout。
 
-    auto 模式:先尝试 docker,失败就退到 host 客户端。
+    v1.3.4 候选顺序:
+      1) `docker compose exec -T mysql` — 优先,服务名而非容器名
+      2) `docker exec -i litecode-mysql` — 回退,容器名兼容
+      3) `host mysql client` — 仅 LITECODE_DB_BACKEND=host 时启用
+    auto 模式默认尝试 1+2,不静默 fallback 到 host(防数据错位)。
     """
     mode = _backend()
     candidates: List[Tuple[str, List[str], Optional[dict]]] = []
 
     if mode in ("auto", "docker"):
-        candidates.append(("docker", _docker_mysql_cmd(), None))
-    if mode in ("auto", "host"):
+        compose_cmd = _compose_mysql_cmd()
+        if compose_cmd is not None:
+            candidates.append(("compose-exec", compose_cmd, None))
+        candidates.append(("docker-exec", _docker_mysql_cmd(), None))
+    if mode == "host":
         env = os.environ.copy()
         env["MYSQL_PWD"] = os.environ.get("MYSQL_ROOT_PASSWORD", DEFAULT_ROOT_PWD)
         candidates.append(("host", _host_mysql_cmd(), env))
@@ -190,9 +221,9 @@ def _exec_sql(sql: str) -> str:
         f"[admin_tool] FATAL: no MySQL backend succeeded.\n"
         f"  last error: {last_err}\n"
         f"  hint: install docker (and run scripts/start.sh), or set\n"
-        f"        MYSQL_HOST/PORT/USER + MYSQL_ROOT_PASSWORD env vars to\n"
-        f"        point at a reachable MySQL, or LITECODE_DB_BACKEND=host\n"
-        f"        to skip the docker attempt.\n"
+        f"        LITECODE_DB_BACKEND=host + MYSQL_HOST/PORT/USER +\n"
+        f"        MYSQL_ROOT_PASSWORD env vars to point at a reachable\n"
+        f"        MySQL.\n"
     )
     sys.exit(4)
 

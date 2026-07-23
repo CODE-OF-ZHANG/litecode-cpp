@@ -31,6 +31,21 @@ ROOT="$(cd -- "${SCRIPT_DIR}/.." >/dev/null 2>&1 && pwd)"
 COMPOSE_FILE="${ROOT}/docker-compose.yml"
 PROBLEMS_DIR="${ROOT}/problems"
 
+# ─────────────── .env 加载 ───────────────
+# v1.3.4 修 bug 1 根因:docker-compose 用 `${MYSQL_ROOT_PASSWORD:-default}`
+# 形式从 .env 读取密码(默认 123456);start.sh 之前直接在 shell 里用
+# `${MYSQL_ROOT_PASSWORD:-rootpass}`,如果 shell env 没设就退到 rootpass,
+# 与容器内 mysqld 实际密码 123456 不匹配 → §3 docker exec 鉴权失败。
+# 这里在 PATH 解析之后 source .env,让 shell 里的 MYSQL_ROOT_PASSWORD
+# / DB_PASSWORD 等与 docker-compose 看到的值一致(优先级:
+#   shell env > .env 文件,符合 docker-compose 的行为)。
+if [ -f "${ROOT}/.env" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "${ROOT}/.env"
+    set +a
+fi
+
 # ─────────────── 配置 ───────────────
 BASE_URL="${BASE_URL:-http://localhost:8080}"
 BASE_URL="${BASE_URL%/}"
@@ -147,23 +162,58 @@ ok "web 服务 ready（HTTP=$(jqb '.status'), docker=$(jqb '.docker'), warm_pool
 # ════════════════════════════════════════════════════════════
 # §3 应用 DB migrations
 # ════════════════════════════════════════════════════════════
-head "§3 应用 V001-V011 DB migrations"
+# v1.3.4: 统一走 `docker compose exec -T mysql` 进入容器内 MySQL,
+# 不再用 host 上的 `mysql -h 127.0.0.1 -P 3306`。原因:
+#   - host 上若装了 MySQL 占 3306,脚本会写错实例 → 与容器数据
+#     不一致 (admin 账号登录失败等 bug 1 根因)。
+#   - compose 网络里 mysql 服务名就是 host,3306 是经典协议端口,
+#     容器内 mysql client 永远存在且一致。
+# 这样不论 host 端是否有 MySQL,数据 100% 写到容器 mysql。
+head "§3 应用 V001-V099 DB migrations (via docker compose exec)"
 MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-rootpass}"
-if command -v mysql >/dev/null 2>&1; then
-    if MYSQL_PWD="${MYSQL_ROOT_PASSWORD}" mysql -h 127.0.0.1 -P 3306 -uroot \
-            --protocol=TCP -e "SELECT 1" >/dev/null 2>&1; then
-        info "应用 migrations..."
-        if bash "${ROOT}/scripts/init_db.sh" root "${MYSQL_ROOT_PASSWORD}" \
-                127.0.0.1 3306 litecode 2>&1 | tail -8; then
-            ok "V001-V011 migrations 应用完成"
-        else
-            warn "init_db.sh 返回非 0（可能 V001-V011 已全部应用）"
+if docker compose -f "${COMPOSE_FILE}" exec -T \
+        -e "MYSQL_PWD=${MYSQL_ROOT_PASSWORD}" mysql \
+        mysql -uroot --protocol=socket -e "SELECT 1" >/dev/null 2>&1; then
+    info "通过容器内 mysql 客户端应用 migrations..."
+    # 把每个 V*.sql 管道进容器 mysql。docker-entrypoint-initdb.d 已经
+    # 在首次启动时跑过,这里主要是兼容旧卷 / 显式重跑。
+    APPLIED=0; SKIPPED=0
+    MIGRATIONS_DIR="${ROOT}/db/migrations"
+    for f in $(ls "${MIGRATIONS_DIR}"/V*.sql 2>/dev/null | sort); do
+        version="$(basename "$f" .sql | cut -d'_' -f1)"
+        exists="$(docker compose -f "${COMPOSE_FILE}" exec -T \
+            -e "MYSQL_PWD=${MYSQL_ROOT_PASSWORD}" mysql \
+            mysql -uroot --protocol=socket --batch --skip-column-names \
+            litecode -N -e \
+            "SELECT COUNT(*) FROM schema_migrations WHERE version='${version}';" \
+            2>/dev/null | tr -d '[:space:]')"
+        if [ "${exists:-0}" -gt 0 ]; then
+            SKIPPED=$((SKIPPED + 1))
+            continue
         fi
+        if docker compose -f "${COMPOSE_FILE}" exec -T \
+                -e "MYSQL_PWD=${MYSQL_ROOT_PASSWORD}" mysql \
+                mysql -uroot --protocol=socket litecode < "$f" >/dev/null 2>&1; then
+            APPLIED=$((APPLIED + 1))
+        else
+            warn "  ✗ ${version} 应用失败"
+        fi
+    done
+    ok "migrations: applied=${APPLIED}, skipped=${SKIPPED}"
+    # 最后植入 admin(若不存在)。create_admin.sql 用 INSERT ... ON
+    # DUPLICATE KEY UPDATE 是幂等的。
+    if docker compose -f "${COMPOSE_FILE}" exec -T \
+            -e "MYSQL_PWD=${MYSQL_ROOT_PASSWORD}" mysql \
+            mysql -uroot --protocol=socket litecode < \
+            "${ROOT}/scripts/create_admin.sql" >/dev/null 2>&1; then
+        ok "初始 admin 植入完成 (username=admin)"
     else
-        warn "无法直连 MySQL 3306（容器初始化可能已自动跑），跳过显式 migrate"
+        warn "create_admin.sql 返回非 0(可能已存在,忽略)"
     fi
 else
-    warn "无 mysql 客户端，跳过显式 migrate（容器 web 启动时会自动应用 V001-V011）"
+    err "无法通过 docker compose exec 连入 mysql 容器"
+    err "排错: docker compose ps; docker compose logs mysql"
+    exit 2
 fi
 
 # ════════════════════════════════════════════════════════════

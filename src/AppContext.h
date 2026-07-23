@@ -40,6 +40,7 @@ namespace judge {
 class WarmPool;
 class JudgeScheduler;
 class JudgeNotifier;
+class SampleRunner;                          // v1.3.4 PR 3 — sync run-samples
 }
 
 struct AppContext {
@@ -56,6 +57,7 @@ struct AppContext {
     std::unique_ptr<judge::WarmPool>               warm_pool;
     std::unique_ptr<judge::JudgeScheduler>         scheduler;
     std::unique_ptr<judge::JudgeNotifier>          notifier;
+    std::unique_ptr<judge::SampleRunner>           sample_runner;   // v1.3.4 PR 3
 
     // ── Health ───────────────────────────────────────────────────────────
     std::unique_ptr<HealthService>                 health;

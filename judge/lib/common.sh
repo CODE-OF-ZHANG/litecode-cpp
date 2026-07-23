@@ -119,6 +119,48 @@ emit_case_results_from_jsonl() {
     }
 }
 
+# v1.3.4 PR 3 — 把磁盘上的一个文本文件折叠成 JSON 字符串字面量
+# （含 truncate_text 截断 + json_escape 转义），或保留 null。
+# 用法: json_or_file <file_or_literal_null> [truncate_bytes=4096]
+# 输出: null 或 "<json-escaped string>"（带外侧引号），不带尾换行。
+json_or_file() {
+    local v="$1"
+    local max="${2:-4096}"
+    if [ "${v}" = "null" ] || [ -z "${v}" ] || [ ! -f "${v}" ]; then
+        echo "null"
+        return
+    fi
+    local body
+    body="$(cat "${v}" 2>/dev/null || true)"
+    body="$(truncate_text "${body}" "${max}")"
+    printf '"%s"' "$(json_escape "${body}")"
+}
+
+# v1.3.4 PR 3 — 写出 case_results.jsonl 一行（带 input/expected/
+# actual/stderr 字段），让前端的"运行样例"结果面板能逐点展示差异。
+# Args (位置):
+#   $1=index $2=status $3=time_ms $4=mem_kb
+#   $5=info（已经 JSON 化的字面量，例如 'null' 或 '"spj compile failed: foo"'）
+#   $6=input 文件路径 或 'null'
+#   $7=expected 文件路径 或 'null'
+#   $8=actual 文件路径 或 'null'
+#   $9=stderr 文件路径 或 'null'
+#   $10=input/expected/actual 截断字节数（默认 4096）
+#   $11=stderr 截断字节数（默认 2048，与 runtime_error_truncate_bytes 对齐）
+emit_case_line() {
+    local idx="$1" status="$2" time_ms="$3" mem_kb="$4" info="$5"
+    local inp="$6" exp="$7" act="$8" err="$9" max="${10:-4096}" max_err="${11:-2048}"
+    local inp_v exp_v act_v err_v
+    inp_v="$(json_or_file "${inp}" "${max}")"
+    exp_v="$(json_or_file "${exp}" "${max}")"
+    act_v="$(json_or_file "${act}" "${max}")"
+    err_v="$(json_or_file "${err}" "${max_err}")"
+    printf '{"index":%s,"status":"%s","time_ms":%s,"mem_kb":%s,"info":%s,"input":%s,"expected_output":%s,"actual_output":%s,"stderr":%s}\n' \
+        "${idx}" "${status}" "${time_ms}" "${mem_kb}" "${info}" \
+        "${inp_v}" "${exp_v}" "${act_v}" "${err_v}" \
+        >> "${JUDGE_TMP}/case_results.jsonl"
+}
+
 # 输出最终结果 JSON（聚合 case_results.jsonl）
 # Args: submission_id status error_message total_time_ms total_mem_kb failed_case_index
 emit_final_json() {

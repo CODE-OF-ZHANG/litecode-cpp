@@ -111,6 +111,7 @@
 #include "../db/special_judge_repo.h"           // special_judge_repo::find_by_problem_id (Phase 4 ☆ SPJ)
 #include "../judge/judge_notifier.h"            // judge::JudgeNotifier (Phase 4 ★ SSE)
 #include "../judge/judge_scheduler.h"           // JudgeScheduler / JudgeTask
+#include "../judge/sample_runner.h"             // v1.3.4 PR 3 — SampleRunner
 #include "../logger.h"                          // LOG_INFO / LOG_WARN
 #include "../middleware/auth_middleware.h"      // require_authentication / Claims
 #include "../middleware/rate_limit.h"           // consume_rate_limit / submission_quota
@@ -1251,9 +1252,235 @@ inline void sse_submission_handler(
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+//  POST /api/v1/submissions/run-samples — v1.3.4 PR 3 (SPEC §5.3, A44+)
+//
+//  Synchronous "run against the sample cases" endpoint, LeetCode-style.
+//
+//  Differences vs. POST /api/v1/submissions:
+//   - No `submissions` row is created (we don't pollute history with
+//     iteration runs).
+//   - No JudgeNotifier publish (no SSE wakeup; nothing to wake).
+//   - Returns immediately with the verdict + per-case payload
+//     (status + time + mem + input/expected/actual/stderr) instead of
+//     a 201 + submission_id.
+//   - Synchronous: blocks until the docker container exits or the
+//     per-case hard timeout fires. Default 3 s/case; capped at
+//     `cfg.judge.sample_max_cases` cases (4 hard upper bound).
+//   - Concurrency capped at `cfg.judge.sample_max_concurrent` (default
+//     2) via SampleRunner's counting_semaphore. Beyond the cap the
+//     handler returns 503 with `error="sample runner saturated"` in
+//     the envelope (rather than queueing — the whole point of this
+//     endpoint is "instant feedback while iterating"; a queued
+//     response isn't instant).
+//
+//  Errors:
+//   - 401 (auth)           — same envelope as POST /api/v1/submissions
+//   - 429 (rate limit)     — same envelope as POST /api/v1/submissions
+//   - 400 (bad body)       — missing problem_id/language/code OR
+//                            problem not found OR problem has no
+//                            sample test cases
+//   - 500 (DB / server)    — same as POST /api/v1/submissions
+//   - 503 (saturated)      — sample runner semaphore at capacity
+//   - 200 (verdict-driven) — payload has `status` field; CE / RE /
+//                            TLE / MLE / OLE / WA / PE / AC all
+//                            surface as 200 so the client can render
+//                            the per-case panel without inspecting
+//                            HTTP status. This matches the LeetCode
+//                            convention; the wire-level status is
+//                            about "did the request succeed", not
+//                            "did the user's code succeed".
+// ────────────────────────────────────────────────────────────────────────────
+
+inline void run_samples_handler(
+        httplib::Response&                res,
+        const httplib::Request&           req,
+        litecode::ConnectionPool&         pool,
+        litecode::RateLimiter&            limiter,
+        const litecode::RateLimitConfig&  rate_cfg,
+        const litecode::JwtConfig&        jwt_cfg,
+        litecode::judge::SampleRunner*    sample_runner) {
+
+    // 1) Auth. Throws ApiException(401).
+    const Claims claims = require_authentication(req, jwt_cfg);
+
+    // 2) Rate limit (SPEC §5.3: 60/min/user by default).
+    consume_rate_limit(res, req, limiter, sample_run_quota(rate_cfg));
+
+    // 3) Body shape.
+    const auto body = parse_json_body(req, res);
+    if (!body) return;
+
+    const auto problem_id = detail::require_int_field(
+        *body, res, "problem_id", /*min_inclusive=*/1,
+        /*max_inclusive=*/std::numeric_limits<int>::max());
+    if (!problem_id) return;
+
+    const auto language = detail::require_language_field(*body, res);
+    if (!language) return;
+
+    const auto code = detail::require_code_field(*body, res);
+    if (!code) return;
+
+    // 4) Problem must exist + not soft-deleted.
+    std::optional<litecode::ProblemRow> problem;
+    try {
+        problem = litecode::problem_repo::find_by_id(
+            pool, *problem_id, /*include_deleted=*/false);
+    } catch (const std::exception& e) {
+        LOG_ERROR("run_samples: find_by_id threw",
+                  {{"problem_id", std::to_string(*problem_id)},
+                   {"type",       typeid(e).name()},
+                   {"reason",     e.what()}});
+        send_error(res, 500, litecode::ErrorCode::INTERNAL_ERROR,
+                   std::string("internal error: ") + e.what());
+        return;
+    }
+    if (!problem.has_value()) {
+        send_error(res, 400, litecode::ErrorCode::INVALID_INPUT,
+                   "problem does not exist",
+                   {{"problem_id", std::to_string(*problem_id)}});
+        return;
+    }
+
+    // 5) Load the SAMPLE test cases only.
+    std::vector<litecode::SampleCaseRow> sample_cases;
+    try {
+        sample_cases = litecode::test_case_repo::list_for_problem(
+            pool, *problem_id, /*only_samples=*/std::optional<bool>(true));
+    } catch (const std::exception& e) {
+        LOG_ERROR("run_samples: list_for_problem threw",
+                  {{"problem_id", std::to_string(*problem_id)},
+                   {"type",       typeid(e).name()},
+                   {"reason",     e.what()}});
+        send_error(res, 500, litecode::ErrorCode::INTERNAL_ERROR,
+                   std::string("internal error: ") + e.what());
+        return;
+    }
+    if (sample_cases.empty()) {
+        send_error(res, 400, litecode::ErrorCode::INVALID_INPUT,
+                   "problem has no sample test cases configured",
+                   {{"problem_id", std::to_string(*problem_id)}});
+        return;
+    }
+
+    // 6) Build the JudgeTask. Hard cap at 4 (the JudgeConfig hard
+    //    upper bound); SampleRunner itself enforces a final cap
+    //    from its own cfg if the operator dialed sample_max_cases
+    //    lower than 4.
+    litecode::judge::JudgeTask task;
+    task.submission_id      = 0;
+    task.user_id            = detail::claims_user_id_int(claims);
+    task.problem_id         = *problem_id;
+    task.language           = *language;
+    task.code               = std::move(*code);
+    task.time_limit_ms      = problem->time_limit;
+    task.memory_limit_mb    = problem->memory_limit;
+    task.compile_timeout_ms = 10'000;
+
+    constexpr int kMaxSamplesHardCap = 4;
+    const std::size_t limit = static_cast<std::size_t>(kMaxSamplesHardCap);
+    const std::size_t used = std::min(sample_cases.size(), limit);
+    task.test_cases.reserve(used);
+    for (std::size_t i = 0; i < used; ++i) {
+        const auto& c = sample_cases[i];
+        litecode::judge::JudgeTask::TestCaseInput in;
+        in.input           = c.input;
+        in.expected_output = c.expected_output;
+        in.judge_type      = c.judge_type;
+        in.float_epsilon   = std::nullopt;
+        in.order_num       = c.order_num;
+        task.test_cases.push_back(std::move(in));
+    }
+
+    // 6b) Special Judge — same semantics as the async path.
+    try {
+        const auto spj = litecode::special_judge_repo::find_by_problem_id(
+            pool, *problem_id);
+        if (spj.has_value()) {
+            task.spj_source   = spj->source;
+            task.spj_language = spj->language;
+        }
+    } catch (const std::exception& e) {
+        LOG_WARN("run_samples: special judge load failed",
+                 {{"problem_id", std::to_string(*problem_id)},
+                  {"type",       typeid(e).name()},
+                  {"reason",     e.what()}});
+    }
+
+    // 7) Synchronous execution.
+    if (sample_runner == nullptr) {
+        send_error(res, 503, litecode::ErrorCode::SERVICE_UNAVAILABLE,
+                   "sample runner is not configured on this server");
+        return;
+    }
+
+    litecode::judge::SampleRunner::Result run_result;
+    try {
+        run_result = sample_runner->run(std::move(task));
+    } catch (const std::exception& e) {
+        LOG_ERROR("run_samples: SampleRunner threw (unexpected)",
+                  {{"user_id",    claims.user_id},
+                   {"problem_id", std::to_string(*problem_id)},
+                   {"type",       typeid(e).name()},
+                   {"reason",     e.what()}});
+        send_error(res, 500, litecode::ErrorCode::INTERNAL_ERROR,
+                   std::string("internal error: ") + e.what());
+        return;
+    }
+
+    if (run_result.saturated) {
+        LOG_INFO("run_samples: saturated",
+                 {{"user_id",    claims.user_id},
+                  {"problem_id", std::to_string(*problem_id)}});
+        send_error(res, 503, litecode::ErrorCode::SERVICE_UNAVAILABLE,
+                   "sample runner saturated, retry shortly");
+        return;
+    }
+
+    // 9) Build the wire response.
+    nlohmann::json cases = nlohmann::json::array();
+    for (const auto& c : run_result.verdict.case_results) {
+        nlohmann::json cj;
+        cj["index"]           = c.index;
+        cj["status"]          = c.status.empty() ? "se" : c.status;
+        cj["time_ms"]         = c.time_ms;
+        cj["mem_kb"]          = c.mem_kb;
+        cj["info"]            = c.info.empty() ? nlohmann::json(nullptr)
+                                                : nlohmann::json(c.info);
+        cj["input"]           = c.input;
+        cj["expected_output"] = c.expected_output;
+        cj["actual_output"]   = c.actual_output;
+        cj["stderr"]          = c.case_stderr;
+        cases.push_back(std::move(cj));
+    }
+    nlohmann::json out;
+    out["status"]            = run_result.verdict.status;
+    out["time_used_ms"]      = run_result.verdict.time_used_ms;
+    out["memory_used_kb"]    = run_result.verdict.memory_used_kb;
+    out["error_message"]     = run_result.verdict.error_message.empty()
+        ? nlohmann::json(nullptr)
+        : nlohmann::json(run_result.verdict.error_message);
+    out["failed_case_index"] = run_result.verdict.failed_case_index;
+    out["parsed"]            = run_result.verdict.parsed;
+    out["container_wall_ms"] = run_result.container_wall_ms;
+    out["used_sample_count"] = static_cast<int>(used);
+    out["total_sample_count"] = static_cast<int>(sample_cases.size());
+    out["cases"]             = std::move(cases);
+
+    LOG_INFO("run_samples: completed",
+             {{"user_id",        std::string(claims.user_id)},
+              {"problem_id",     std::to_string(*problem_id)},
+              {"status",         std::string(run_result.verdict.status)},
+              {"container_wall_ms", std::to_string(run_result.container_wall_ms)},
+              {"used_sample_count", std::to_string(static_cast<long long>(used))}});
+
+    send_success(res, std::move(out));
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 //  Route registration
 //
-//  Three handlers, three endpoints. The JudgeScheduler pointer is
+//  Four handlers, four endpoints. The JudgeScheduler pointer is
 //  captured by reference; the caller (main() / test fixture) owns
 //  the scheduler. Pass nullptr to disable enqueue (the row stays in
 //  status='pending'); the test fixture for the pure route-layer
@@ -1292,7 +1519,8 @@ inline HttpServer& register_submission_routes(
         const RateLimitConfig&            rate_cfg,
         const JwtConfig&                  jwt_cfg,
         judge::JudgeScheduler*            scheduler,
-        judge::JudgeNotifier*             notifier = nullptr) {
+        judge::JudgeNotifier*             notifier      = nullptr,
+        judge::SampleRunner*              sample_runner = nullptr) {
 
     // POST /api/v1/submissions — async enqueue (SPEC §5.3, A6/A25).
     server.post("/api/v1/submissions",
@@ -1305,6 +1533,30 @@ inline HttpServer& register_submission_routes(
                 throw;  // envelope already shaped — let server.h wrap emit
             } catch (const std::exception& e) {
                 LOG_ERROR("submission_create: handler threw",
+                          {{"type",   typeid(e).name()},
+                           {"reason", e.what()}});
+                if (res.body.empty()) {
+                    send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                               std::string("internal error: ") + e.what());
+                } else {
+                    throw;
+                }
+            }
+        });
+
+    // POST /api/v1/submissions/run-samples — v1.3.4 PR 3 synchronous
+    // sample-run endpoint. Distinct leaf segment so cpp-httplib's
+    // pattern matcher dispatches correctly.
+    server.post("/api/v1/submissions/run-samples",
+        [&, sample_runner]
+        (const httplib::Request& req, httplib::Response& res) {
+            try {
+                run_samples_handler(
+                    res, req, pool, limiter, rate_cfg, jwt_cfg, sample_runner);
+            } catch (const ApiException&) {
+                throw;  // envelope already shaped
+            } catch (const std::exception& e) {
+                LOG_ERROR("run_samples: handler threw",
                           {{"type",   typeid(e).name()},
                            {"reason", e.what()}});
                 if (res.body.empty()) {

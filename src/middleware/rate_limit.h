@@ -310,6 +310,25 @@ inline RateLimitQuota admin_queue_quota(const RateLimitConfig& cfg) {
     };
 }
 
+// v1.3.4 PR 3 — synchronous run-samples rate cap. Per-user (a shared
+// IP, e.g. a classroom, has many students each with their own bucket
+// — the per-IP cap used by the auth endpoints would punish the whole
+// classroom for one user's clicking). Default 60/min/user is generous
+// enough for a LeetCode-style "tweak → run → tweak" loop (one cycle
+// every second is 60/min); operators can tighten via
+// SAMPLE_RUN_RATE_PER_MINUTE_PER_USER for exam / CI scenarios. The
+// bucket name is independent of every other bucket so a user
+// spamming sample-runs cannot starve their submission quota (and vice
+// versa).
+inline RateLimitQuota sample_run_quota(const RateLimitConfig& cfg) {
+    return RateLimitQuota{
+        "sample.run",
+        cfg.sample_run_per_minute_per_user,
+        std::chrono::minutes(1),
+        RateLimitKeyType::ByUser,
+    };
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 //  Section: RateLimitDecision
 //
@@ -822,7 +841,13 @@ inline void consume_rate_limit(httplib::Response&     res,
     // Clients use these to back off proactively (well-behaved bots
     // read them) and they're invaluable when debugging limit disputes.
     res.set_header("X-RateLimit-Limit",     std::to_string(decision.limit));
-    res.set_header("X-RateLimit-Remaining", std::to_string(std::max(0, decision.remaining)));
+    // v1.3.4 PR 3 — sidestep a Windows-specific MSVC parse glitch
+    // where std::max(0, x) collapses to "0 args" when the project is
+    // compiled without NOMINMAX (the parent CMakeLists.txt may pull in
+    // <windows.h> transitively, which #define max(a,b) to a SAL macro).
+    // The ternary is functionally equivalent and parses cleanly on
+    // every toolchain.
+    res.set_header("X-RateLimit-Remaining", std::to_string(decision.remaining > 0 ? decision.remaining : 0));
 
     if (decision.allowed) return;
 

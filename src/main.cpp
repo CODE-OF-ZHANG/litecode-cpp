@@ -37,6 +37,7 @@
 #include "AppContext.h"
 #include "app_context_deps.h"
 #include "config.h"
+#include "judge/sample_runner.h"        // v1.3.4 PR 3 — needed for AppContext's unique_ptr<SampleRunner> destructor
 #include "logger.h"
 #include "routes/route_registry.h"
 #include "server.h"
@@ -55,12 +56,21 @@ extern "C" void on_signal(int /*sig*/) {
 }
 
 void install_signal_handlers() {
+    // POSIX-correct on Linux/Docker; on MSVC <csignal> only declares
+    // `signal()` (sigaction is a POSIX extension not exposed), so we
+    // fall back to signal() there. Functionally equivalent for our
+    // needs (one-shot handler that sets the shutdown atomic).
+#ifdef _WIN32
+    std::signal(SIGTERM, &on_signal);
+    std::signal(SIGINT,  &on_signal);
+#else
     struct sigaction sa{};
     sa.sa_handler = &on_signal;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIGTERM, &sa, nullptr);
     sigaction(SIGINT,  &sa, nullptr);
+#endif
 }
 
 } // namespace
@@ -117,6 +127,7 @@ int main() {
     ctx.warm_pool      = std::move(judge.warm_pool);
     ctx.scheduler      = std::move(judge.scheduler);
     ctx.notifier       = std::move(judge.notifier);
+    ctx.sample_runner  = std::move(judge.sample_runner);
     ctx.health         = std::move(health.health);
     ctx.docker_probe   = docker_probe;
     ctx.metrics        = std::move(metrics.metrics);
@@ -175,7 +186,8 @@ int main() {
         // litecode` (both `detail` blocks close first).
         litecode::register_submission_routes(server, *ctx.db_pool,
             *ctx.limiter, cfg.rate_limit, cfg.jwt,
-            ctx.scheduler.get(), ctx.notifier.get());
+            ctx.scheduler.get(), ctx.notifier.get(),
+            ctx.sample_runner.get());
 
         litecode::admin_user_routes::register_admin_user_routes(server, *ctx.db_pool,
             *ctx.limiter, cfg.rate_limit, cfg.jwt);

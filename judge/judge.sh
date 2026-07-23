@@ -332,7 +332,7 @@ for ((i = 0; i < TC_COUNT; i++)); do
         FINAL_STATUS="se"
         FAILED_CASE_INDEX="${i}"
         ERROR_MESSAGE="judge script exceeded hard timeout (${RUN_HARD_TIMEOUT_MS} ms)"
-        printf '{"index":%s,"status":"se","time_ms":0,"mem_kb":0,"info":null}\n' "${i}" \
+        emit_case_line "${i}" "se" 0 0 'null' "null" "null" "null" "null" \
             >> "${JUDGE_TMP}/case_results.jsonl"
         break
     fi
@@ -342,7 +342,7 @@ for ((i = 0; i < TC_COUNT; i++)); do
 
     if [ "${FINAL_STATUS}" != "ac" ]; then
         # 已失败：后续点记 skipped（保留顺序，便于前端按点展示）
-        printf '{"index":%s,"status":"skipped","time_ms":0,"mem_kb":0,"info":null}\n' "${i}" \
+        emit_case_line "${i}" "skipped" 0 0 'null' "null" "null" "null" "null" \
             >> "${JUDGE_TMP}/case_results.jsonl"
         continue
     fi
@@ -376,8 +376,9 @@ for ((i = 0; i < TC_COUNT; i++)); do
         FINAL_STATUS="ole"
         FAILED_CASE_INDEX="${i}"
         ERROR_MESSAGE="output exceeded ${OUTPUT_LIMIT_BYTES} bytes (got ${RAW_BYTES})"
-        printf '{"index":%s,"status":"ole","time_ms":%s,"mem_kb":%s,"info":"output %s > %s bytes"}\n' \
-            "${i}" "${TIME_MS}" "${MEM_KB}" "${RAW_BYTES}" "${OUTPUT_LIMIT_BYTES}" \
+        # OLE 时 OUT_FILE 还没生成；用 RAW_OUT（4KB 截断）展示用户的第一段输出
+        emit_case_line "${i}" "ole" "${TIME_MS}" "${MEM_KB}" "\"output ${RAW_BYTES} > ${OUTPUT_LIMIT_BYTES} bytes\"" \
+            "null" "null" "${RAW_OUT}" "${STDERR_FILE}" \
             >> "${JUDGE_TMP}/case_results.jsonl"
         continue
     fi
@@ -396,8 +397,10 @@ for ((i = 0; i < TC_COUNT; i++)); do
             FINAL_STATUS="tle"
             FAILED_CASE_INDEX="${i}"
             ERROR_MESSAGE="time limit exceeded (${TIME_MS} ms > ${TIME_LIMIT_MS} ms)"
-            printf '{"index":%s,"status":"tle","time_ms":%s,"mem_kb":%s,"info":null}\n' \
-                "${i}" "${TIME_MS}" "${MEM_KB}" >> "${JUDGE_TMP}/case_results.jsonl"
+            # TLE 时 OUT_FILE 还没生成（line 385 才 head -c），所以传 RAW_OUT
+            emit_case_line "${i}" "tle" "${TIME_MS}" "${MEM_KB}" 'null' \
+                "null" "null" "${RAW_OUT}" "${STDERR_FILE}" \
+                >> "${JUDGE_TMP}/case_results.jsonl"
             continue
             ;;
         137)
@@ -408,8 +411,9 @@ for ((i = 0; i < TC_COUNT; i++)); do
             FINAL_STATUS="mle"
             FAILED_CASE_INDEX="${i}"
             ERROR_MESSAGE="memory limit exceeded"
-            printf '{"index":%s,"status":"mle","time_ms":%s,"mem_kb":%s,"info":"OOM killed"}\n' \
-                "${i}" "${TIME_MS}" "${MEM_KB}" >> "${JUDGE_TMP}/case_results.jsonl"
+            emit_case_line "${i}" "mle" "${TIME_MS}" "${MEM_KB}" '"OOM killed"' \
+                "null" "null" "${RAW_OUT}" "${STDERR_FILE}" \
+                >> "${JUDGE_TMP}/case_results.jsonl"
             continue
             ;;
         *)
@@ -422,8 +426,10 @@ for ((i = 0; i < TC_COUNT; i++)); do
             FINAL_STATUS="re"
             FAILED_CASE_INDEX="${i}"
             ERROR_MESSAGE="${RE_ERR}"
-            printf '{"index":%s,"status":"re","time_ms":%s,"mem_kb":%s,"info":null}\n' \
-                "${i}" "${TIME_MS}" "${MEM_KB}" >> "${JUDGE_TMP}/case_results.jsonl"
+            # RE 时 OUT_FILE 也未生成；把 RAW_OUT 当 actual_output（截到 4KB）
+            emit_case_line "${i}" "re" "${TIME_MS}" "${MEM_KB}" 'null' \
+                "null" "null" "${RAW_OUT}" "${STDERR_FILE}" \
+                >> "${JUDGE_TMP}/case_results.jsonl"
             continue
             ;;
     esac
@@ -443,8 +449,8 @@ for ((i = 0; i < TC_COUNT; i++)); do
                 FAILED_CASE_INDEX="${i}"
                 CASE_STATUS="wa"
             fi
-            printf '{"index":%s,"status":"%s","time_ms":%s,"mem_kb":%s,"info":null}\n' \
-                "${i}" "${CASE_STATUS}" "${TIME_MS}" "${MEM_KB}" \
+            emit_case_line "${i}" "${CASE_STATUS}" "${TIME_MS}" "${MEM_KB}" 'null' \
+                "${cdir}/input.txt" "${EXPECTED_FILE}" "${OUT_FILE}" "${STDERR_FILE}" \
                 >> "${JUDGE_TMP}/case_results.jsonl"
             ;;
         ignore_trailing)
@@ -455,8 +461,8 @@ for ((i = 0; i < TC_COUNT; i++)); do
                 FAILED_CASE_INDEX="${i}"
                 CASE_STATUS="pe"
             fi
-            printf '{"index":%s,"status":"%s","time_ms":%s,"mem_kb":%s,"info":null}\n' \
-                "${i}" "${CASE_STATUS}" "${TIME_MS}" "${MEM_KB}" \
+            emit_case_line "${i}" "${CASE_STATUS}" "${TIME_MS}" "${MEM_KB}" 'null' \
+                "${cdir}/input.txt" "${EXPECTED_FILE}" "${OUT_FILE}" "${STDERR_FILE}" \
                 >> "${JUDGE_TMP}/case_results.jsonl"
             ;;
         float_eps)
@@ -468,8 +474,8 @@ for ((i = 0; i < TC_COUNT; i++)); do
                 FAILED_CASE_INDEX="${i}"
                 CASE_STATUS="wa"
             fi
-            printf '{"index":%s,"status":"%s","time_ms":%s,"mem_kb":%s,"info":null}\n' \
-                "${i}" "${CASE_STATUS}" "${TIME_MS}" "${MEM_KB}" \
+            emit_case_line "${i}" "${CASE_STATUS}" "${TIME_MS}" "${MEM_KB}" 'null' \
+                "${cdir}/input.txt" "${EXPECTED_FILE}" "${OUT_FILE}" "${STDERR_FILE}" \
                 >> "${JUDGE_TMP}/case_results.jsonl"
             ;;
         ignore_case)
@@ -484,8 +490,8 @@ for ((i = 0; i < TC_COUNT; i++)); do
                 FAILED_CASE_INDEX="${i}"
                 CASE_STATUS="wa"
             fi
-            printf '{"index":%s,"status":"%s","time_ms":%s,"mem_kb":%s,"info":null}\n' \
-                "${i}" "${CASE_STATUS}" "${TIME_MS}" "${MEM_KB}" \
+            emit_case_line "${i}" "${CASE_STATUS}" "${TIME_MS}" "${MEM_KB}" 'null' \
+                "${cdir}/input.txt" "${EXPECTED_FILE}" "${OUT_FILE}" "${STDERR_FILE}" \
                 >> "${JUDGE_TMP}/case_results.jsonl"
             ;;
         ignore_all_whitespace)
@@ -501,8 +507,8 @@ for ((i = 0; i < TC_COUNT; i++)); do
                 FAILED_CASE_INDEX="${i}"
                 CASE_STATUS="wa"
             fi
-            printf '{"index":%s,"status":"%s","time_ms":%s,"mem_kb":%s,"info":null}\n' \
-                "${i}" "${CASE_STATUS}" "${TIME_MS}" "${MEM_KB}" \
+            emit_case_line "${i}" "${CASE_STATUS}" "${TIME_MS}" "${MEM_KB}" 'null' \
+                "${cdir}/input.txt" "${EXPECTED_FILE}" "${OUT_FILE}" "${STDERR_FILE}" \
                 >> "${JUDGE_TMP}/case_results.jsonl"
             ;;
         special)
@@ -521,16 +527,18 @@ for ((i = 0; i < TC_COUNT; i++)); do
                     FINAL_STATUS="se"
                     FAILED_CASE_INDEX="${i}"
                     ERROR_MESSAGE="${SPJ_ERR}"
-                    printf '{"index":%s,"status":"se","time_ms":%s,"mem_kb":%s,"info":"spj compile failed: %s"}\n' \
-                        "${i}" "${TIME_MS}" "${MEM_KB}" "${SPJ_ERR}" \
+                    emit_case_line "${i}" "se" "${TIME_MS}" "${MEM_KB}" "\"spj compile failed: ${SPJ_ERR}\"" \
+                        "null" "null" "null" "null" \
                         >> "${JUDGE_TMP}/case_results.jsonl"
                 else
-                    # 2) 题未挂 SPJ — admin 还没上传；判 WA 让 operator 看见
+                    # 2) 题未挂 SPJ — admin 还没上传；判 WA 让 operator 看见。
+                    # 用户代码确实跑过，把 input/expected/actual/stderr 都喂回去，
+                    # 前端的"运行样例"面板能直接展示用户 vs expected 差异。
                     FINAL_STATUS="wa"
                     FAILED_CASE_INDEX="${i}"
                     CASE_STATUS="wa"
-                    printf '{"index":%s,"status":"wa","time_ms":%s,"mem_kb":%s,"info":"no special judge configured"}\n' \
-                        "${i}" "${TIME_MS}" "${MEM_KB}" \
+                    emit_case_line "${i}" "wa" "${TIME_MS}" "${MEM_KB}" '"no special judge configured"' \
+                        "${cdir}/input.txt" "${EXPECTED_FILE}" "${OUT_FILE}" "${STDERR_FILE}" \
                         >> "${JUDGE_TMP}/case_results.jsonl"
                 fi
             else
@@ -542,8 +550,8 @@ for ((i = 0; i < TC_COUNT; i++)); do
                 case "${SPJ_RC}" in
                     0)
                         CASE_STATUS="ac"
-                        printf '{"index":%s,"status":"ac","time_ms":%s,"mem_kb":%s,"info":null}\n' \
-                            "${i}" "${TIME_MS}" "${MEM_KB}" \
+                        emit_case_line "${i}" "ac" "${TIME_MS}" "${MEM_KB}" 'null' \
+                            "${cdir}/input.txt" "${EXPECTED_FILE}" "${OUT_FILE}" "${STDERR_FILE}" \
                             >> "${JUDGE_TMP}/case_results.jsonl"
                         ;;
                     1)
@@ -552,12 +560,12 @@ for ((i = 0; i < TC_COUNT; i++)); do
                         CASE_STATUS="wa"
                         SPJ_INFO="$(spj_stdout_for_info 256)"
                         if [ -z "${SPJ_INFO}" ]; then
-                            printf '{"index":%s,"status":"wa","time_ms":%s,"mem_kb":%s,"info":null}\n' \
-                                "${i}" "${TIME_MS}" "${MEM_KB}" \
+                            emit_case_line "${i}" "wa" "${TIME_MS}" "${MEM_KB}" 'null' \
+                                "${cdir}/input.txt" "${EXPECTED_FILE}" "${OUT_FILE}" "${STDERR_FILE}" \
                                 >> "${JUDGE_TMP}/case_results.jsonl"
                         else
-                            printf '{"index":%s,"status":"wa","time_ms":%s,"mem_kb":%s,"info":"%s"}\n' \
-                                "${i}" "${TIME_MS}" "${MEM_KB}" "${SPJ_INFO}" \
+                            emit_case_line "${i}" "wa" "${TIME_MS}" "${MEM_KB}" "\"$(json_escape "${SPJ_INFO}")\"" \
+                                "${cdir}/input.txt" "${EXPECTED_FILE}" "${OUT_FILE}" "${STDERR_FILE}" \
                                 >> "${JUDGE_TMP}/case_results.jsonl"
                         fi
                         ;;
@@ -573,12 +581,12 @@ for ((i = 0; i < TC_COUNT; i++)); do
                         ERROR_MESSAGE="special judge crashed (exit=${SPJ_RC})"
                         SPJ_INFO="$(spj_stdout_for_info 256)"
                         if [ -z "${SPJ_INFO}" ]; then
-                            printf '{"index":%s,"status":"se","time_ms":%s,"mem_kb":%s,"info":"spj exit=%s"}\n' \
-                                "${i}" "${TIME_MS}" "${MEM_KB}" "${SPJ_RC}" \
+                            emit_case_line "${i}" "se" "${TIME_MS}" "${MEM_KB}" "\"spj exit=${SPJ_RC}\"" \
+                                "null" "null" "${OUT_FILE}" "${STDERR_FILE}" \
                                 >> "${JUDGE_TMP}/case_results.jsonl"
                         else
-                            printf '{"index":%s,"status":"se","time_ms":%s,"mem_kb":%s,"info":"spj exit=%s: %s"}\n' \
-                                "${i}" "${TIME_MS}" "${MEM_KB}" "${SPJ_RC}" "${SPJ_INFO}" \
+                            emit_case_line "${i}" "se" "${TIME_MS}" "${MEM_KB}" "\"spj exit=${SPJ_RC}: $(json_escape "${SPJ_INFO}")\"" \
+                                "null" "null" "${OUT_FILE}" "${STDERR_FILE}" \
                                 >> "${JUDGE_TMP}/case_results.jsonl"
                         fi
                         ;;
@@ -589,8 +597,9 @@ for ((i = 0; i < TC_COUNT; i++)); do
             FINAL_STATUS="se"
             FAILED_CASE_INDEX="${i}"
             ERROR_MESSAGE="unknown judge_type: ${JT}"
-            printf '{"index":%s,"status":"se","time_ms":%s,"mem_kb":%s,"info":null}\n' \
-                "${i}" "${TIME_MS}" "${MEM_KB}" >> "${JUDGE_TMP}/case_results.jsonl"
+            emit_case_line "${i}" "se" "${TIME_MS}" "${MEM_KB}" 'null' \
+                "${cdir}/input.txt" "${EXPECTED_FILE}" "${OUT_FILE}" "${STDERR_FILE}" \
+                >> "${JUDGE_TMP}/case_results.jsonl"
             ;;
     esac
 done

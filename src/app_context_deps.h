@@ -43,6 +43,7 @@ namespace judge {
 class WarmPool;
 class JudgeScheduler;
 class JudgeNotifier;
+class SampleRunner;                          // v1.3.4 PR 3
 }
 
 // Pulled in via AppContext.h's forward declaration; AppContext.h
@@ -67,6 +68,7 @@ struct JudgeDeps {
     std::unique_ptr<judge::WarmPool>       warm_pool;
     std::unique_ptr<judge::JudgeScheduler> scheduler;
     std::unique_ptr<judge::JudgeNotifier>  notifier;
+    std::unique_ptr<judge::SampleRunner>   sample_runner;     // v1.3.4 PR 3
 };
 // v1.2.50: takes the db_pool so the scheduler can be started
 // here (pre-v1.2.50 the scheduler was constructed with db=nullptr

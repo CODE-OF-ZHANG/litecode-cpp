@@ -190,29 +190,40 @@ private:
 };
 
 // ────────────────────────────────────────────────────────────────────────────
-//  SyncTaskQueue — runs jobs inline on the listener thread.
+//  TaskQueue strategy — `httplib::ThreadPool` (v1.3.4 PR 2)
 //
-//  Why not httplib::ThreadPool? Because cpp-httplib deletes the
-//  TaskQueue* via unique_ptr<TaskQueue> the moment listen_internal()
-//  returns. With httplib::ThreadPool that delete races against our
-//  HttpServer's destructor members, and the resulting lifetime
-//  juggling turned into a STATUS_HEAP_CORRUPTION (0xc0000374) at
-//  teardown on Windows. A synchronous queue has no threads to join
-//  and no lifetime questions, at the cost of one-request-at-a-time
-//  concurrency — which is fine for tests, health probes, and any
-//  single-tenant dev box. When SPEC §11 calls for real concurrency
-//  we can swap this for a properly-owned pool behind the same
-//  TaskQueue interface.
+//  v1.3.4 PR 2 restores real concurrency: per-request jobs are dispatched
+//  onto an `httplib::ThreadPool` of size `ServerConfig::thread_pool_size`
+//  (default 16). Replaces the previous `SyncTaskQueue` shim that ran jobs
+//  inline on the listener thread — fine for tests / health probes, but a
+//  single 3s sample-run in PR 3 would have frozen the whole web process.
+//
+//  Lifetime ownership:
+//  `wire_middleware()` heap-allocates `new httplib::ThreadPool(...)` and
+//  hands the raw pointer to cpp-httplib via `server_->new_task_queue`.
+//  cpp-httplib wraps it in `std::unique_ptr<TaskQueue>` and is the sole
+//  owner from that point on. We retain a *non-owning* raw pointer only
+//  for diagnostics (`thread_pool_size()` getter); we never delete it.
+//
+//  Teardown order (the reason the previous "heap corruption" comment is
+//  obsolete, verified against `third_party/cpp-httplib-0.18.3/httplib.h`):
+//    1. ~HttpServer starts: `stop()` closes `svr_sock_` (httplib::Server::stop
+//       sets `svr_sock_ = INVALID_SOCKET` after closing listen socket).
+//    2. `listen_internal` accept loop sees the closed socket and breaks out.
+//    3. `task_queue->shutdown()` is called BEFORE listen_internal returns
+//       (httplib.h line 6821) — sets `shutdown_=true`, notify_all(), then
+//       joins every worker. Threads are guaranteed terminated by the time
+//       the ThreadPool destructor could conceivably run.
+//    4. listen_internal returns → listen_thread_ exits → our `join()` returns.
+//    5. ~HttpServer members destroy → ~server_ → ~unique_ptr<TaskQueue>
+//       → ~httplib::ThreadPool which is `= default` (no-op; threads are
+//       already joined). No destructor race, no heap corruption.
+//
+//  The earlier STATUS_HEAP_CORRUPTION (0xc0000374) comment described an
+//  older cpp-httplib (≤ 0.10.x) that did not call `task_queue->shutdown()`
+//  before the unique_ptr reset; 0.18.3's ordering (verified by reading
+//  httplib.h:6821 above) puts `shutdown()` ahead of destruction.
 // ────────────────────────────────────────────────────────────────────────────
-
-class SyncTaskQueue : public httplib::TaskQueue {
-public:
-    bool enqueue(std::function<void()> fn) override {
-        if (fn) fn();
-        return true;
-    }
-    void shutdown() override {}
-};
 
 class HttpServer {
 public:
@@ -230,14 +241,21 @@ public:
     }
 
     ~HttpServer() {
+        // v1.3.4 PR 2 — shrunken comment (the long explanation moved
+        // up beside the TaskQueue strategy block at the top of this
+        // file). The teardown ordering is unchanged for callers:
+        //   1. stop() closes the listen socket; listen_internal breaks.
+        //   2. cpp-httplib calls task_queue->shutdown() (httplib.h:6821)
+        //      → all worker threads join.
+        //   3. listen_internal returns → our listen_thread_ exits.
+        //   4. We join listen_thread_, then ~HttpServer runs.
+        //   5. ~server_ → ~unique_ptr<TaskQueue> → ~httplib::ThreadPool
+        //      which is `= default` (empty body — threads already joined).
         stop();
         if (listen_thread_.joinable()) listen_thread_.join();
-        // sync_task_queue_ is a NON-OWNING handle. cpp-httplib deletes
-        // the SyncTaskQueue via its own std::unique_ptr<TaskQueue>
-        // inside listen_internal() the moment listen_internal returns.
-        // We deliberately DO NOT delete it here — that would be a
-        // double-free and crash with STATUS_HEAP_CORRUPTION.
-        sync_task_queue_ = nullptr;
+        // Non-owning handle; release it so a stale pointer can't be
+        // observed through any debug/diagnostic API after teardown.
+        thread_pool_ = nullptr;
     }
 
     HttpServer(const HttpServer&)            = delete;
@@ -439,15 +457,31 @@ private:
     }
 
     void wire_middleware() {
-        // Plug the per-request task queue. Heap-allocate the
-        // SyncTaskQueue; cpp-httplib's std::unique_ptr<TaskQueue>
-        // inside listen_internal() takes ownership of the returned
-        // raw pointer and will delete it when listen_internal returns.
-        // We must NOT also delete it from our side — that would be a
-        // double-free and crash with STATUS_HEAP_CORRUPTION.
-        sync_task_queue_ = new SyncTaskQueue();
-        auto* queue = sync_task_queue_;
-        server_->new_task_queue = [queue]{ return queue; };
+        // v1.3.4 PR 2 — restore bounded HTTP thread pool.
+        //
+        // Heap-allocate `httplib::ThreadPool(thread_pool_size_)` and
+        // hand the raw pointer to cpp-httplib via `server_->new_task_queue`.
+        // cpp-httplib wraps it in `std::unique_ptr<TaskQueue>` and owns it
+        // for the lifetime of `server_`. We retain a non-owning raw
+        // pointer only for diagnostics and structured shutdown; we never
+        // `delete` it ourselves.
+        //
+        // Why heap-allocate instead of `make_unique`? Two reasons:
+        //  1. cpp-httplib's `new_task_queue` API takes a raw pointer
+        //     (it owns via unique_ptr internally); we'd have to leak
+        //     ownership back through `release()` on a unique_ptr to fit.
+        //  2. The closure must hand the *same* pointer to cpp-httplib;
+        //     heap allocation + lambda capture-by-value is the simplest
+        //     way to guarantee a single, stable address.
+        //
+        // Teardown is safe — see the long comment block immediately above
+        // for the cpp-httplib 0.18.3 ordering proof.
+        if (thread_pool_size_ < 1) {
+            thread_pool_size_ = 16;          // defensive default if config went through unvalidated
+        }
+        thread_pool_ = new httplib::ThreadPool(thread_pool_size_);
+        auto* pool = thread_pool_;
+        server_->new_task_queue = [pool]{ return pool; };
 
         // 1. Pre-routing: stamp the per-thread request_id so every log
         //    line emitted while this request is being handled carries
@@ -561,7 +595,10 @@ private:
     }
 
     std::unique_ptr<httplib::Server>     server_;
-    SyncTaskQueue*                       sync_task_queue_ = nullptr;  // non-owning
+    // v1.3.4 PR 2: was SyncTaskQueue* sync_task_queue_; now points at
+    // an `httplib::ThreadPool` instead. Stays non-owning — see the
+    // teardown comment near `~HttpServer()` and the long block above.
+    httplib::ThreadPool*                 thread_pool_     = nullptr;
     CorsPolicy                           cors_;
     std::size_t                          thread_pool_size_;
     std::string                          host_;

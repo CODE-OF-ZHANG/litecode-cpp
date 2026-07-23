@@ -686,7 +686,9 @@ TEST_F(StatsRankingLiveFixture, HappyPathOrderingAndShape) {
     // Top user's stats.
     EXPECT_EQ(items[found_top]["solved_count"].get<int>(),     3);
     EXPECT_EQ(items[found_top]["submission_count"].get<int>(), 4);
-    EXPECT_DOUBLE_EQ(items[found_top]["acceptance_rate"].get<double>(), 100.0 * 4.0 / 3.0);
+    // v1.3.4: acceptance_rate 改为真百分比 — solved/submission*100。
+    // 之前注释里写成"100 * submission / solved"是命名错。
+    EXPECT_DOUBLE_EQ(items[found_top]["acceptance_rate"].get<double>(), 100.0 * 3.0 / 4.0);
     EXPECT_EQ(items[found_top]["rank"].get<int>(), found_top + 1);
 
     // Middle user's stats.
@@ -709,25 +711,28 @@ TEST_F(StatsRankingLiveFixture, HappyPathOrderingAndShape) {
     EXPECT_FALSE(items[found_top]["user"].contains("last_login"));
 }
 
-TEST_F(StatsRankingLiveFixture, EmptyWhenNoAc) {
+TEST_F(StatsRankingLiveFixture, TotalCountsAllUsersEvenWithZeroAc) {
     StdoutSilencer silencer;
-    // No submissions in this test's lifetime → the leaderboard's
-    // derived-table HAVING filters out everyone with solved_count=0,
-    // so total = 0 and items = [].
+    // v1.3.4: 排行榜改为"全员上榜",从 users 出发 LEFT JOIN 聚合。
+    // 任何用户(包括刚注册的、零提交的、零 AC 的)都会出现在
+    // leaderboard 列表里,只是零 AC 的排在尾部。这里不再断言 total=0,
+    // 而是断言 total >= 1(共享 mysql 的 fixture 至少已有 admin)。
     const auto r = do_get(handle, "/api/v1/stats/ranking?limit=10");
     ASSERT_TRUE(r);
     ASSERT_EQ(r.status, 200);
     const auto env = json::parse(r.body);
-    EXPECT_EQ(env["data"]["total"].get<int>(),  0);
-    EXPECT_EQ(env["data"]["items"].size(),      0u);
+    EXPECT_GE(env["data"]["total"].get<int>(),  1);
+    EXPECT_LE(env["data"]["items"].size(),      static_cast<std::size_t>(10));
     EXPECT_EQ(env["data"]["limit"].get<int>(),  10);
     EXPECT_EQ(env["data"]["offset"].get<int>(), 0);
+    // 至少有一个用户条目 — 即使全是零 AC 也有 admin 这种内置用户。
+    EXPECT_GE(env["data"]["items"].size(), 1u);
 }
 
-TEST_F(StatsRankingLiveFixture, SubmitOnlyUserNotRanked) {
+TEST_F(StatsRankingLiveFixture, WaOnlyUserStillRankedWithZeroAc) {
     StdoutSilencer silencer;
-    // A user with only WA submissions (no AC) should not appear in
-    // the leaderboard.
+    // v1.3.4: WA-only 用户也会出现在排行榜里(零 AC 排尾部)。
+    // 验收 acceptance_rate 边界值:零 AC 应为 0.0。
     const int u_only_wa = make_user("user", "rank-only-wa-" +
         std::to_string(std::chrono::system_clock::now()
             .time_since_epoch().count()));
@@ -737,7 +742,7 @@ TEST_F(StatsRankingLiveFixture, SubmitOnlyUserNotRanked) {
     for (int i = 0; i < 5; ++i) {
         ASSERT_GT(make_submission(u_only_wa, p, "wa"), 0);
     }
-    // And one AC from a different user so total >= 1.
+    // Plus one AC user so we have at least one user with solved > 0.
     const int u_ac = make_user("user", "rank-with-ac-" +
         std::to_string(std::chrono::system_clock::now()
             .time_since_epoch().count()));
@@ -748,19 +753,41 @@ TEST_F(StatsRankingLiveFixture, SubmitOnlyUserNotRanked) {
     ASSERT_TRUE(r);
     ASSERT_EQ(r.status, 200);
     const auto env = json::parse(r.body);
+
+    // WA-only user MUST appear now (v1.3.4 LEFT JOIN 行为)。
+    bool found_wa = false;
     for (const auto& item : env["data"]["items"]) {
-        EXPECT_NE(item["user"]["id"].get<int>(), u_only_wa)
-            << "WA-only user should not appear in the leaderboard";
+        if (item["user"]["id"].get<int>() == u_only_wa) {
+            found_wa = true;
+            EXPECT_EQ(item["solved_count"].get<int>(),     0);
+            EXPECT_EQ(item["submission_count"].get<int>(), 5);
+            // 零 AC 用户 acceptance_rate 应为 0.0(避免除零)。
+            EXPECT_DOUBLE_EQ(item["acceptance_rate"].get<double>(), 0.0);
+            break;
+        }
     }
-    // The AC user should be in there.
+    EXPECT_TRUE(found_wa) << "WA-only user should still be ranked (v1.3.4 LEFT JOIN)";
+
+    // AC 用户出现在前面,acceptance_rate = 1/1 = 100%。
     bool found_ac = false;
     for (const auto& item : env["data"]["items"]) {
         if (item["user"]["id"].get<int>() == u_ac) {
             found_ac = true;
+            EXPECT_DOUBLE_EQ(item["acceptance_rate"].get<double>(), 100.0);
             break;
         }
     }
     EXPECT_TRUE(found_ac);
+
+    // AC 用户的 rank 应严格小于 WA-only 用户的 rank
+    // (solved_count DESC tiebreak)。
+    int idx_ac = -1, idx_wa = -1;
+    for (std::size_t i = 0; i < env["data"]["items"].size(); ++i) {
+        const int uid = env["data"]["items"][i]["user"]["id"].get<int>();
+        if (uid == u_ac)     idx_ac = static_cast<int>(i);
+        if (uid == u_only_wa) idx_wa = static_cast<int>(i);
+    }
+    EXPECT_LT(idx_ac, idx_wa) << "AC user should rank above zero-AC user";
 }
 
 TEST_F(StatsRankingLiveFixture, EfficiencyTiebreaker) {
@@ -886,10 +913,12 @@ TEST_F(StatsRankingLiveFixture, AdminUsersAreRanked) {
 
 TEST_F(StatsRankingLiveFixture, SoftDeletedProblemsDoNotCount) {
     StdoutSilencer silencer;
-    // User ACs a problem, then admin soft-deletes the problem → the
-    // user should not appear in the leaderboard anymore (HAVING
-    // solved_count > 0 fails because the JOIN filters out the
-    // tombstone).
+    // v1.3.4: User ACs a problem, then admin soft-deletes the problem
+    // → 用户的 solved_count 变 0(submission_count 也不计,因为 LEFT
+    // JOIN 条件 `p.is_deleted = FALSE` 过滤),但用户**仍然上榜**,
+    // 排在尾部(solved=0),acceptance_rate = 0.0。这与原"HAVING
+    // solved_count > 0 过滤掉零 AC 用户"的语义不同 — 新语义是全员
+    // 上榜,只是零 AC 排后面。
     const int u = make_user("user", "rank-sd-" +
         std::to_string(std::chrono::system_clock::now()
             .time_since_epoch().count()));
@@ -898,7 +927,8 @@ TEST_F(StatsRankingLiveFixture, SoftDeletedProblemsDoNotCount) {
     ASSERT_GT(p, 0);
     ASSERT_GT(make_submission(u, p, "ac"), 0);
 
-    // Sanity: user IS in the leaderboard before the soft-delete.
+    // Sanity: user IS in the leaderboard before the soft-delete, with
+    // solved_count=1.
     {
         const auto r = do_get(handle, "/api/v1/stats/ranking?limit=200");
         ASSERT_TRUE(r);
@@ -906,27 +936,43 @@ TEST_F(StatsRankingLiveFixture, SoftDeletedProblemsDoNotCount) {
         const auto env = json::parse(r.body);
         bool found = false;
         for (const auto& item : env["data"]["items"]) {
-            if (item["user"]["id"].get<int>() == u) { found = true; break; }
+            if (item["user"]["id"].get<int>() == u) {
+                found = true;
+                EXPECT_EQ(item["solved_count"].get<int>(), 1);
+                break;
+            }
         }
         EXPECT_TRUE(found) << "user should be ranked before soft-delete";
     }
 
     soft_delete_problem(p);
 
-    // After soft-delete: user disappears (only solved_count drops to 0).
+    // v1.3.4 软删除后:用户仍在列表,但 solved_count=0,acceptance_rate=0。
     const auto r = do_get(handle, "/api/v1/stats/ranking?limit=200");
     ASSERT_TRUE(r);
     ASSERT_EQ(r.status, 200);
     const auto env = json::parse(r.body);
+    bool found_after = false;
     for (const auto& item : env["data"]["items"]) {
-        EXPECT_NE(item["user"]["id"].get<int>(), u)
-            << "AC on a soft-deleted problem must not count toward ranking";
+        if (item["user"]["id"].get<int>() == u) {
+            found_after = true;
+            // LEFT JOIN 条件 `p.is_deleted = FALSE` 让软删除的题不算
+            // 入 solved_count / submission_count,所以两个都变 0。
+            EXPECT_EQ(item["solved_count"].get<int>(),     0);
+            EXPECT_EQ(item["submission_count"].get<int>(), 0);
+            EXPECT_DOUBLE_EQ(item["acceptance_rate"].get<double>(), 0.0);
+            break;
+        }
     }
+    EXPECT_TRUE(found_after)
+        << "v1.3.4: user still appears (zero-AC users now listed)";
 }
 
-TEST_F(StatsRankingLiveFixture, PendingAndRunningSubmissionsDoNotCount) {
+TEST_F(StatsRankingLiveFixture, PendingAndRunningStillListedButZeroAc) {
     StdoutSilencer silencer;
-    // A user with only pending/running submissions should not appear.
+    // v1.3.4: pending/running 是 submissions.status 值,我们的 SQL
+    // 只把 'ac' 计入 solved_count,其他状态都算 submission_count。
+    // 所以 pending/running 用户也会上榜,只是零 AC 排尾部。
     const int u = make_user("user", "rank-pending-" +
         std::to_string(std::chrono::system_clock::now()
             .time_since_epoch().count()));
@@ -935,16 +981,27 @@ TEST_F(StatsRankingLiveFixture, PendingAndRunningSubmissionsDoNotCount) {
     ASSERT_GT(p, 0);
     ASSERT_GT(make_submission(u, p, "pending"), 0);
     ASSERT_GT(make_submission(u, p, "running"), 0);
-    // Plus a WA so they have submissions but no AC.
+    // Plus a WA so they have terminal submissions.
     ASSERT_GT(make_submission(u, p, "wa"), 0);
 
     const auto r = do_get(handle, "/api/v1/stats/ranking?limit=200");
     ASSERT_TRUE(r);
     ASSERT_EQ(r.status, 200);
     const auto env = json::parse(r.body);
+    bool found = false;
     for (const auto& item : env["data"]["items"]) {
-        EXPECT_NE(item["user"]["id"].get<int>(), u);
+        if (item["user"]["id"].get<int>() == u) {
+            found = true;
+            // pending/running 不算 AC → solved_count = 0
+            EXPECT_EQ(item["solved_count"].get<int>(),     0);
+            // pending/running/wa 都算 submission_count = 3
+            EXPECT_EQ(item["submission_count"].get<int>(), 3);
+            EXPECT_DOUBLE_EQ(item["acceptance_rate"].get<double>(), 0.0);
+            break;
+        }
     }
+    EXPECT_TRUE(found)
+        << "v1.3.4: user with only pending/running/wa still listed";
 }
 
 TEST_F(StatsRankingLiveFixture, LimitClampsToMax) {

@@ -34,7 +34,10 @@ static int _force_emit_submission = []() -> int {
 
     using _fn_t = decltype(&register_submission_routes);
     [[gnu::used]] static volatile _fn_t _fn = &register_submission_routes;
-    _fn(s, pool, limiter, rc, jc, sched, notif);
+    // v1.3.4 PR 3 — pass nullptr for the new SampleRunner* parameter;
+    // the force-emit call only exists to instantiate the inline TU
+    // symbols, not to actually exercise the sample-runner path.
+    _fn(s, pool, limiter, rc, jc, sched, notif, /*sample_runner=*/nullptr);
     return 0;
 }();
 
