@@ -333,7 +333,11 @@
         // ── Network ────────────────────────────────────────────────
         // Fetch every page of a list endpoint (up to MAX_PAGES). Returns
         // {items, total, capped}. 401 flows through api.js forceSignOut.
-        function fetchAllPages(basePath, extraQuery) {
+        // v1.3.4 PR 4 — when cacheTtlMs > 0, every page is read-through
+        // cached via api.js's sessionStorage bucket. Repeat visits inside
+        // the TTL window skip the network entirely; a Retry click must
+        // call litecode.api.invalidateCache(<scope>) first.
+        function fetchAllPages(basePath, extraQuery, cacheTtlMs) {
             var items = [];
             var total = 0;
             var page = 0;
@@ -342,7 +346,15 @@
                 var offset = page * PAGE_SIZE;
                 var q = '?limit=' + PAGE_SIZE + '&offset=' + offset +
                         (extraQuery ? '&' + extraQuery : '');
-                return litecode.api.get(basePath + q, { noRetryOn401: true })
+                var opts = { noRetryOn401: true };
+                if (cacheTtlMs && cacheTtlMs > 0) {
+                    opts.cacheTtlMs = cacheTtlMs;
+                    // Stable per (basePath, extraQuery) — different pages
+                    // share the namespace but live in separate buckets
+                    // because path + offset differ.
+                    opts.cacheKey = basePath + (extraQuery ? '?' + extraQuery : '') + '@p' + page;
+                }
+                return litecode.api.get(basePath + q, opts)
                     .then(function (resp) {
                         var data = (resp && resp.data) || {};
                         var batch = data.items || [];
@@ -602,9 +614,14 @@
 
             // Two paginated fetches in parallel: the caller's submissions
             // and the live problem catalog (for the denominator + titles).
+            // v1.3.4 PR 4 — both endpoints cached for 60s. The catalog
+            // rarely changes; the submission list is more volatile but
+            // the TTL still wins for the common "I refreshed the page
+            // and want my stats immediately" pattern. Retry click
+            // invalidates both scopes first.
             return Promise.all([
-                fetchAllPages('/submissions', ''),
-                fetchAllPages('/problems', ''),
+                fetchAllPages('/submissions', '', 60000),
+                fetchAllPages('/problems',    '', 60000),
             ]).then(function (results) {
                 var subsResult = results[0];
                 var probResult = results[1];
@@ -648,21 +665,33 @@
         }
 
         window.addEventListener('DOMContentLoaded', function () {
+            // v1.3.4 PR 4 — boot.shell is fire-and-forget (nav renders
+            // from the cached user immediately, then refreshes in the
+            // background). Keeping it off the critical path drops one
+            // full event-loop tick before the first fetch starts.
             litecode.boot.shell({ title: 'LiteCode · 个人主页' });
 
+            // requireAuth() already returns the profile (it calls
+            // fetchProfile internally); the previous double-fetch was
+            // a redundant waterfall.
             litecode.guard.requireAuth().then(function (user) {
-                litecode.api.auth.fetchProfile().then(function (profile) {
-                    currentUser = profile || user || litecode.api.auth.currentUser || {};
-                    target = resolveUsername(window.location.search, currentUser.username);
+                currentUser = user || litecode.api.auth.currentUser || {};
+                target = resolveUsername(window.location.search, currentUser.username);
 
-                    if (!target.isSelf) { showForeign(); return; }
-                    loadStats().catch(showError);
-                }).catch(showError);
-            });
+                if (!target.isSelf) { showForeign(); return; }
+                loadStats().catch(showError);
+            }).catch(showError);
 
             $('retry-btn').addEventListener('click', function () {
-                if (currentUser) loadStats().catch(showError);
-                else window.location.reload();
+                if (currentUser) {
+                    // v1.3.4 PR 4 — Retry must bypass the cache;
+                    // the user explicitly asked for a fresh fetch.
+                    litecode.api.invalidateCache('submissions');
+                    litecode.api.invalidateCache('problems');
+                    loadStats().catch(showError);
+                } else {
+                    window.location.reload();
+                }
             });
 
             // v1.2.56: page-leave teardown so half-open SSE streams

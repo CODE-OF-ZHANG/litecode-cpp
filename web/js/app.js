@@ -318,9 +318,20 @@
     }
 
     function openUserMenu(anchor) {
-        // Close any prior menu.
+        // v1.3.4 — 修 v1.3.3.5 的"第二次点击才显示"bug:
+        //   之前 line `if (prior) { prior.remove(); return; }` 让首次
+        //   点击(prior=null)正常显示菜单,但当菜单已存在时第二次点击
+        //   会进入这个分支 remove 后直接 return → 表现"再点关闭,
+        //   再点才显示"。配合 click-away 监听器,某些场景下会让用户
+        //   误以为"完全没反应"。新行为:菜单已存在时直接关闭,本次
+        //   点击不必再创建。toggle 语义由 anchor 的 aria-expanded
+        //   状态决定 — 用户期望"再点关闭",我们就只关闭。
         var prior = document.getElementById('lc-user-menu');
-        if (prior) { prior.remove(); return; }
+        if (prior) {
+            prior.remove();
+            anchor.setAttribute('aria-expanded', 'false');
+            return;
+        }
 
         var menu = el('div', {
             class: 'lc-menu',
@@ -340,26 +351,80 @@
             class: 'lc-menu-item lc-menu-item--danger',
             text: '退出登录',
             onClick: function () {
+                // v1.3.4 — 退出登录:
+                //   1. api.auth.logout() 内部会:
+                //      - 发 POST /auth/logout (Bearer + cookie) → 后端
+                //        黑名单 refresh + Set-Cookie lc_refresh Max-Age=0
+                //      - clearAuthLocal() 清内存 accessToken + 删除
+                //        sessionStorage['litecode:user']
+                //      - emitUnauthorized({reason:'logout'}) → 触发
+                //        onAuthChanged → renderNav(null) 把 nav 切成 guest
+                //   2. 然后 location.replace 到 /login.html:
+                //      - replace 而不是 href= → 不留历史记录,避免用户
+                //        按后退又回到旧页面触发 bfcache 恢复陈旧登录态
+                //      - 加 ?t=<Date.now()> cache-busting,确保 /login.html
+                //        不会命中磁盘缓存(浏览器有时会缓存整页 HTML)
+                //   3. 不主动 reload 当前页 — 当前页本身要被 navigate 走,
+                //      后面 pageshow + visibilitychange 监听器会兜底任何
+                //      残留 bfcache / 多 tab 陈旧 nav。
                 api.auth.logout().finally(function () {
-                    window.location.href = '/login.html';
+                    try {
+                        window.location.replace('/login.html?t=' + Date.now());
+                    } catch (_) {
+                        // 极端环境(no-op):兜底走 href。
+                        window.location.href = '/login.html?t=' + Date.now();
+                    }
                 });
             },
         });
         menu.appendChild(logoutBtn);
 
         document.body.appendChild(menu);
-        // Position
-        var rect = anchor.getBoundingClientRect();
-        menu.style.top  = (rect.bottom + 6 + window.scrollY) + 'px';
-        menu.style.left = (rect.right + window.scrollX - menu.offsetWidth) + 'px';
+        anchor.setAttribute('aria-expanded', 'true');
 
-        // Click-away to dismiss
+        // v1.3.4 — 菜单 position: fixed(见 web/css/style.css §7),不再
+        // 加 scrollX / scrollY — fixed 元素相对 viewport 定位,viewport
+        // coords = getBoundingClientRect() 直接返回的值。
+        // 用 requestAnimationFrame 等浏览器完成 layout 后再读 offsetWidth,
+        // 否则第一帧拿到的是 0,菜单会贴在 anchor 右侧(看起来"偏右")。
+        var rect = anchor.getBoundingClientRect();
+        requestAnimationFrame(function () {
+            var menuW = menu.offsetWidth || 180;
+            var desiredLeft = rect.right - menuW;
+            // viewport clamp: 菜单左边不能 < 8px
+            var left = Math.max(8, desiredLeft);
+            menu.style.top  = (rect.bottom + 6) + 'px';
+            menu.style.left = left + 'px';
+        });
+
+        // v1.3.4 — 统一的 cleanup 函数。click-away / Escape / 路由切换
+        // 都通过 cleanup() 收口,避免监听器泄漏 / menu 残留 / 多次 remove。
+        var cleaned = false;
+        function cleanup() {
+            if (cleaned) return;
+            cleaned = true;
+            anchor.setAttribute('aria-expanded', 'false');
+            if (menu && menu.parentNode) menu.parentNode.removeChild(menu);
+            document.removeEventListener('click', onDocClick, true);
+            document.removeEventListener('keydown', onDocKey, true);
+        }
+        function onDocClick(ev) {
+            // setTimeout 0 让本次 anchor click 不触发,但 setTimeout 是
+            // 异步的:菜单已 append,本次 click 事件已结束;后续任何
+            // 点击如果命中菜单或 anchor → 忽略,否则 cleanup。
+            if (menu.contains(ev.target) || anchor.contains(ev.target)) return;
+            cleanup();
+        }
+        function onDocKey(ev) {
+            if (ev.key === 'Escape' || ev.keyCode === 27) {
+                cleanup();
+            }
+        }
+        // setTimeout 0 把监听器推迟到当前 click 事件冒泡完成后再挂,
+        // 否则本次点击会立刻被 document 捕获阶段触发 cleanup。
         setTimeout(function () {
-            document.addEventListener('click', function once(ev) {
-                if (menu.contains(ev.target)) return;
-                menu.remove();
-                document.removeEventListener('click', once);
-            });
+            document.addEventListener('click', onDocClick, true);
+            document.addEventListener('keydown', onDocKey, true);
         }, 0);
     }
 
@@ -633,6 +698,44 @@
             api.auth.onAuthChanged(function (user) {
                 navState.user = user;
                 renderNav(user);
+            });
+
+            // v1.3.4 — 严格登录态检测 (SPEC A24 / Phase 5 ★):
+            //
+            //   三条边缘路径下 nav 容易显示陈旧登录态:
+            //
+            //   a) bfcache restore: 浏览器按"后退"恢复 logout 之前的
+            //      页面(例如 index.html),JS state 没重跑,nav 还显示
+            //      头像。pageshow 事件 + e.persisted=true 是 bfcache
+            //      恢复的官方信号 → 强制 reload,把陈旧 DOM 和内存
+            //      accessToken 一起丢掉。
+            //
+            //   b) 多 tab logout 同步: A tab 点了"退出登录" → 后端
+            //      撤销 refresh cookie。B tab 不知道,内存 accessToken
+            //      还在,nav 仍显示已登录。B tab 用户首次发请求会 401
+            //      → 触发 fetchWithAutoRefresh → refresh 失败 →
+            //      forceSignOut 自动接管,所以这条路径理论上已经 OK;
+            //      但若 B tab 长时间不发请求(纯浏览),nav 会一直显示
+            //      陈旧登录态。visibilitychange 监听器在 tab 重新
+            //      可见时主动调一次 hydrateUser → 触发 tryRefresh →
+            //      后端 cookie 已撤销 → catch 走 guest nav。
+            //
+            //   c) sessionStorage 是 per-tab 的,storage 事件只在
+            //      localStorage 跨 tab 时触发,所以这里**不**监听
+            //      storage 事件 — visibilitychange + pageshow 已经
+            //      能覆盖多 tab 同步和 bfcache 两个场景。
+            window.addEventListener('pageshow', function (e) {
+                if (e.persisted) {
+                    // bfcache restore: 全页 reload,丢弃陈旧 JS state。
+                    window.location.reload();
+                }
+            });
+            document.addEventListener('visibilitychange', function () {
+                if (document.hidden) return;
+                // tab 重新可见 → 重新 hydrate(覆盖另一 tab logout 后
+                // 本 tab 还显示已登录的窗口期)。hydrateUser 内部已
+                // 是 fire-and-forget,失败时静默回落到 guest nav。
+                hydrateUser();
             });
         }
 

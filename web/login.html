@@ -89,17 +89,45 @@
 
                 <div class="lc-v4-auth__field">
                     <label class="lc-v4-auth__label" for="password">密码</label>
-                    <input
-                        class="lc-v4-auth__input"
-                        type="password"
-                        id="password"
-                        name="password"
-                        autocomplete="current-password"
-                        placeholder="8-72 个字符 · 区分大小写"
-                        required
-                        minlength="8"
-                        maxlength="72"
-                        aria-describedby="password-help">
+                    <div class="lc-v4-auth__input-wrap">
+                        <input
+                            class="lc-v4-auth__input"
+                            type="password"
+                            id="password"
+                            name="password"
+                            autocomplete="current-password"
+                            placeholder="8-72 个字符 · 区分大小写"
+                            required
+                            minlength="8"
+                            maxlength="72"
+                            aria-describedby="password-help">
+                        <button
+                            type="button"
+                            class="lc-v4-auth__pw-toggle"
+                            id="pw-toggle"
+                            aria-label="显示密码"
+                            aria-pressed="false"
+                            aria-controls="password"
+                            tabindex="-1">
+                            <!-- v1.3.4.1: 眼睛 / 划线眼睛 两态 SVG,JS 切换 innerHTML -->
+                            <svg class="lc-v4-auth__pw-icon lc-v4-auth__pw-icon--hide"
+                                 viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                 aria-hidden="true">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                                <circle cx="12" cy="12" r="3"/>
+                            </svg>
+                            <svg class="lc-v4-auth__pw-icon lc-v4-auth__pw-icon--show"
+                                 viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                 aria-hidden="true">
+                                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+                                <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+                                <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/>
+                                <line x1="1" y1="1" x2="23" y2="23"/>
+                            </svg>
+                        </button>
+                    </div>
                     <span id="password-help" class="lc-v4-auth__field-help">
                         忘记密码?目前不支持重置,请联系管理员。
                     </span>
@@ -155,6 +183,24 @@
             var next = resolveNext(
                 new URLSearchParams(window.location.search).get('next')
             );
+
+            // v1.3.4.1: 密码可见性切换。tabindex="-1" 让眼睛按钮不进入
+            // 自然 tab 顺序(鼠标点击足够,screen reader 通过 aria-label/
+            // aria-pressed 单独可达);点击切换 input.type 在 password/text
+            // 间切换,并同步 aria-label / aria-pressed / .lc-v4-auth__pw-toggle--on。
+            // 仅切换 type 与 aria,不动 input 的 value/autocomplete/maxlength,
+            // 浏览器内部 password manager 行为与可见性切换互不干扰。
+            (function wirePasswordToggle() {
+                var toggle = document.getElementById('pw-toggle');
+                if (!toggle || !passwordEl) return;
+                toggle.addEventListener('click', function () {
+                    var willShow = passwordEl.type === 'password';
+                    passwordEl.type = willShow ? 'text' : 'password';
+                    toggle.setAttribute('aria-pressed', willShow ? 'true' : 'false');
+                    toggle.setAttribute('aria-label', willShow ? '隐藏密码' : '显示密码');
+                    toggle.classList.toggle('lc-v4-auth__pw-toggle--on', willShow);
+                });
+            })();
 
             if (usernameEl && !usernameEl.value) {
                 usernameEl.focus();

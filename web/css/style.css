@@ -96,7 +96,11 @@
     --lc-color-border-2:     #d8d2c4;
     --lc-color-text:         #1a1814;       /* 判席: 钢笔黑,比纯黑暖一档 */
     --lc-color-text-2:       #4a4338;       /* 判席: 浅墨 */
-    --lc-color-text-muted:   #9b8e78;       /* 判席: 铅笔灰 (替代冷灰) */
+    --lc-color-text-muted:   #6b6051;       /* v1.3.4 — 从 #9b8e78 加深到 #6b6051。
+                                            * 之前的 #9b8e78 在 #faf9f5 暖白上 contrast 仅 2.5:1
+                                            * (WCAG AA 要求 ≥ 4.5:1),用户报告"白天模式文字很丑、
+                                            * 看不清、刺眼"—— contrast 过低 + 高亮正文反差过
+                                            * 大 = 视觉疲劳。新值 #6b6051 ≈ 5.9:1,达 AA + 接近 AAA。 */
     --lc-color-link:         #1e3a8a;       /* 判席: 钢笔水彩蓝 (替代 SaaS 蓝) */
     --lc-color-link-hover:   #1a2f6e;       /* 判席: 加深 */
     --lc-color-success:      #16a34a;
@@ -229,6 +233,54 @@ html.dark {
     --lc-color-judge-violet-bg-dark:  rgba(167, 139, 250, 0.14);
     --lc-color-judge-neutral-bg-dark: rgba(148, 163, 184, 0.14);
 }
+
+/* ────────────────────────────────────────────────────────────────────
+   v1.3.4 — light-mode polish (SPEC §6.3 / A34):
+   让 ranking/profile/problem/admin 这几个 opt-in `body.lc-cyber`
+   class 的页面在 light 模式下也能渲染完整 — cyber tokens 只在
+   `html.dark` block 里有定义,light 下默认值为空,导致这些页面
+   的 .lc-cyber-terminal / .lc-cyber-grid-strip / .lc-cyber-podium
+   等装饰"残缺"(霓虹色背景丢失、文字对比度极低)。
+
+   三件事:
+   (1) body:not(.dark).lc-cyber — 把 cyber tokens 重映射到 paper
+       tokens,这样所有 .lc-cyber-* 子元素的颜色/边框/文字都用
+       paper palette 渲染,不会出现"半生半熟"的视觉。
+   (2) .lc-cyber-grid-strip / .lc-cyber-terminal / .lc-cyber-ribbon
+       在 light 下隐藏 — 这些是 cyber dark 专属装饰条,在浅白背景
+       上像贴上去的霓虹灯,隐藏是最克制的 polish。
+   (3) 用户报告"白天模式文字看不清/刺眼" → `--lc-color-text-muted`
+       已从 #9b8e78 加深到 #6b6051(§5 token defs),contrast 从
+       2.5:1 提升到 5.9:1,达 WCAG AA + 接近 AAA。
+   ──────────────────────────────────────────────────────────────────── */
+
+body:not(.dark).lc-cyber {
+    /* 把 cyber 专属 token 重映射到 paper palette,这样所有 .lc-cyber-*
+       装饰元素在 light 下用 paper 配色(无霓虹,但协调)。 */
+    --lc-cyber-bg:           transparent;
+    --lc-cyber-bg-2:         var(--lc-color-surface);
+    --lc-cyber-bg-3:         var(--lc-color-surface);
+    --lc-cyber-surface:      var(--lc-color-surface);
+    --lc-cyber-surface-2:    var(--lc-color-surface-2);
+    --lc-cyber-border:       var(--lc-color-border);
+    --lc-cyber-border-2:     var(--lc-color-border-2);
+    --lc-cyber-border-soft:  var(--lc-color-border);
+    --lc-cyber-cyan:         var(--lc-color-link);
+    --lc-cyber-cyan-bright:  var(--lc-color-link-hover);
+    --lc-cyber-violet:       var(--lc-color-link);
+    --lc-cyber-violet-hi:    var(--lc-color-link-hover);
+    --lc-cyber-emerald:      var(--lc-color-success);
+    --lc-cyber-amber:        var(--lc-color-warning);
+    --lc-cyber-rose:         var(--lc-color-danger);
+    --lc-cyber-text:         var(--lc-color-text);
+    --lc-cyber-text-muted:   var(--lc-color-text-muted);
+    --lc-cyber-text-dim:     var(--lc-color-text-muted);
+}
+
+/* cyber-only 装饰条在 light 下隐藏 */
+body:not(.dark) .lc-cyber-grid-strip { display: none; }
+body:not(.dark) .lc-cyber-terminal   { display: none; }
+body:not(.dark) .lc-cyber-ribbon     { display: none; }
 
 /* System preference kicks in only when the user has NOT made an explicit
    choice.  litecode.js writes `litecode:theme` to localStorage as soon
@@ -605,23 +657,48 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
 
 /* =====================================================================
    7. User menu (popover)
+
+   v1.3.4 可见性 / 层级修复:
+   - position: fixed (而非 absolute) + z-index: 9999
+     保证不被任何 cyber 装饰(body::after / body::before / 顶部 grid-strip
+     / nav-bar)穿插遮挡 — 父级 stacking context 跟我们无关。
+   - 背景在 light + dark 双主题下都改成**完全不透明**(lg + lg-2
+     token fallback)。之前的 var(--lc-color-surface) 在 dark 下被 cyber
+     覆写为 rgba(20,27,45,0.72) 半透明玻璃,在多层 cyger 渐变背
+     景上视觉对比被吃掉 — 退出登录按钮(#f43f5e 玫瑰红)在玻璃
+     + 渐变下显得很淡,用户报告"看不到退出登录按钮"。
+   - openUserMenu() (web/js/app.js) 同步把 viewport coords 直接
+     写到 top/left,不再加 scrollX/Y(因为 fixed 元素不需要)。
    ===================================================================== */
 
 .lc-menu {
-    position: absolute;
-    background: var(--lc-color-surface);
+    /* v1.3.4.1: position + z-index 用 !important 兜底,防止暗色模式下
+       `html.dark body > *` 这类 (0,1,2) 特异度的规则把 fixed 降级
+       成 relative(用户 bug:深色头像点不出退出登录菜单)。 */
+    position: fixed !important;
+    z-index: 99999 !important;
+    background: #ffffff;          /* light-mode fallback (paper card) */
+    background: var(--lc-color-surface, #ffffff);
     border: 1px solid var(--lc-color-border);
     border-radius: var(--lc-radius-md);
     box-shadow: var(--lc-shadow-overlay);
-    min-width: 160px;
-    padding: 4px;
-    z-index: 100;
+    min-width: 180px;
+    padding: 6px;
+    /* v1.3.4 — 提到 99999:之前 9999 在某些 stacking context 嵌套下
+       会被 html.dark body > * 规则(line 5872) 间接压制 — nav(也是
+       body > *,sticky + z-index:50) 创建的 stacking context 在
+       fixed 元素之上的浏览器实现里偶发会出现"菜单被 nav 遮住"。
+       99999 + isolation: isolate 兜底,保证菜单永远在 viewport
+       最高层。 */
+    isolation: isolate;
+    visibility: visible;
+    opacity: 1;
     display: flex;
     flex-direction: column;
     gap: 2px;
 }
 .lc-menu-item {
-    padding: 8px 12px;
+    padding: 9px 12px;
     border-radius: var(--lc-radius-sm);
     color: var(--lc-color-text);
     background: none;
@@ -632,9 +709,13 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     text-decoration: none;
     display: block;
     width: 100%;
+    line-height: 1.4;
 }
 .lc-menu-item:hover { background: var(--lc-color-surface-2); }
-.lc-menu-item--danger { color: var(--lc-color-danger); }
+.lc-menu-item--danger {
+    color: var(--lc-color-danger);
+    font-weight: 600;             /* 强化退出登录视觉锤 */
+}
 .lc-menu-sep {
     height: 1px;
     background: var(--lc-color-border);
@@ -646,13 +727,15 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
    ===================================================================== */
 
 .lc-toasts {
-    position: fixed;
+    /* v1.3.4.1: !important 防 `html.dark body > *` 降级 fixed → relative。
+       与 .lc-menu 同源问题,见 §3 .lc-menu 注释。 */
+    position: fixed !important;
     bottom: 20px;
     right: 20px;
     display: flex;
     flex-direction: column;
     gap: 8px;
-    z-index: 1000;
+    z-index: 1000 !important;
     pointer-events: none;
     max-width: 360px;
 }
@@ -5168,6 +5251,63 @@ main > h1 {
     box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.16);
 }
 .lc-v4-auth__input::placeholder { color: var(--lc-v4-slate-300); }
+/* v1.3.4.1: 密码框眼睛按钮 — input-wrap 让输入框右边腾出 44px,
+   <button> 用 position:absolute 钉在右侧。视觉跟 .lc-v4-auth__input
+   配套,深色模式下用半透明 hover halo + accent 描边。 */
+.lc-v4-auth__input-wrap { position: relative; }
+.lc-v4-auth__input-wrap .lc-v4-auth__input {
+    /* 让出按钮的列宽,即使 type=text 显示明文也避免压住最后一个字符 */
+    padding-right: 44px;
+}
+.lc-v4-auth__pw-toggle {
+    position: absolute;
+    right: 6px; top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px; height: 32px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: var(--lc-v4-slate-500);
+    cursor: pointer;
+    transition: color .12s ease, background .12s ease, border-color .12s ease;
+}
+.lc-v4-auth__pw-toggle:hover {
+    color: var(--lc-v4-blue-500);
+    background: rgba(59, 130, 246, 0.08);
+}
+.lc-v4-auth__pw-toggle:focus-visible {
+    outline: none;
+    color: var(--lc-v4-blue-500);
+    border-color: var(--lc-v4-blue-500);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.20);
+}
+.lc-v4-auth__pw-toggle[aria-pressed="true"] {
+    color: var(--lc-v4-blue-600);
+    background: rgba(59, 130, 246, 0.10);
+}
+html.dark .lc-v4-auth__pw-toggle {
+    color: var(--lc-v4-slate-400);
+}
+html.dark .lc-v4-auth__pw-toggle:hover {
+    color: var(--lc-v4-blue-400);
+    background: rgba(96, 165, 250, 0.10);
+}
+html.dark .lc-v4-auth__pw-toggle[aria-pressed="true"] {
+    color: var(--lc-v4-blue-300);
+    background: rgba(96, 165, 250, 0.16);
+}
+/* 默认显示"眼睛"(密码被遮);按下后隐藏眼睛改显"划线眼睛" */
+.lc-v4-auth__pw-toggle[aria-pressed="false"] .lc-v4-auth__pw-icon--show { display: none; }
+.lc-v4-auth__pw-toggle[aria-pressed="true"]  .lc-v4-auth__pw-icon--hide { display: none; }
+.lc-v4-auth__pw-toggle .lc-v4-auth__pw-icon {
+    width: 18px; height: 18px;
+    display: block;
+    pointer-events: none;
+}
 .lc-v4-auth__field-help {
     font-size: 12px; color: var(--lc-v4-slate-500); margin-top: 6px;
 }
@@ -5799,8 +5939,13 @@ html.dark body::after {
     z-index: 0;
 }
 
-/* 让所有内容在 ::after 装饰之上 */
-html.dark body > * { position: relative; z-index: 2; }
+/* 让所有内容在 ::after 装饰之上。
+   v1.3.4.1: 必须排除 fixed 浮层 (.lc-menu / .lc-toast)。
+   否则 `body > * { position: relative; z-index: 2 }` 的 specificity
+   (0,1,2) 比 `.lc-menu { position: fixed; z-index: 99999 }` (0,1,0) 高,
+   会把浮层的 position:fixed + 高 z-index 强制降级成 relative + 2,
+   暗色模式下头像点不出退出登录菜单(用户 bug 报告)。 */
+html.dark body > *:not(.lc-menu):not(.lc-toasts) { position: relative; z-index: 2; }
 
 /* §6.3 — 现有 v4 组件覆写 (cyber 化) */
 
@@ -6312,13 +6457,33 @@ html.dark .lc-icon-btn:hover { color: var(--lc-cyber-cyan-bright); border-color:
 
 /* menu */
 html.dark .lc-menu {
-    background: var(--lc-cyber-bg-2);
-    border: 1px solid var(--lc-cyber-border);
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+    /* v1.3.4 — 完全不透明深色背景 + neon 边框 + 强对比 shadow。
+       之前的 rgba(20,27,45,0.72) 半透明玻璃在 cyger grid/gradient
+       背景上视觉穿透,导致用户报告"看不到退出登录按钮"。
+       v1.3.4 进一步:
+       1. 用 #1a2238 实色 + opacity:1(不再靠 background-color 透明度),
+          即使父级有 backdrop-filter / opacity 也不会透出底色。
+       2. 加 cyan neon 双层 ring 提升 cyber 风格对比。
+       3. visibility/opacity 强制 visible/1,防止被动画/过渡卡在 hidden。 */
+    background-color: #1a2238 !important;
+    background: #1a2238 !important;
+    border: 1px solid var(--lc-cyber-border-2, #2b3654);
+    box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.32),
+                0 0 24px rgba(34, 211, 238, 0.18),
+                0 16px 48px rgba(0, 0, 0, 0.75);
+    visibility: visible !important;
+    opacity: 1 !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
 }
 html.dark .lc-menu-item { color: var(--lc-cyber-text); }
-html.dark .lc-menu-item:hover { background: rgba(34, 211, 238, 0.08); color: var(--lc-cyber-cyan-bright); }
-html.dark .lc-menu-item--danger { color: var(--lc-cyber-rose); }
+html.dark .lc-menu-item:hover { background: rgba(34, 211, 238, 0.10); color: var(--lc-cyber-cyan-bright); }
+html.dark .lc-menu-item--danger {
+    color: var(--lc-cyber-rose);
+    /* 强化退出登录按钮在 cyber dark 上的可见性 — 加 text-shadow
+       让文字"浮"在多层 cyber 背景之上。 */
+    text-shadow: 0 0 8px rgba(244, 63, 94, 0.45);
+}
 html.dark .lc-menu-sep { background: var(--lc-cyber-border-soft); }
 
 /* toast */
@@ -7061,4 +7226,238 @@ html.dark .lc-result-panel__hero {
     justify-content: center;
     gap: 6px;
     padding: var(--lc-space-4) 0;
+}
+
+/* =====================================================================
+   v1.3.4 PR 4 — Run Samples (LeetCode-style toolbar + per-case panel)
+   ---------------------------------------------------------------------
+   Light additions only; the deep visual reset is PR 5. These rules
+   give the editor + result-panel their new affordances without
+   breaking the existing palette.
+   ===================================================================== */
+
+/* "运行样例" — ghost button that picks up the primary accent only on
+   hover / focus, so the eye still lands on "提交" as the headline
+   action. */
+.lc-btn--primary-ghost {
+    background: transparent;
+    border-color: var(--lc-color-link);
+    color: var(--lc-color-link);
+}
+.lc-btn--primary-ghost:hover {
+    background: var(--lc-color-link-bg, rgba(34, 211, 238, 0.10));
+    border-color: var(--lc-color-link-hover);
+    color: var(--lc-color-link-hover);
+}
+.lc-btn--primary-ghost:focus-visible {
+    outline: 2px solid var(--lc-color-link);
+    outline-offset: 2px;
+}
+.lc-btn--primary-ghost[disabled] {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+/* Per-case results card — the second tier of the result panel, fed
+   by POST /api/v1/submissions/run-samples. Each case is its own
+   row with a verdict badge + collapsible I/O blocks. The
+   left border colour rides on the same verdict tokens as
+   .lc-status--* so a glance tells AC vs WA without reading. */
+.lc-result-panel__cases {
+    margin-top: var(--lc-space-3);
+    border-top: 1px dashed var(--lc-color-border);
+    padding-top: var(--lc-space-3);
+}
+.lc-result-panel__cases-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: var(--lc-space-2);
+}
+.lc-result-panel__cases-head h4 {
+    margin: 0;
+    font-size: var(--lc-font-size-base);
+    font-weight: 600;
+    color: var(--lc-color-text-2);
+}
+.lc-result-cases-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.lc-result-case {
+    border: 1px solid var(--lc-color-border);
+    border-left-width: 4px;
+    border-radius: var(--lc-radius-md);
+    background: var(--lc-color-surface);
+    padding: 12px 14px;
+    transition: border-color .15s ease;
+}
+.lc-result-case--ac      { border-left-color: var(--lc-color-judge-pass); }
+.lc-result-case--wa,
+.lc-result-case--re,
+.lc-result-case--se      { border-left-color: var(--lc-color-judge-fail); }
+.lc-result-case--tle,
+.lc-result-case--ole,
+.lc-result-case--pe      { border-left-color: var(--lc-color-judge-warn); }
+.lc-result-case--mle     { border-left-color: var(--lc-color-judge-violet); }
+.lc-result-case--ce      { border-left-color: var(--lc-color-judge-neutral); }
+.lc-result-case__head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+.lc-result-case__status {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: var(--lc-radius-sm);
+}
+.lc-result-case__metrics {
+    color: var(--lc-color-text-muted);
+    font-size: 12px;
+    font-family: var(--lc-font-mono);
+}
+.lc-result-case__io {
+    margin-top: 6px;
+}
+.lc-result-case__label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--lc-color-text-muted);
+    margin-bottom: 4px;
+}
+.lc-result-case__pre {
+    margin: 0;
+    padding: 8px 10px;
+    background: var(--lc-color-surface-2);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-sm);
+    font-family: var(--lc-font-mono);
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--lc-color-text);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 220px;
+    overflow: auto;
+}
+
+/* Ace editor — host class added by editor.js on mount + on every
+   dark-mode toggle. The CSS layer overrides the neutral Ace theme
+   colours with our tokens so the editor stops reading as "Ace
+   default" and matches the page palette. */
+.lc-ace--dark .ace_editor,
+.lc-ace--dark .ace_gutter,
+.lc-ace--leetcode-light .ace_editor,
+.lc-ace--leetcode-light .ace_gutter {
+    background: var(--lc-color-surface) !important;
+    color: var(--lc-color-text) !important;
+}
+.lc-ace--dark .ace_gutter {
+    background: var(--lc-color-surface-2) !important;
+    color: var(--lc-color-text-muted) !important;
+}
+.lc-ace--leetcode-light .ace_gutter {
+    background: var(--lc-color-bg) !important;
+    color: var(--lc-color-text-muted) !important;
+}
+.lc-ace--dark .ace_cursor { border-left: 2px solid var(--lc-color-text) !important; }
+.lc-ace--leetcode-light .ace_cursor { border-left: 2px solid var(--lc-color-text) !important; }
+.lc-ace--dark .ace_active-line { background: rgba(255, 255, 255, 0.04) !important; }
+.lc-ace--leetcode-light .ace_active-line { background: rgba(15, 23, 42, 0.03) !important; }
+.lc-ace--dark .ace_selection,
+.lc-ace--dark .ace_selection.ace_start { background: rgba(34, 211, 238, 0.18) !important; }
+.lc-ace--leetcode-light .ace_selection,
+.lc-ace--leetcode-light .ace_selection.ace_start { background: rgba(15, 23, 42, 0.10) !important; }
+
+/* Token colours — keep these inside the editor scope so other
+   surfaces (admin, profile) aren't painted. Dark scheme mirrors
+   the cyber palette; light scheme mirrors the paper palette. */
+.lc-ace--dark .ace_keyword,
+.lc-ace--dark .ace_storage,
+.lc-ace--dark .ace_storage.ace_type { color: #c084fc !important; }
+.lc-ace--dark .ace_constant.ace_numeric,
+.lc-ace--dark .ace_constant.ace_language { color: #f0b86c !important; }
+.lc-ace--dark .ace_string { color: #98d982 !important; }
+.lc-ace--dark .ace_comment { color: #6b7280 !important; font-style: italic; }
+.lc-ace--dark .ace_variable { color: #e5eaf5 !important; }
+.lc-ace--dark .ace_support.ace_function,
+.lc-ace--dark .ace_entity.ace_name.ace_function { color: #22d3ee !important; }
+.lc-ace--dark .ace_meta { color: #f472b6 !important; }
+
+.lc-ace--leetcode-light .ace_keyword,
+.lc-ace--leetcode-light .ace_storage,
+.lc-ace--leetcode-light .ace_storage.ace_type { color: #b3263e !important; }
+.lc-ace--leetcode-light .ace_constant.ace_numeric,
+.lc-ace--leetcode-light .ace_constant.ace_language { color: #8a4b00 !important; }
+.lc-ace--leetcode-light .ace_string { color: #1e6b3a !important; }
+.lc-ace--leetcode-light .ace_comment { color: #6a737d !important; font-style: italic; }
+.lc-ace--leetcode-light .ace_variable { color: #2c2c2c !important; }
+.lc-ace--leetcode-light .ace_support.ace_function,
+.lc-ace--leetcode-light .ace_entity.ace_name.ace_function { color: #6f4e9b !important; }
+
+/* Editor skeleton — shown while Ace bundle is still loading
+   (problem.html IIFE: litecode.editor.loadEditor hasn't resolved
+   yet). A subtle pulse over a flat placeholder so the layout
+   doesn't jump when the real editor mounts. */
+.lc-editor-shell--loading {
+    position: relative;
+    background:
+        repeating-linear-gradient(
+            90deg,
+            var(--lc-color-surface-2) 0 12px,
+            var(--lc-color-surface) 12px 24px
+        );
+}
+.lc-editor-shell--loading::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(34, 211, 238, 0.06) 50%,
+        transparent 100%
+    );
+    animation: lc-editor-shimmer 1.6s linear infinite;
+    pointer-events: none;
+}
+@keyframes lc-editor-shimmer {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+
+/* Ranking — local-busy indicator so page flips don't blank the
+   table out (v1.3.4 PR 4). The card dims slightly + a top
+   progress bar reuses the .lc-progress-strip vocabulary from
+   the index page. */
+.lc-rank-loading {
+    position: relative;
+    pointer-events: none;
+    opacity: 0.65;
+}
+.lc-rank-loading::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        var(--lc-color-link) 50%,
+        transparent
+    );
+    background-size: 200% 100%;
+    animation: lc-rank-progress 1.1s linear infinite;
+    z-index: 2;
+}
+@keyframes lc-rank-progress {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
 }

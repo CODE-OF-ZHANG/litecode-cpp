@@ -27,6 +27,13 @@
     <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. v1.3.4 默认 cyber dark。 -->
     <script src="/js/theme-boot.js?v=1.3.4"></script>
     <link rel="stylesheet" href="/css/style.css?v=1.3.4">
+    <!--
+      v1.3.4 PR 4 — preload the Ace bundle so the editor is
+      interactive on first paint after the IIFE calls mountEditor().
+      The SRI hash is whatever csp.js holds; the preload only
+      declares the URL, integrity is enforced on the actual fetch.
+    -->
+    <link rel="preload" href="/vendor/ace/ace.min.js" as="script" crossorigin="anonymous">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230a0e14'/%3E%3Cpath d='M22 18 L42 32 L22 46' stroke='%2322d3ee' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 </head>
 <body class="lc-cyber">
@@ -200,8 +207,24 @@
                     <span id="draft-status" class="lc-form-help"
                           aria-live="polite"></span>
                     <div class="lc-row" style="gap: 8px;">
+                        <!--
+                          v1.3.4 PR 4 — LeetCode 化的运行/提交分离。
+                          - "运行样例" 走 POST /api/v1/submissions/run-samples
+                            (sync, ≤ 3s/case × 4 cases),只测样例,不创建 submission
+                            行,不污染历史。
+                          - "提交" 走 POST /api/v1/submissions,创建 submission
+                            行,走异步 judge + SSE/poll,结果进历史。
+                          快捷键:
+                            Ctrl/Cmd + Enter       → 运行样例
+                            Ctrl/Cmd + Shift + Enter → 提交
+                          绑定放在 boot 阶段;若编辑器未挂载则按钮不可点。
+                        -->
+                        <button type="button" class="lc-btn lc-btn--ghost lc-btn--primary-ghost"
+                                id="run-samples-btn"
+                                title="用样例运行 (Ctrl/Cmd + Enter)">运行样例</button>
                         <button type="button" class="lc-btn lc-btn--primary"
-                                id="submit-btn">提交</button>
+                                id="submit-btn"
+                                title="提交完整代码 (Ctrl/Cmd + Shift + Enter)">提交</button>
                     </div>
                 </div>
 
@@ -311,6 +334,27 @@
                     <div class="lc-result-panel__help" id="result-help" hidden>
                         <p id="result-help-body" class="lc-form-help"></p>
                     </div>
+
+                    <!--
+                      v1.3.4 PR 4 — Per-case results card (LeetCode style).
+                      Populated only by /submissions/run-samples, which
+                      returns `cases[]` with {index, status, time_ms,
+                      mem_kb, input, expected_output, actual_output,
+                      stderr}. Hidden on the submit path (SSE doesn't
+                      ship the per-case payload; the existing total /
+                      passed meter above already conveys the high-level
+                      verdict). Each card is collapsible and shows the
+                      raw stderr in <pre> — never innerHTML — so a
+                      hostile stderr can never reach the page as HTML.
+                    -->
+                    <section id="result-cases" class="lc-result-panel__cases"
+                             aria-label="运行样例逐例结果" hidden>
+                        <header class="lc-result-panel__cases-head">
+                            <h4>逐样例结果</h4>
+                            <p class="lc-form-help" id="result-cases-summary"></p>
+                        </header>
+                        <ol id="result-cases-list" class="lc-result-cases-list"></ol>
+                    </section>
 
                     <!--
                       Failed test point details — error_message verbatim.
@@ -1184,6 +1228,14 @@
                 caseProgress.hidden = true;
             }
 
+            // v1.3.4 PR 4 — Per-case results card. The SSE / poll
+            // submit path doesn't carry a `cases` payload; runSamples()
+            // explicitly calls renderSampleCases() right after this
+            // function returns, so unconditionally clearing here is
+            // safe (the runSamples() .then always paints the cards
+            // AFTER renderResult has finished).
+            clearSampleCases();
+
             // v1.3.3.9 — copy verdict button. Builds a one-line
             // summary (verdict + language + time + memory +
             // submission id) so the user can paste it into a
@@ -1443,6 +1495,163 @@
                     updateDraftStatus('判题队列已满，请稍后再试');
                 } else {
                     updateDraftStatus('提交失败：' + (err && err.message || '未知错误'));
+                }
+            });
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        //  v1.3.4 PR 4 — 运行样例 (sync, LeetCode-style)
+        //
+        //  POST /api/v1/submissions/run-samples with the current editor
+        //  buffer. Synchronous: backend blocks until judge.sh exits, then
+        //  responds with 200 + {status, time_used_ms, memory_used_kb,
+        //  error_message, cases[{index, status, time_ms, mem_kb,
+        //  input, expected_output, actual_output, stderr}]}.
+        //
+        //  Differences vs. submit():
+        //    - No `submissions` row created (history is unaffected).
+        //    - No SSE / poll / draft-clear dance.
+        //    - Render the per-case panel even on AC/WA — the run-samples
+        //      endpoint is the only path that surfaces the per-case
+        //      payload.
+        //
+        //  Concurrency: backend semaphore caps at sample_max_concurrent
+        //  (default 2). A saturated server returns 503 — we surface as
+        //  an inline status; user can retry shortly.
+        //
+        //  Timeout: api.js sets 28s (4 cases × 3s + compile 10s + slack).
+        // ────────────────────────────────────────────────────────────────────
+        function setRunningSample(running) {
+            var btn = $('run-samples-btn');
+            if (!btn) return;
+            btn.disabled = !!running;
+            btn.textContent = running ? '运行中…' : '运行样例';
+        }
+
+        function renderSampleCases(cases) {
+            var box = $('result-cases');
+            var list = $('result-cases-list');
+            var summary = $('result-cases-summary');
+            if (!box || !list || !summary) return;
+            while (list.firstChild) list.removeChild(list.firstChild);
+            if (!Array.isArray(cases) || cases.length === 0) {
+                box.hidden = true;
+                return;
+            }
+            var passed = cases.filter(function (c) { return c && c.status === 'ac'; }).length;
+            summary.textContent = '通过 ' + passed + ' / ' + cases.length + ' 个样例';
+            cases.forEach(function (c) {
+                if (!c || typeof c !== 'object') return;
+                var status = c.status || 'se';
+                var li = el('li', {
+                    class: 'lc-result-case lc-result-case--' + status,
+                    dataset: { index: String(c.index != null ? c.index : '') },
+                });
+                li.appendChild(el('div', { class: 'lc-result-case__head' }, [
+                    el('span', {
+                        class: 'lc-status lc-status--' + status + ' lc-result-case__status',
+                        text: STATUS_LABEL[status] || status.toUpperCase(),
+                    }),
+                    el('span', {
+                        class: 'lc-result-case__metrics',
+                        text: '样例 ' + (c.index != null ? (c.index + 1) : '?') +
+                              (c.time_ms != null ? ' · ' + c.time_ms + ' ms' : '') +
+                              (c.mem_kb  != null ? ' · ' + c.mem_kb  + ' KB' : ''),
+                    }),
+                ]));
+
+                function ioBlock(label, value) {
+                    var pre = el('pre', { class: 'lc-result-case__pre',
+                                          text: value == null ? '(空)' : String(value) });
+                    var wrap = el('div', { class: 'lc-result-case__io' });
+                    wrap.appendChild(el('div', { class: 'lc-result-case__label', text: label }));
+                    wrap.appendChild(pre);
+                    return wrap;
+                }
+                li.appendChild(ioBlock('输入',       c.input));
+                li.appendChild(ioBlock('期望输出',   c.expected_output));
+                li.appendChild(ioBlock('你的输出',   c.actual_output));
+
+                if (c.stderr && String(c.stderr).length > 0) {
+                    li.appendChild(ioBlock('stderr',    c.stderr));
+                }
+                if (c.info && String(c.info).length > 0) {
+                    li.appendChild(ioBlock('info',      c.info));
+                }
+                list.appendChild(li);
+            });
+            box.hidden = false;
+        }
+
+        function clearSampleCases() {
+            var box = $('result-cases');
+            var list = $('result-cases-list');
+            if (box) box.hidden = true;
+            if (list) while (list.firstChild) list.removeChild(list.firstChild);
+        }
+
+        function runSamples() {
+            if (!state.problem || !state.problem.id) return;
+            var code = litecode.editor.getEditorValue();
+            if (!code || !code.trim()) {
+                updateDraftStatus('请先编写代码');
+                return;
+            }
+            if (code.length > 15 * 1024 * 1024) {
+                updateDraftStatus('代码超过 15 MB 上限');
+                return;
+            }
+            // Cancel any in-flight submit / SSE so the user can't be
+            // confused by two concurrent waits sharing the same
+            // result-panel.
+            cancelWait();
+            setRunningSample(true);
+            setSubmitting(false);
+            updateDraftStatus('正在运行样例…');
+            clearSampleCases();
+            litecode.api.post('/submissions/run-samples', {
+                problem_id: state.problem.id,
+                language:   state.lang,
+                code:       code,
+            }, litecode.api.sampleRunOpts({ noRetryOn401: true }))
+            .then(function (resp) {
+                setRunningSample(false);
+                var data = (resp && resp.data) || {};
+                // Reuse renderResult so verdict badge / gauges / help /
+                // copy buttons all work uniformly. The /cases panel is
+                // populated below.
+                renderResult({
+                    status:           data.status,
+                    time_used:        data.time_used_ms,
+                    memory_used:      data.memory_used_kb,
+                    error_message:    data.error_message || null,
+                    language:         state.lang,
+                    // run-samples doesn't ship total_cases / passed_cases,
+                    // but renderSampleCases below paints a per-case meter.
+                });
+                renderSampleCases(data.cases);
+                // For AC run-samples we keep the draft (different
+                // contract than submit() — the user is iterating, not
+                // done). For CE / WA / RE / TLE same deal: keep draft.
+                var failed = (data.status !== 'ac');
+                if (failed) {
+                    updateDraftStatus('样例未通过 · 草稿已保留');
+                } else {
+                    updateDraftStatus('样例全部通过 · 可继续提交或修改代码');
+                }
+            }).catch(function (err) {
+                setRunningSample(false);
+                if (err && err.status === 401) {
+                    updateDraftStatus('请先登录后再运行样例');
+                } else if (err && err.status === 429) {
+                    updateDraftStatus('运行样例过于频繁，请稍后再试');
+                } else if (err && err.status === 503) {
+                    updateDraftStatus('样例运行繁忙（系统同时处理上限：' +
+                                      (err.message || '服务暂不可用') + '）');
+                } else if (err && err.name === 'LitecodeApiError' && err.status === 0) {
+                    updateDraftStatus('运行超时 · 请重试');
+                } else {
+                    updateDraftStatus('运行样例失败：' + (err && err.message || '未知错误'));
                 }
             });
         }
@@ -2227,6 +2436,8 @@
 
             // Submit
             $('submit-btn').addEventListener('click', submit);
+            // v1.3.4 PR 4 — Run Samples (LeetCode-style)
+            $('run-samples-btn').addEventListener('click', runSamples);
 
             // Result-panel actions (Phase 5 ★ 提交结果展示).
             //  - Re-submit: same submit() with current editor content
@@ -2246,12 +2457,22 @@
                 });
             });
 
-            // Keyboard: Ctrl/Cmd+Enter submits from anywhere on the page.
+            // Keyboard shortcuts — v1.3.4 PR 4 swap:
+            //   Ctrl/Cmd + Enter         → 运行样例 (faster iteration)
+            //   Ctrl/Cmd + Shift + Enter → 提交
+            // Both no-op while either action button is disabled (e.g.
+            // mid-submit / mid-run-samples).
             document.addEventListener('keydown', function (e) {
-                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                if (!(e.ctrlKey || e.metaKey) || e.key !== 'Enter') return;
+                if (e.shiftKey) {
                     if (!$('submit-btn').disabled) {
                         e.preventDefault();
                         submit();
+                    }
+                } else {
+                    if (!$('run-samples-btn').disabled) {
+                        e.preventDefault();
+                        runSamples();
                     }
                 }
             });
@@ -2338,8 +2559,14 @@
             // load in parallel with the problem fetch — the editor
             // can finish mounting before or after the data arrives
             // without breaking anything. v1.3.3.9: migrated from
-            // CodeMirror 5 → Ace 1.32.7.
+            // CodeMirror 5 → Ace 1.32.7. v1.3.4 PR 4: paint the
+            // .lc-editor-shell--loading skeleton over the host while
+            // the bundle is still in flight, so the page doesn't
+            // flash an empty box on slow networks.
+            var editorHost = document.getElementById('editor-shell');
+            if (editorHost) editorHost.classList.add('lc-editor-shell--loading');
             litecode.editor.loadEditor().then(function (ok) {
+                if (editorHost) editorHost.classList.remove('lc-editor-shell--loading');
                 // Mount the editor with an empty default; it gets
                 // replaced once the problem (and its draft) loads.
                 litecode.editor.mountEditor(litecode.editor.templateForLang(state.lang || '', state.lang));

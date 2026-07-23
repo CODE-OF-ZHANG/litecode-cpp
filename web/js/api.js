@@ -102,6 +102,10 @@
     var DEFAULT_TIMEOUT_MS     = 20000;            // submit/refresh = 30s, see below
     var SUBMIT_TIMEOUT_MS      = 30000;
     var REFRESH_TIMEOUT_MS     = 30000;
+    // v1.3.4 PR 4 — sync run-samples hard cap is 4 cases × 3s + compile 10s
+    // worst case ~22s. 28s gives 6s slack for HTTP overhead without hanging
+    // the UI forever if the semaphore is congested.
+    var SAMPLE_RUN_TIMEOUT_MS  = 28000;
 
     // ────────────────────────────────────────────────────────────────────
     //  LitecodeApiError — surfaced to callers; matches SPEC §5.7 envelope.
@@ -417,6 +421,14 @@
     }
 
     function fetchWithAutoRefresh(path, init, opts) {
+        // v1.3.4 PR 4 — read-through sessionStorage cache for the GET
+        // whitelist (problem catalog, ranking). Only consulted when
+        // the caller passes opts.cacheTtlMs > 0; the default stays
+        // uncached so /auth, /submissions, /admin etc never leak
+        // stale data across users or after a submit.
+        var cacheHit = tryCacheRead(path, init, opts);
+        if (cacheHit) return Promise.resolve(cacheHit);
+
         return doFetch(path, init, opts).catch(function (err) {
             var is401 = err && err.status === 401;
             var isNoRetry = opts && opts.noRetryOn401;
@@ -443,7 +455,93 @@
                 });
                 throw err; // surface to caller too
             });
+        }).then(function (resp) {
+            // Persist after a successful network round-trip.
+            tryCacheWrite(path, init, opts, resp);
+            return resp;
         });
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    //  v1.3.4 PR 4 — read-through cache for GET whitelist endpoints.
+    //
+    //  Storage: sessionStorage, key = `litecode:cache:<scope>:<hash>`.
+    //  Envelope stored: { ts: Date.now(), data: <resp.data>, request_id: <id> }
+    //  TTL check on read: anything older than opts.cacheTtlMs is
+    //  treated as a miss (and re-fetched; the stale entry is NOT
+    //  deleted proactively — TTL only gates reads).
+    //
+    //  Caller opts that gate caching:
+    //    cacheTtlMs  — must be > 0 to enable. 0 / null / undefined
+    //                  disables caching entirely (default behavior).
+    //    cacheKey    — optional explicit cache scope; defaults to
+    //                  `path + JSON.stringify(init.body)` so different
+    //                  query strings get different buckets. Pass
+    //                  `cacheKey:'ranking-page'` if the URL params
+    //                  shouldn't be part of the bucket identity.
+    //    cacheScope  — namespace prefix; defaults to first path segment
+    //                  (so '/problems/foo' and '/problems/bar' share
+    //                  the namespace but live in different buckets).
+    //
+    //  Caching invariants:
+    //    - POST/PUT/PATCH/DELETE NEVER cache (writes are user-driven
+    //      and stale reads would hide a fresh create).
+    //    - doFetch errors never populate the cache (network failures
+    //      must retry, not be served stale).
+    //    - Auth/error responses never populate the cache.
+    // ────────────────────────────────────────────────────────────────────
+    function cacheBucketKey(path, init, opts) {
+        var scope = (opts && opts.cacheScope)
+            || ('/' + (String(path).replace(/^\/+/, '').split('/')[0] || '_root_'));
+        var id = (opts && opts.cacheKey)
+            || (path + '|' + (init && init.body ? String(init.body) : ''));
+        // sessionStorage keys are stable strings; FNV-1a-ish fold to
+        // keep them readable in devtools. 32-bit unsigned.
+        var h = 2166136261 >>> 0;
+        for (var i = 0; i < id.length; i++) {
+            h = (h ^ id.charCodeAt(i)) >>> 0;
+            h = (h * 16777619) >>> 0;
+        }
+        return 'litecode:cache:' + scope + ':' + (h >>> 0).toString(36);
+    }
+    function tryCacheRead(path, init, opts) {
+        if (!opts || !(opts.cacheTtlMs > 0)) return null;
+        var method = (init && init.method) || 'GET';
+        if (method !== 'GET') return null;          // never cache non-GETs
+        var key = cacheBucketKey(path, init, opts);
+        var raw = null;
+        try { raw = window.sessionStorage.getItem(key); } catch (_) { return null; }
+        if (!raw) return null;
+        var entry = null;
+        try { entry = JSON.parse(raw); } catch (_) { return null; }
+        if (!entry || !entry.ts) return null;
+        var age = Date.now() - Number(entry.ts);
+        if (!isFinite(age) || age < 0 || age > opts.cacheTtlMs) return null;
+        // Reconstruct the response envelope shape doFetch returns so
+        // callers don't need a special branch.
+        return {
+            ok: true,
+            status: 200,
+            data: entry.data,
+            request_id: entry.request_id || null,
+            raw: null,
+            _cached: true,
+            _cached_age_ms: age,
+        };
+    }
+    function tryCacheWrite(path, init, opts, resp) {
+        if (!opts || !(opts.cacheTtlMs > 0)) return;
+        var method = (init && init.method) || 'GET';
+        if (method !== 'GET') return;
+        if (!resp || resp.status !== 200 || !resp.data) return;
+        var key = cacheBucketKey(path, init, opts);
+        try {
+            window.sessionStorage.setItem(key, JSON.stringify({
+                ts: Date.now(),
+                data: resp.data,
+                request_id: resp.request_id || null,
+            }));
+        } catch (_) { /* sessionStorage unavailable or quota — drop */ }
     }
 
     // ────────────────────────────────────────────────────────────────────
@@ -462,6 +560,14 @@
             init.body = jsonBody(body);
         }
         return fetchWithAutoRefresh(path, init, opts || {});
+    }
+
+    // v1.3.4 PR 4 — run-samples timeout helper. Long-running sync
+    // judges need a 28s ceiling so the editor isn't blocked forever
+    // when the semaphore is congested (5 concurrent users all burning
+    // 3s/case × 4 cases).
+    function sampleRunOpts(opts) {
+        return Object.assign({ timeoutMs: SAMPLE_RUN_TIMEOUT_MS }, opts || {});
     }
 
     // ────────────────────────────────────────────────────────────────────
@@ -878,6 +984,31 @@
         _sseParseFrames: parseSseFrames,
         _sseParseFrame:  parseSseFrame,
 
+        // v1.3.4 PR 4 — sync run-samples timeout helper (28s ceiling)
+        sampleRunOpts: sampleRunOpts,
+
+        // v1.3.4 PR 4 — cache whitelist invalidator. Pass a scope
+        // (e.g. 'stats') to drop all cached entries under that
+        // namespace; pass no arg to drop EVERYTHING (e.g. on
+        // logout so a different account doesn't see the prior
+        // user's cached responses). Callers should pass opts.cacheScope
+        // to doMethod/get for the bucket to land in the right
+        // namespace (defaults to first URL path segment).
+        invalidateCache: function (scope) {
+            var prefix = scope ? ('litecode:cache:' + scope + ':')
+                                : 'litecode:cache:';
+            try {
+                var ss = window.sessionStorage;
+                var toDelete = [];
+                for (var i = 0; i < ss.length; i++) {
+                    var k = ss.key(i);
+                    if (k && k.indexOf(prefix) === 0) toDelete.push(k);
+                }
+                toDelete.forEach(function (k) { ss.removeItem(k); });
+                return toDelete.length;
+            } catch (_) { return 0; }
+        },
+
         // Auth namespace — see api.auth below for the canonical set.
         // Filled in after the auth object is defined so we can hoist.
         auth: null,
@@ -1014,6 +1145,10 @@
             return p.then(function () {
                 clearAuthLocal();
                 markRefreshSucceeded(false);
+                // v1.3.4 PR 4 — drop every cached response on logout
+                // so a different account that signs in next doesn't
+                // see the previous user's cached /stats/ranking etc.
+                try { ns.invalidateCache(); } catch (_) {}
                 emitUnauthorized({ reason: 'logout' });
                 return true;
             });

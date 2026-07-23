@@ -159,15 +159,30 @@
     // Ace ships its own theme files (e.g. textmate / monokai /
     // tomorrow_night). We don't pull any extra theme bundle — both
     // light and dark modes use Ace's built-in `github` /
-    // `tomorrow_night_eighties` themes, which match the page's
-    // paper / cyber palettes well enough without a 200 KB theme
-    // download. The theme id is computed off the document's
-    // `.dark` class so theme-boot.js flips take effect immediately.
-    function currentAceTheme() {
-        var isDark = document.documentElement.classList.contains('dark')
+    // `tomorrow_night` themes (kept intentionally neutral so the
+    // page-level `style.css` palette overrides dominate the visual).
+    //
+    // v1.3.4 PR 4 — host class `lc-ace--dark` /
+    // `lc-ace--leetcode-light` is added next to `.lc-editor-shell`
+    // so `web/css/style.css` can override individual token colours
+    // without re-loading an Ace stylesheet (one HTTP hop, same
+    // crispness, theme-boot.js dark flip becomes a class swap).
+    //
+    // The theme id is computed off the document's `.dark` class so
+    // theme-boot.js flips take effect immediately.
+    function isDarkMode() {
+        return document.documentElement.classList.contains('dark')
             || document.body.classList.contains('lc-cyber');
-        return isDark ? 'ace/theme/tomorrow_night_eighties'
-                      : 'ace/theme/github';
+    }
+    function currentAceTheme() {
+        return isDarkMode() ? 'ace/theme/tomorrow_night'
+                            : 'ace/theme/github';
+    }
+    function applyHostThemeClass(host) {
+        if (!host) return;
+        host.classList.remove('lc-ace--dark', 'lc-ace--leetcode-light');
+        host.classList.add(isDarkMode() ? 'lc-ace--dark'
+                                        : 'lc-ace--leetcode-light');
     }
 
     // ── Editor instance lifecycle ──────────────────────────────
@@ -202,6 +217,10 @@
                 enableLiveAutocompletion:  false,
             });
             state.session = state.editor.getSession();
+            // v1.3.4 PR 4 — paint the host class so the page-level
+            // CSS palette overrides the neutral Ace theme colours.
+            // Toggled in lockstep with theme-boot.js flips.
+            applyHostThemeClass(host);
 
             // Re-sync theme on dark-mode toggle. We monkey-patch
             // the exposed toggle so the saved reference is held
@@ -214,6 +233,9 @@
                     origToggle();
                     if (state.editor) {
                         state.editor.setTheme(currentAceTheme());
+                        // v1.3.4 PR 4 — also swap host class so the
+                        // CSS palette stays in lockstep with Ace.
+                        applyHostThemeClass(host);
                     }
                 };
             }

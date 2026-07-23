@@ -96,11 +96,18 @@
             <button type="button" class="lc-v4-btn lc-v4-btn--primary" id="retry-btn" style="margin-top: 16px;">重试</button>
         </div>
 
-        <!-- Empty -->
+        <!-- Empty — v1.3.4: 明确引导用户「注册登录 → 做题 → 上榜」 -->
         <div class="lc-v4-state" id="empty-state" hidden>
             <div class="lc-v4-state__icon" aria-hidden="true">⌀</div>
-            <p class="lc-v4-state__title">暂无排名数据</p>
-            <p class="lc-v4-state__lede">还没有用户产生已通过的提交。</p>
+            <p class="lc-v4-state__title">还没有任何用户上榜</p>
+            <p class="lc-v4-state__lede">
+                排行榜目前是空的 — 还没有用户产生已通过的提交。
+                注册登录账号,从题库完成首道题,你就会成为榜上的第一名。
+            </p>
+            <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 16px;">
+                <a class="lc-v4-btn lc-v4-btn--primary" href="/register.html">立即注册</a>
+                <a class="lc-v4-btn lc-v4-btn--ghost"   href="/problems_list.html">去题库刷题</a>
+            </div>
         </div>
 
         <!-- Ranking table -->
@@ -170,8 +177,15 @@
         // Normalize one server row into a stable shape, tolerant of
         // several plausible field-name spellings the Phase 6 endpoint
         // might use. `fallbackRank` is used when the row omits `rank`.
+        //
+        // v1.3.4: 后端 v1.3.4 改为返回嵌套 user 对象 (stat_routes.h:
+        //   serialize_leaderboard_row { user: {id,username,role}, ... })
+        // 之前只读 `raw.username`(扁平),所有用户被 `|| '(匿名)'`
+        // fallback 吃掉 → 排行榜全显示"匿名"。现在优先读
+        // `raw.user.username`,扁平写法保留兼容。
         function normalizeRankItem(raw, fallbackRank) {
             raw = raw || {};
+            var user = raw.user || {};
             var solved      = pickNum(raw, ['solved', 'solved_count', 'solved_problems']);
             var submissions = pickNum(raw, ['submissions', 'submission_count', 'total_submissions']);
             var accepted    = pickNum(raw, ['accepted', 'accepted_count', 'ac_count']);
@@ -182,9 +196,17 @@
             } else {
                 rate = submissions > 0 ? accepted / submissions : 0;
             }
+            // 用户名:嵌套 user.username 优先,兼容扁平 username;
+            // 都没有才显示"(匿名)"。
+            var username = (user.username != null && user.username !== '')
+                ? user.username
+                : (raw.username != null ? raw.username : '');
             return {
                 rank: (raw.rank != null && isFinite(Number(raw.rank))) ? Number(raw.rank) : fallbackRank,
-                username: String(raw.username == null ? '' : raw.username),
+                userId: (user.id != null && isFinite(Number(user.id))) ? Number(user.id)
+                          : (raw.user_id != null && isFinite(Number(raw.user_id)) ? Number(raw.user_id) : null),
+                userRole: user.role || raw.role || 'user',
+                username: String(username),
                 solved: solved,
                 submissions: submissions,
                 accepted: accepted,
@@ -384,13 +406,35 @@
             state.page = p;
             writeUrl();
             window.scrollTo({ top: 0, behavior: 'smooth' });
-            load();
+            // v1.3.4 PR 4 — local busy instead of a full skeleton swap.
+            // The current table stays mounted; we only flip the
+            // pagination chip + a row banner so a 200 ms cache hit
+            // doesn't blink the user through a blank page.
+            load(/*localBusy=*/true);
         }
 
-        function load() {
+        function load(localBusy) {
             var token = ++inflightToken;
-            showState('loading');
-            litecode.api.get('/stats/ranking' + buildRankQuery(state.page), { noRetryOn401: true })
+            if (localBusy) {
+                // localBusy path — keep table mounted, paint a
+                // subtle progress hint on the table card.
+                $('table-state').classList.add('lc-rank-loading');
+                var pag = $('pagination');
+                if (pag) pag.setAttribute('aria-busy', 'true');
+            } else {
+                showState('loading');
+            }
+            // v1.3.4 PR 4 — 60s read-through cache so flipping pages
+            // (and revisiting the page) doesn't re-hit the DB. The
+            // cache is keyed by page index so /ranking?page=3 and
+            // /ranking?page=4 don't trample each other. Retry
+            // invalidates the stats scope first.
+            litecode.api.get('/stats/ranking' + buildRankQuery(state.page), {
+                noRetryOn401: true,
+                cacheTtlMs: 60000,
+                cacheKey: 'ranking-page-' + state.page,
+                cacheScope: 'stats',
+            })
                 .then(function (resp) {
                     if (token !== inflightToken) return;
                     var data = (resp && resp.data) || {};
@@ -399,6 +443,7 @@
                     var items = raw.map(function (r, i) {
                         return normalizeRankItem(r, rankFromOffset(state.page, i));
                     });
+                    $('table-state').classList.remove('lc-rank-loading');
                     if (items.length === 0) { showState('empty'); renderSummary(); return; }
                     // v1.3.4 — 首页 (page=1) 才渲染 podium。
                     if (state.page === 1) renderPodium(items);
@@ -410,6 +455,7 @@
                 })
                 .catch(function (err) {
                     if (token !== inflightToken) return;
+                    $('table-state').classList.remove('lc-rank-loading');
                     if (isEndpointMissing(err)) { showState('unavailable'); return; }
                     showState('error');
                     $('error-message').textContent =
@@ -420,8 +466,19 @@
         window.addEventListener('DOMContentLoaded', function () {
             litecode.boot.shell({ title: 'LiteCode · 排行榜' });
             readUrl();
-            $('retry-btn').addEventListener('click', load);
-            window.addEventListener('popstate', function () { readUrl(); load(); });
+            // v1.3.4 PR 4 — Retry button must invalidate the cache
+            // so the user gets a fresh fetch (otherwise the
+            // 60s read-through cache re-serves the stale payload
+            // that just produced the error).
+            $('retry-btn').addEventListener('click', function () {
+                litecode.api.invalidateCache('stats');
+                load();
+            });
+            window.addEventListener('popstate', function () { readUrl(); load(true); });
+            // v1.3.4 PR 4 — boot.shell is fire-and-forget (nav
+            // renders from cache immediately, refreshes in the
+            // background). Keeping it off the critical path drops
+            // one event-loop tick before the first fetch starts.
             load();
         });
     })();
