@@ -51,7 +51,7 @@
    ============================================================================ */
 [hidden] { display: none !important; }
 
-   ============================================================================
+   /* ============================================================================
    Verdict → role token map (v1.2.47-b):
      AC       → --lc-color-judge-pass    (forest green)
      WA       → --lc-color-judge-fail    (crimson)
@@ -6688,26 +6688,30 @@ html.dark .lc-v4-judge-row--ole  { background: rgba(168, 85, 247, 0.16); color: 
     50% { opacity: 0.3; }
 }
 
-/* cyber 卡片 (在已有 v4-card 之外, 用于 hero / ranking podium) */
-html.dark .lc-cyber-card {
+/* cyber 卡片 (在已有 v4-card 之外, 用于 hero / ranking podium) — v1.3.4 PR 6 follow-up
+   前置结构到无条件 selector,深空赛博专属的霓虹背景 / glow ::before
+   锁在 html.dark block 内。token 通过 body:not(.dark).lc-cyber remap
+   在 light 模式下自动渲染 paper 配色。 */
+.lc-cyber-card {
     position: relative;
-    background: linear-gradient(180deg, rgba(20, 27, 45, 0.92) 0%, rgba(15, 21, 33, 0.95) 100%);
+    background: var(--lc-cyber-surface);
     border: 1px solid var(--lc-cyber-border);
     border-radius: 14px;
     backdrop-filter: blur(10px);
-    box-shadow:
-        0 1px 0 rgba(34, 211, 238, 0.06) inset,
-        0 12px 32px rgba(0, 0, 0, 0.45);
+    box-shadow: var(--lc-shadow-md);
     overflow: hidden;
+    transition: transform var(--lc-transition-base), box-shadow var(--lc-transition-base);
 }
-html.dark .lc-cyber-card::before {
+.lc-cyber-card:hover { transform: translateY(-1px); box-shadow: var(--lc-shadow-lg); }
+.lc-cyber-card::before {
     content: "";
     position: absolute;
     top: 0; left: 12px; right: 12px;
     height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.6), transparent);
+    background: linear-gradient(90deg, transparent, var(--lc-cyber-border-2), transparent);
+    opacity: 0.6;
 }
-html.dark .lc-cyber-card__title {
+.lc-cyber-card__title {
     font-family: var(--lc-font-mono);
     font-size: 12px;
     font-weight: 600;
@@ -6716,45 +6720,63 @@ html.dark .lc-cyber-card__title {
     color: var(--lc-cyber-cyan-bright);
     margin: 0 0 8px;
 }
-html.dark .lc-cyber-card__value {
+html.dark .lc-cyber-card {
+    background: linear-gradient(180deg, rgba(20, 27, 45, 0.92) 0%, rgba(15, 21, 33, 0.95) 100%);
+    box-shadow:
+        0 1px 0 rgba(34, 211, 238, 0.06) inset,
+        0 12px 32px rgba(0, 0, 0, 0.45);
+}
+html.dark .lc-cyber-card::before {
+    background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.6), transparent);
+    opacity: 1;
+}
+/* .lc-cyber-card__value 结构 base — light/dark 都生效,dark 用 text-shadow */
+.lc-cyber-card__value {
     font-family: var(--lc-font-mono);
     font-size: 28px;
     font-weight: 700;
     color: var(--lc-cyber-text);
     line-height: 1.1;
-    text-shadow: 0 0 24px rgba(34, 211, 238, 0.3);
 }
-html.dark .lc-cyber-card__value--violet { color: var(--lc-cyber-violet-hi); text-shadow: 0 0 24px rgba(168, 85, 247, 0.3); }
-html.dark .lc-cyber-card__value--emerald { color: var(--lc-cyber-emerald); text-shadow: 0 0 24px rgba(16, 185, 129, 0.3); }
+.lc-cyber-card__value--violet { color: var(--lc-cyber-violet-hi); }
+.lc-cyber-card__value--emerald { color: var(--lc-cyber-emerald); }
+html.dark .lc-cyber-card__value { text-shadow: 0 0 24px rgba(34, 211, 238, 0.3); }
+html.dark .lc-cyber-card__value--violet { text-shadow: 0 0 24px rgba(168, 85, 247, 0.3); }
+html.dark .lc-cyber-card__value--emerald { text-shadow: 0 0 24px rgba(16, 185, 129, 0.3); }
 
-/* podium (前 3 名) */
-html.dark .lc-cyber-podium {
+/* podium (前 3 名) — v1.3.4 PR 6 follow-up: 前置结构到无条件 selector,
+   让 light 模式(body:not(.dark).lc-cyber 通过 --lc-cyber-* token remap)
+   也能渲染完整 podium。深空赛博专属的霓虹 / glow / text-shadow 仍
+   锁在 html.dark block 内。*/
+.lc-cyber-podium {
     display: grid;
     grid-template-columns: 1fr 1.2fr 1fr;
     gap: 16px;
     margin-bottom: 24px;
 }
-html.dark .lc-cyber-podium__step {
+.lc-cyber-podium__step {
     position: relative;
-    background: linear-gradient(180deg, rgba(20, 27, 45, 0.92) 0%, rgba(15, 21, 33, 0.95) 100%);
+    background: var(--lc-cyber-surface);
     border: 1px solid var(--lc-cyber-border);
     border-radius: 14px;
     padding: 24px 16px 20px;
     text-align: center;
     backdrop-filter: blur(10px);
     overflow: hidden;
+    transition: transform var(--lc-transition-base), box-shadow var(--lc-transition-base);
 }
-html.dark .lc-cyber-podium__step--1 {
-    border-color: rgba(245, 158, 11, 0.55);
-    box-shadow: 0 0 28px rgba(245, 158, 11, 0.18);
+.lc-cyber-podium__step:hover { transform: translateY(-2px); }
+.lc-cyber-podium__step--1 {
+    border-color: rgba(196, 130, 89, 0.55);          /* 燕麦琥珀 — paper tuned */
+    box-shadow: 0 4px 16px rgba(140, 90, 31, 0.12);
 }
-html.dark .lc-cyber-podium__step--2 {
-    border-color: rgba(203, 213, 225, 0.45);
+.lc-cyber-podium__step--2 {
+    border-color: rgba(58, 53, 39, 0.20);
 }
-html.dark .lc-cyber-podium__step--3 {
-    border-color: rgba(180, 83, 9, 0.50);
+.lc-cyber-podium__step--3 {
+    border-color: rgba(140, 90, 31, 0.50);
 }
-html.dark .lc-cyber-podium__rank {
+.lc-cyber-podium__rank {
     font-family: var(--lc-font-mono);
     font-size: 36px;
     font-weight: 800;
@@ -6765,36 +6787,51 @@ html.dark .lc-cyber-podium__rank {
     line-height: 1;
     margin-bottom: 8px;
 }
-html.dark .lc-cyber-podium__step--1 .lc-cyber-podium__rank { color: var(--lc-cyber-amber); -webkit-text-fill-color: var(--lc-cyber-amber); text-shadow: 0 0 24px rgba(245, 158, 11, 0.5); }
-html.dark .lc-cyber-podium__step--2 .lc-cyber-podium__rank { color: #cbd5e1; -webkit-text-fill-color: #cbd5e1; text-shadow: 0 0 16px rgba(203, 213, 225, 0.4); }
-html.dark .lc-cyber-podium__step--3 .lc-cyber-podium__rank { color: #b45309; -webkit-text-fill-color: #b45309; text-shadow: 0 0 16px rgba(180, 83, 9, 0.4); }
-html.dark .lc-cyber-podium__name {
+.lc-cyber-podium__step--1 .lc-cyber-podium__rank { color: var(--lc-color-warning); -webkit-text-fill-color: var(--lc-color-warning); }
+.lc-cyber-podium__step--2 .lc-cyber-podium__rank { color: var(--lc-color-text-2); -webkit-text-fill-color: var(--lc-color-text-2); }
+.lc-cyber-podium__step--3 .lc-cyber-podium__rank { color: var(--lc-color-warning); -webkit-text-fill-color: var(--lc-color-warning); opacity: 0.85; }
+.lc-cyber-podium__name {
     font-size: 14px;
     font-weight: 600;
     color: var(--lc-cyber-text);
     margin-bottom: 4px;
     font-family: var(--lc-font-mono);
 }
-html.dark .lc-cyber-podium__solved {
+.lc-cyber-podium__solved {
     font-size: 12px;
     color: var(--lc-cyber-text-muted);
     font-family: var(--lc-font-mono);
 }
 
-/* rank row (排行榜行) */
-html.dark .lc-rank-row {
-    background: rgba(15, 21, 33, 0.45);
+/* dark-mode 专属 override — 霓虹 / glow / text-shadow */
+html.dark .lc-cyber-podium__step {
+    background: linear-gradient(180deg, rgba(20, 27, 45, 0.92) 0%, rgba(15, 21, 33, 0.95) 100%);
+}
+html.dark .lc-cyber-podium__step--1 {
+    border-color: rgba(245, 158, 11, 0.55);
+    box-shadow: 0 0 28px rgba(245, 158, 11, 0.18);
+}
+html.dark .lc-cyber-podium__step--2 { border-color: rgba(203, 213, 225, 0.45); }
+html.dark .lc-cyber-podium__step--3 { border-color: rgba(180, 83, 9, 0.50); }
+html.dark .lc-cyber-podium__step--1 .lc-cyber-podium__rank { color: var(--lc-cyber-amber); -webkit-text-fill-color: var(--lc-cyber-amber); text-shadow: 0 0 24px rgba(245, 158, 11, 0.5); }
+html.dark .lc-cyber-podium__step--2 .lc-cyber-podium__rank { color: #cbd5e1; -webkit-text-fill-color: #cbd5e1; text-shadow: 0 0 16px rgba(203, 213, 225, 0.4); }
+html.dark .lc-cyber-podium__step--3 .lc-cyber-podium__rank { color: #b45309; -webkit-text-fill-color: #b45309; text-shadow: 0 0 16px rgba(180, 83, 9, 0.4); }
+
+/* rank row (排行榜行) — v1.3.4 PR 6 follow-up: 同样前置。 */
+.lc-rank-row {
+    background: var(--lc-cyber-surface);
     border-bottom: 1px solid var(--lc-cyber-border-soft);
     color: var(--lc-cyber-text);
+    transition: background var(--lc-transition-fast);
 }
-html.dark .lc-rank-row:hover { background: rgba(34, 211, 238, 0.05); }
-html.dark .lc-rank-row--me {
-    background: rgba(34, 211, 238, 0.10);
+.lc-rank-row:hover { background: var(--lc-cyber-bg-2); }
+.lc-rank-row--me {
+    background: var(--lc-cyber-bg-2);
     border-left: 3px solid var(--lc-cyber-cyan);
-    box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.2);
+    box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.10);
 }
-html.dark .lc-rank-head {
-    background: rgba(15, 21, 33, 0.85);
+.lc-rank-head {
+    background: var(--lc-cyber-bg-2);
     color: var(--lc-cyber-text-muted);
     border-bottom: 1px solid var(--lc-cyber-border);
     font-family: var(--lc-font-mono);
@@ -6802,14 +6839,24 @@ html.dark .lc-rank-head {
     text-transform: uppercase;
     letter-spacing: 0.08em;
 }
-html.dark .lc-rank-cell--rank { color: var(--lc-cyber-cyan-bright); font-family: var(--lc-font-mono); }
-html.dark .lc-rank-username { color: var(--lc-cyber-text); }
-html.dark .lc-rank-username:hover { color: var(--lc-cyber-cyan-bright); }
-html.dark .lc-rank-me-tag { background: var(--lc-cyber-cyan); color: #0a0e14; }
-html.dark .lc-rank-cell--solved,
-html.dark .lc-rank-cell--subs,
-html.dark .lc-rank-cell--rate { color: var(--lc-cyber-text); font-family: var(--lc-font-mono); }
-html.dark .lc-rank-sub { color: var(--lc-cyber-text-muted); }
+.lc-rank-cell--rank { color: var(--lc-cyber-cyan-bright); font-family: var(--lc-font-mono); }
+.lc-rank-username { color: var(--lc-cyber-text); }
+.lc-rank-username:hover { color: var(--lc-cyber-cyan-bright); }
+.lc-rank-me-tag {
+    background: var(--lc-cyber-cyan);
+    color: var(--lc-cyber-bg);           /* light = #2E2A1F, dark = #0a0e14 — 都跟 cyan 形成对比 */
+}
+.lc-rank-cell--solved,
+.lc-rank-cell--subs,
+.lc-rank-cell--rate { color: var(--lc-cyber-text); font-family: var(--lc-font-mono); }
+.lc-rank-sub { color: var(--lc-cyber-text-muted); }
+
+/* dark-mode 行高亮(青色 hover) — 仅 dark 有意义,light 用 token 默认色 */
+html.dark .lc-rank-row:hover { background: rgba(34, 211, 238, 0.05); }
+html.dark .lc-rank-row--me {
+    background: rgba(34, 211, 238, 0.10);
+    box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.2);
+}
 
 /* password strength (register) */
 html.dark .lc-v4-pw-bar { background: rgba(15, 21, 33, 0.85); }

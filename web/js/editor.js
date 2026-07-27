@@ -170,9 +170,19 @@
     //
     // The theme id is computed off the document's `.dark` class so
     // theme-boot.js flips take effect immediately.
+    //
+    // v1.3.4 PR 5 follow-up — body.lc-cyber is a DECORATION marker
+    // (the grid strip / terminal / podium chrome), not a dark-mode
+    // signal. The original code treated it as one, which meant pages
+    // like problem.html (always <body class="lc-cyber">) locked the
+    // editor to tomorrow_night regardless of the actual theme toggle.
+    // User-visible symptom: in light mode the editor rendered Ace's
+    // dark syntax tokens on top of the page's light editor-shell bg,
+    // making keywords / strings / numbers essentially invisible.
+    // We now check ONLY the html.dark class — that's the single
+    // source of truth for "is dark mode on" set by theme-boot.js.
     function isDarkMode() {
-        return document.documentElement.classList.contains('dark')
-            || document.body.classList.contains('lc-cyber');
+        return document.documentElement.classList.contains('dark');
     }
     function currentAceTheme() {
         return isDarkMode() ? 'ace/theme/tomorrow_night'
