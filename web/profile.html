@@ -76,6 +76,25 @@
     </div>
     <div data-nav></div>
 
+    <!--
+      v1.3.4 PR 11 ★ KPI ring 共享 SVG <defs> 渐变
+      .lc-v4-kpi-card__ring circle.fg 引用 url(#kpi-grad-cyan) /
+      url(#kpi-grad-green),定义在这里集中管理。css/style.css §新加
+      的 .lc-svg-defs class 让这个 svg 在屏幕外不占布局。
+    -->
+    <svg class="lc-svg-defs" aria-hidden="true">
+        <defs>
+            <linearGradient id="kpi-grad-cyan" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%"  stop-color="#22d3ee" />
+                <stop offset="100%" stop-color="#8b5cf6" />
+            </linearGradient>
+            <linearGradient id="kpi-grad-green" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%"  stop-color="#34d399" />
+                <stop offset="100%" stop-color="#22d3ee" />
+            </linearGradient>
+        </defs>
+    </svg>
+
     <div class="lc-v4-page">
         <header class="lc-v4-page-header">
             <nav class="lc-v4-breadcrumb" aria-label="breadcrumb">
@@ -114,7 +133,11 @@
         </section>
 
         <!-- Profile content -->
-        <div id="profile-content" hidden>
+        <div id="profile-content" class="lc-particles-host" hidden>
+            <!-- v1.3.4 PR 13 ★ scoped 粒子 canvas(深色模式下补全
+                 profile-content 区域真实粒子,原 viewport fixed
+                 canvas 被卡片 opaque 背景遮挡) -->
+            <canvas class="lc-particles-canvas-scoped" aria-hidden="true"></canvas>
             <section class="lc-v4-card lc-v4-card--hover lc-fade-in lc-v4-identity-card">
                 <div class="lc-v4-avatar-xl" id="avatar" aria-hidden="true">?</div>
                 <div style="flex: 1; min-width: 0;">
@@ -297,41 +320,51 @@
               改 username 独立 section:1 天 1 次 + 副作用大(URL 路径
               /profile?username=old 还能 alias 访问但 header 显示变了)。
               单独小表单,带冷却提示。
+
+              v1.3.4 PR 11 — 包到 id="edit-username-section",super_admin
+              (username='admin') 打开 modal 时整个 section 隐藏并显示
+              锁定 banner。前端 disabled 是 UX,后端
+              auth_routes.h::update_username_handler 的 username_locked
+              check 才是兜底。
             -->
-            <hr style="margin: var(--lc-space-5) 0; border: 0;
-                       border-top: 1px solid var(--lc-color-border);">
+            <section id="edit-username-section">
+                <hr style="margin: var(--lc-space-5) 0; border: 0;
+                           border-top: 1px solid var(--lc-color-border);">
 
-            <h3 style="margin: 0 0 var(--lc-space-2); font-size: 15px;">
-                修改用户名
-            </h3>
-            <p class="lc-form-help" id="edit-username-cooldown"
-               style="margin-bottom: var(--lc-space-3);">检查中…</p>
+                <h3 style="margin: 0 0 var(--lc-space-2); font-size: 15px;">
+                    修改用户名
+                </h3>
+                <p class="lc-form-help" id="edit-username-cooldown"
+                   style="margin-bottom: var(--lc-space-3);">检查中…</p>
 
-            <form id="edit-username-form" autocomplete="off"
-                  style="display: flex; gap: 8px; align-items: flex-end;">
-                <div class="lc-form-row" style="flex: 1; min-width: 0;">
-                    <label class="lc-form-label" for="edit-new-username">新用户名</label>
-                    <input type="text" id="edit-new-username" class="lc-input"
-                           maxlength="50"
-                           pattern="[A-Za-z0-9_.\-]{3,50}"
-                           placeholder="3..50 字符,字母/数字/_-. 开头">
-                </div>
-                <button type="submit" class="lc-btn lc-btn--primary"
-                        id="edit-username-save-btn">改名</button>
-            </form>
-            <p class="lc-form-help" id="edit-username-msg" hidden></p>
+                <form id="edit-username-form" autocomplete="off"
+                      style="display: flex; gap: 8px; align-items: flex-end;">
+                    <div class="lc-form-row" style="flex: 1; min-width: 0;">
+                        <label class="lc-form-label" for="edit-new-username">新用户名</label>
+                        <input type="text" id="edit-new-username" class="lc-input"
+                               maxlength="50"
+                               pattern="[A-Za-z0-9_.\-]{3,50}"
+                               placeholder="3..50 字符,字母/数字/_-. 开头">
+                    </div>
+                    <button type="submit" class="lc-btn lc-btn--primary"
+                            id="edit-username-save-btn">改名</button>
+                </form>
+                <p class="lc-form-help" id="edit-username-msg" hidden></p>
+            </section>
         </div>
     </div>
 
     <!-- Load order is mandatory: csp.js → api.js → app.js. -->
-    <script src="/js/csp.js?v=1.3.4" defer></script>
-    <script src="/js/api.js?v=1.3.4" defer></script>
-    <script src="/js/app.js?v=1.3.4" defer></script>
+    <script src="/js/csp.js?v=1.3.5" defer></script>
+    <script src="/js/api.js?v=1.3.5" defer></script>
+    <script src="/js/app.js?v=1.3.5" defer></script>
     <!-- v1.3.4 PR 8 ★ 鼠标跟随 + 入场动效 -->
-    <script src="/js/mouse-deco.js?v=1.3.4" defer></script>
-    <script src="/js/fade-in.js?v=1.3.4" defer></script>
+    <script src="/js/mouse-deco.js?v=1.3.5" defer></script>
+    <!-- v1.3.4 PR 12 ★ 鼠标粒子(深/浅双套 config,粒子数大幅增强) -->
+    <script src="/js/mouse-particles.js?v=1.3.5" defer></script>
+    <script src="/js/fade-in.js?v=1.3.5" defer></script>
     <!-- v1.3.4 PR 10 ★ idle 1h 自动登出 -->
-    <script src="/js/idle-timeout.js?v=1.3.4" defer></script>
+    <script src="/js/idle-timeout.js?v=1.3.5" defer></script>
 
     <script>
     (function () {
@@ -534,6 +567,35 @@
             ]);
         }
 
+        // kpiCard — v1.3.4 PR 11 ★ 仪表盘大卡片
+        // 可选带 SVG 进度环 (ringPct 0..1),无 ring 时只显示大数字。
+        // 替代原来 4 个 lc-stat-card "小盒子",撑起页面空间。
+        function kpiCard(value, label, sub, ringPct, ringColor) {
+            var ring = null;
+            if (ringPct != null && isFinite(ringPct)) {
+                var pct = Math.max(0, Math.min(1, ringPct));
+                var C = 2 * Math.PI * 40;          // r=40,周长≈251.33
+                var dash = (pct * C).toFixed(2);
+                var gradId = ringColor === 'green' ? 'kpi-grad-green' : 'kpi-grad-cyan';
+                ring = el('div', { class: 'lc-v4-kpi-card__ring' + (ringColor === 'green' ? ' lc-v4-kpi-card__ring--green' : '') }, [
+                    el('svg', { viewBox: '0 0 88 88' }, [
+                        el('circle', { class: 'bg', cx: '44', cy: '44', r: '40' }),
+                        el('circle', { class: 'fg', cx: '44', cy: '44', r: '40',
+                            'stroke-dasharray': dash + ' ' + C.toFixed(2),
+                            'stroke-dashoffset': '0' }),
+                    ]),
+                ]);
+            }
+            return el('div', { class: 'lc-v4-kpi-card' }, [
+                ring,
+                el('div', { class: 'lc-v4-kpi-card__body' }, [
+                    el('div', { class: 'lc-v4-kpi-card__label', text: label }),
+                    el('div', { class: 'lc-v4-kpi-card__value', text: value }),
+                    sub ? el('div', { class: 'lc-v4-kpi-card__sub', text: sub }) : null,
+                ]),
+            ]);
+        }
+
         function barRow(label, count, denom, fillModifier) {
             var ratio = denom > 0 ? Math.min(1, count / denom) : 0;
             var fill = el('div', {
@@ -547,12 +609,64 @@
             ]);
         }
 
+        // v1.3.4 PR 13 ★ applyAvatarToElement — 把头像 URL 同步到
+        // 给定的容器元素。有 URL 就建/复用 <img>(cache-busting),
+        // 没 URL 就清掉 <img> 回退到首字母 textContent。这样可以
+        // 同时给 #avatar (profile 主页大头像) 和 [data-nav] .lc-avatar
+        // (右上角 nav 头像) 用同一个 helper。
+        //   el          — 容器元素(div 或 span 都行)
+        //   avatarUrl   — 头像 URL;falsy 时回退到 textContent
+        //   fallbackChar — 回退文字(通常是用户名首字母)
+        //   bust        — boolean;true 时加 ?_=<Date.now> 防浏览器
+        //                 缓存同一 URL(默认 true)
+        function applyAvatarToElement(el, avatarUrl, fallbackChar, bust) {
+            if (!el) return;
+            if (bust === undefined) bust = true;
+            // 找已有的 <img>(同时被包在父容器里,且 alias='avatar-*' 跳过
+            // 那些我们 embed 的其它 img — 但目前 .lc-v4-avatar-xl /
+            // .lc-avatar 内部只有头像 img,所以 querySelector('img') 安全)
+            var existing = el.querySelector('img');
+            if (avatarUrl) {
+                if (!existing) {
+                    el.textContent = '';
+                    existing = document.createElement('img');
+                    existing.style.width = '100%';
+                    existing.style.height = '100%';
+                    existing.style.objectFit = 'cover';
+                    existing.style.display = 'block';
+                    existing.alt = '';
+                    el.appendChild(existing);
+                }
+                var src = avatarUrl + (bust ? ('?_=' + Date.now()) : '');
+                existing.src = src;
+            } else {
+                // 没 URL → 删 img(如果有) + 回退文字
+                if (existing) existing.remove();
+                el.textContent = fallbackChar || '?';
+            }
+        }
+
         function renderHeader(user) {
             $('display-name').textContent = user.username || '';
-            $('avatar').textContent = (user.username || '?').charAt(0).toUpperCase();
+            // v1.3.4 PR 13 ★ 修"上传头像后离开再回来头像失效" —
+            // 之前 $('avatar').textContent = ... 无条件设 text,会把
+            // 任何已有的 <img> 子节点整个删掉,reload 后用户看到的
+            // 是首字母而不是头像。改用 applyAvatarToElement,有
+            // avatar URL 就建/复用 img,没就回退到首字母。
+            applyAvatarToElement(
+                $('avatar'),
+                user && user.avatar,
+                (user && user.username ? user.username : '?').charAt(0).toUpperCase()
+            );
 
             var badge = $('role-badge');
-            if (user.role === 'admin') {
+            // v1.3.4 PR 11 — super_admin 显式标"超级管理员 🔒",普通
+            // admin 仍标"管理员",user 标"用户"。这样用户从 badge 文字
+            // 就能看出是不是被锁定的那个 admin 账户。
+            if (user.username === 'admin') {
+                badge.className = 'lc-pill lc-pill--admin';
+                badge.textContent = '超级管理员 🔒';
+            } else if (user.role === 'admin') {
                 badge.className = 'lc-pill lc-pill--admin';
                 badge.textContent = '管理员';
             } else {
@@ -566,17 +680,37 @@
         }
 
         function renderStats(stats, problemsTotal, diffTotals) {
-            // Stat cards.
+            // v1.3.4 PR 11 ★ 4 张 KPI 仪表盘卡片(替代原来 4 个小盒子)
             var grid = $('stat-grid');
             grid.textContent = '';
-            grid.appendChild(statCard(
-                stats.solvedCount + ' / ' + problemsTotal, '已解决题目',
-                problemsTotal > 0 ? '覆盖 ' + formatPercent(pct(stats.solvedCount, problemsTotal)) : '', true));
-            grid.appendChild(statCard(
-                formatPercent(stats.acceptanceRate), '提交通过率',
-                stats.acSubmissions + ' AC / ' + stats.totalSubmissions + ' 提交'));
-            grid.appendChild(statCard(String(stats.totalSubmissions), '总提交数'));
-            grid.appendChild(statCard(String(stats.attemptedCount), '尝试过的题目'));
+            // 1) 已解决 — 带 ring(solvedCount / problemsTotal)
+            grid.appendChild(kpiCard(
+                stats.solvedCount + ' / ' + problemsTotal,
+                '已解决题目',
+                problemsTotal > 0 ? '覆盖率 ' + formatPercent(pct(stats.solvedCount, problemsTotal)) : '',
+                problemsTotal > 0 ? pct(stats.solvedCount, problemsTotal) : 0,
+                'cyan'
+            ));
+            // 2) 通过率 — 带 ring(acceptanceRate 0..1)
+            grid.appendChild(kpiCard(
+                formatPercent(stats.acceptanceRate),
+                '提交通过率',
+                stats.acSubmissions + ' AC / ' + stats.totalSubmissions + ' 提交',
+                stats.acceptanceRate || 0,
+                'green'
+            ));
+            // 3) 总提交数 — 无 ring
+            grid.appendChild(kpiCard(
+                String(stats.totalSubmissions),
+                '总提交数',
+                '全部判题记录'
+            ));
+            // 4) 尝试过的题目 — 无 ring
+            grid.appendChild(kpiCard(
+                String(stats.attemptedCount),
+                '尝试过的题目',
+                '提交过至少一次'
+            ));
 
             // Difficulty breakdown.
             var diffBox = $('difficulty-breakdown');
@@ -884,27 +1018,43 @@
                 $('edit-profile-msg').hidden = true;
                 $('edit-username-msg').hidden = true;
 
-                // 头像预览
-                var preview = $('edit-avatar-preview');
-                if (currentUser.avatar) {
-                    preview.textContent = '';
-                    var img = preview.querySelector('img');
-                    if (!img) {
-                        img = document.createElement('img');
-                        img.style.width = '100%';
-                        img.style.height = '100%';
-                        img.style.objectFit = 'cover';
-                        img.alt = '头像预览';
-                        preview.appendChild(img);
+                // v1.3.4 PR 11 ★ super_admin 锁定 — username='admin' 的
+                // 用户打开 edit modal 时,整个改 username 段都隐藏(连带
+                // <hr> 分割线、h3、cooldown help、input、save button、
+                // msg 元素),只 prepend 一条锁定 banner 解释为什么不能改。
+                // 其他字段(display_name/school/bio/email/avatar)正常可改,
+                // 因为这跟"谁是 super admin"无关。后端
+                // auth_routes.h::update_username_handler 也有 server-side
+                // username_locked check 兜底 — curl 直接打 API 也被拦。
+                var usernameSection = $('edit-username-section');
+                var existingBanner  = $('edit-superadmin-banner');
+                if (currentUser.username === 'admin') {
+                    if (usernameSection) usernameSection.hidden = true;
+                    if (!existingBanner) {
+                        var banner = document.createElement('div');
+                        banner.id = 'edit-superadmin-banner';
+                        banner.className = 'lc-banner lc-banner--locked';
+                        banner.innerHTML = '<span aria-hidden="true">🔒</span>' +
+                            '<span><strong>超级管理员用户名已锁定。</strong>' +
+                            '其他资料(头像 / 昵称 / 学校 / 简介 / 邮箱)仍可编辑。</span>';
+                        var form = $('edit-profile-form');
+                        if (form) form.insertBefore(banner, form.firstChild);
+                    } else {
+                        existingBanner.hidden = false;
                     }
-                    img.src = currentUser.avatar + '?_=' + Date.now();  // bust cache
                 } else {
-                    // 用首字母
-                    var ch = (currentUser.display_name || currentUser.username || '?').charAt(0).toUpperCase();
-                    preview.textContent = ch;
-                    var oldImg = preview.querySelector('img');
-                    if (oldImg) oldImg.remove();
+                    if (usernameSection) usernameSection.hidden = false;
+                    if (existingBanner) existingBanner.hidden = true;
                 }
+
+                // 头像预览(v1.3.4 PR 13 ★ 走 helper,跟 #avatar + nav 同步)
+                var previewChar = (currentUser.display_name
+                    || currentUser.username || '?').charAt(0).toUpperCase();
+                applyAvatarToElement(
+                    $('edit-avatar-preview'),
+                    currentUser.avatar,
+                    previewChar
+                );
 
                 // username 冷却检查
                 renderUsernameCooldown(currentUser.username_changed_at);
@@ -1036,19 +1186,12 @@
                             }
                             editState.avatarBlob = blob;
                             editState.avatarUrl  = URL.createObjectURL(blob);
-                            // 预览
-                            var preview = $('edit-avatar-preview');
-                            preview.textContent = '';
-                            var prevImg = preview.querySelector('img');
-                            if (!prevImg) {
-                                prevImg = document.createElement('img');
-                                prevImg.style.width = '100%';
-                                prevImg.style.height = '100%';
-                                prevImg.style.objectFit = 'cover';
-                                prevImg.alt = '头像预览';
-                                preview.appendChild(prevImg);
-                            }
-                            prevImg.src = editState.avatarUrl;
+                            // v1.3.4 PR 13 ★ preview 也走 helper,代码统一。
+                            applyAvatarToElement(
+                                $('edit-avatar-preview'),
+                                editState.avatarUrl,
+                                ''
+                            );
                             showEditMsg('edit-profile-msg', '新头像已选,点"保存"上传', 'info');
                         }, 'image/jpeg', 0.9);
                     };
@@ -1101,21 +1244,37 @@
                     // updateProfile 已经写缓存 + emit auth-changed,header 会自动更新
                     // avatar 那条路径只返回 { avatar: url },也要同步到 currentUser.avatar
                     if (resp && resp.avatar) {
-                        // 单独走上传,刷新页面左侧头像
-                        if (currentUser) currentUser.avatar = resp.avatar;
-                        var headerAvatar = $('avatar');
-                        if (headerAvatar) {
-                            headerAvatar.textContent = '';
-                            if (!headerAvatar.querySelector('img')) {
-                                var hi = document.createElement('img');
-                                hi.style.width = '100%';
-                                hi.style.height = '100%';
-                                hi.style.objectFit = 'cover';
-                                hi.alt = '';
-                                headerAvatar.appendChild(hi);
-                            }
-                            headerAvatar.querySelector('img').src =
-                                resp.avatar + '?_=' + Date.now();
+                        var newAvatarUrl = resp.avatar;
+                        // 1) 本页大头像(#avatar)
+                        if (currentUser) currentUser.avatar = newAvatarUrl;
+                        var fallback = (currentUser && currentUser.username
+                            ? currentUser.username : '?').charAt(0).toUpperCase();
+                        applyAvatarToElement($('avatar'), newAvatarUrl, fallback);
+
+                        // 2) v1.3.4 PR 13 ★ 右上角 nav 头像同步 —
+                        //    之前根本没找 nav 头像元素,所以右上角
+                        //    永远停留在第一次 renderNav 时的首字母。
+                        //    现在从 [data-nav] 里抓 .lc-avatar 元素
+                        //    (app.js renderNav 生成的结构),
+                        //    用同一个 helper 替换成 <img>。
+                        var navAvatar = document.querySelector('[data-nav] .lc-nav-user > .lc-avatar');
+                        applyAvatarToElement(navAvatar, newAvatarUrl, fallback);
+
+                        // 3) v1.3.4 PR 13 ★ 跨页持久化 — 上传头像走
+                        //    /auth/avatar (单独端点),返回只带 { avatar }
+                        //    不带完整 user,所以 api.js 的 uploadAvatar()
+                        //    不会调 writeCachedUser()。这里手动把
+                        //    newAvatarUrl 同步到 litecode.api.auth.currentUser
+                        //    并 writeCachedUser 一下,这样其他页面
+                        //    boot.shell 读 auth.currentUser 时就拿到
+                        //    新头像(原来 user 离开再回来,nav 头像
+                        //    永远是旧的)。
+                        var cachedUser = litecode.api.auth.currentUser;
+                        if (cachedUser) {
+                            cachedUser.avatar = newAvatarUrl;
+                            try { window.sessionStorage.setItem(
+                                'litecode:user',
+                                JSON.stringify(cachedUser)); } catch (_) {}
                         }
                     }
                     showEditMsg('edit-profile-msg', '已保存', 'success');
@@ -1213,5 +1372,9 @@
         });
     })();
     </script>
+
+    <!-- v1.3.4 PR 11 ★ 鼠标粒子层(profile 已有 mouse-deco.js,只补 canvas + particles) -->
+    <canvas id="lc-particles-canvas" aria-hidden="true"></canvas>
+    <script src="/js/mouse-particles.js?v=1.3.5" defer></script>
 </body>
 </html>

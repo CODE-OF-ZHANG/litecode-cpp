@@ -1039,6 +1039,16 @@
             return !!(u && u.role === 'admin');
         },
 
+        // v1.3.4 PR 11 ★ super_admin 判定 — 只看 username,不动 schema。
+        // V099 seed 硬编码 username='admin' 作为唯一超级管理员。前端
+        // 通过这个 helper 在 profile.html edit modal 里隐藏改名 section、
+        // 在 admin/users.html 那行显示 🔒 锁定 pill。后端 server-side
+        // guard 走 auth_routes.h 的 username lock check(2008+)。
+        isSuperAdmin: function () {
+            var u = this.currentUser;
+            return !!(u && u.username === 'admin');
+        },
+
         // GET /auth/profile — populates currentUser + emits auth-changed.
         // Throws LitecodeApiError on auth failure; the auto-refresh in
         // fetchWithAutoRefresh already handles 401.

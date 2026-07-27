@@ -103,7 +103,11 @@
           deep-links round-trip cleanly; popstate re-runs load() with the
           params the user came back to.
         -->
-        <section class="lc-card lc-problem-filters" aria-label="题目筛选">
+        <section class="lc-card lc-problem-filters lc-particles-host" aria-label="题目筛选">
+            <!-- v1.3.4 PR 13 ★ scoped 粒子 canvas(深色模式下补全
+                 筛选区真实粒子;原 viewport fixed canvas 被卡片
+                 opaque 背景遮挡) -->
+            <canvas class="lc-particles-canvas-scoped" aria-hidden="true"></canvas>
             <div class="lc-problem-filters__row">
                 <label class="lc-form-row lc-problem-filters__search">
                     <span class="lc-form-label" for="search-input">搜索</span>
@@ -120,18 +124,51 @@
                 </label>
             </div>
 
-            <div class="lc-problem-filters__row"
+            <!--
+              v1.3.4 PR 12 follow-up ★ 难度筛选 — 居中 + 丰富:
+                - 结构改两行:第一行 heading(难度 + 选中态的描述),
+                  第二行 4 个居中按钮(每个含 emoji + 文字 + 当前题数计数)
+                - 4 个难度段标配符号:全部 📚,简单 🌶,中等 ⚡,困难 🔥
+                - 计数段通过 data-count attribute 占位,渲染时
+                  loadList() 完成后由 JS 从 lastPayload 统计填进去
+                  (后端不带 per-difficulty count,所以前端从
+                  当前页内 lastPayload.items 推断 + 静态后端默认
+                  从 cache 拉一次无筛选的数据集;这里 fallback 到
+                  visible-items 比例作为 quick preview)
+            -->
+            <div class="lc-problem-filters__row lc-problem-filters__row--difficulty"
                  role="group" aria-label="难度筛选">
-                <span class="lc-form-label">难度</span>
-                <div class="lc-seg" id="difficulty-seg" role="tablist">
+                <div class="lc-problem-filters__heading">
+                    <span class="lc-form-label">难度</span>
+                    <span class="lc-problem-filters__heading-hint" id="difficulty-hint">
+                        按题目的难度等级筛选
+                    </span>
+                </div>
+                <div class="lc-seg lc-seg--centered" id="difficulty-seg" role="tablist">
                     <button type="button" class="lc-seg__btn lc-seg__btn--active"
-                            data-difficulty="" role="tab" aria-selected="true">全部</button>
+                            data-difficulty="" role="tab" aria-selected="true">
+                        <span class="lc-seg__btn-icon" aria-hidden="true">📚</span>
+                        <span class="lc-seg__btn-text">全部</span>
+                        <span class="lc-seg__btn-count" data-count="">—</span>
+                    </button>
                     <button type="button" class="lc-seg__btn"
-                            data-difficulty="easy" role="tab" aria-selected="false">简单</button>
+                            data-difficulty="easy" role="tab" aria-selected="false">
+                        <span class="lc-seg__btn-icon" aria-hidden="true">🌶</span>
+                        <span class="lc-seg__btn-text">简单</span>
+                        <span class="lc-seg__btn-count" data-count="easy">—</span>
+                    </button>
                     <button type="button" class="lc-seg__btn"
-                            data-difficulty="medium" role="tab" aria-selected="false">中等</button>
+                            data-difficulty="medium" role="tab" aria-selected="false">
+                        <span class="lc-seg__btn-icon" aria-hidden="true">⚡</span>
+                        <span class="lc-seg__btn-text">中等</span>
+                        <span class="lc-seg__btn-count" data-count="medium">—</span>
+                    </button>
                     <button type="button" class="lc-seg__btn"
-                            data-difficulty="hard" role="tab" aria-selected="false">困难</button>
+                            data-difficulty="hard" role="tab" aria-selected="false">
+                        <span class="lc-seg__btn-icon" aria-hidden="true">🔥</span>
+                        <span class="lc-seg__btn-text">困难</span>
+                        <span class="lc-seg__btn-count" data-count="hard">—</span>
+                    </button>
                 </div>
             </div>
 
@@ -200,14 +237,19 @@
       Load order is mandatory: csp.js → api.js → app.js.
       `defer` keeps every script after the [data-nav] slot is parsed.
     -->
-    <script src="/js/csp.js?v=1.3.4" defer></script>
-    <script src="/js/api.js?v=1.3.4" defer></script>
-    <script src="/js/app.js?v=1.3.4" defer></script>
+    <script src="/js/csp.js?v=1.3.5" defer></script>
+    <script src="/js/api.js?v=1.3.5" defer></script>
+    <script src="/js/app.js?v=1.3.5" defer></script>
     <!-- v1.3.4 PR 8 ★ 鼠标跟随 + 入场动效 -->
-    <script src="/js/mouse-deco.js?v=1.3.4" defer></script>
-    <script src="/js/fade-in.js?v=1.3.4" defer></script>
+    <script src="/js/mouse-deco.js?v=1.3.5" defer></script>
+    <!-- v1.3.4 PR 12 ★ 鼠标粒子(深/浅双套 config,粒子数大幅增强) -->
+    <script src="/js/mouse-particles.js?v=1.3.5" defer></script>
+    <script src="/js/fade-in.js?v=1.3.5" defer></script>
     <!-- v1.3.4 PR 10 ★ idle 1h 自动登出 -->
-    <script src="/js/idle-timeout.js?v=1.3.4" defer></script>
+    <script src="/js/idle-timeout.js?v=1.3.5" defer></script>
+
+    <!-- v1.3.4 PR12 ★ 鼠标粒子 canvas(全屏 fixed,z-index:-1,pointer:none) -->
+    <canvas id="lc-particles-canvas" aria-hidden="true"></canvas>
 
     <script>
     // ────────────────────────────────────────────────────────────────────
@@ -336,16 +378,61 @@
             while (seg.firstChild) seg.removeChild(seg.firstChild);
             DIFFICULTIES.forEach(function (d) {
                 var active = (state.difficulty === d);
+                // ★ PR 12 follow-up — 难度图标 + 文字 + 计数三段式
+                var icons = { '': '📚', easy: '🌶', medium: '⚡', hard: '🔥' };
                 var btn = el('button', {
                     type: 'button',
                     class: 'lc-seg__btn' + (active ? ' lc-seg__btn--active' : ''),
                     dataset: { difficulty: d },
-                    text: DIFFICULTY_LABELS[d],
                     role: 'tab',
                     'aria-selected': active ? 'true' : 'false',
                     onClick: function () { onDifficultyChange(d); },
-                });
+                }, [
+                    el('span', { class: 'lc-seg__btn-icon', 'aria-hidden': 'true', text: icons[d] }),
+                    el('span', { class: 'lc-seg__btn-text', text: DIFFICULTY_LABELS[d] || '全部' }),
+                    el('span', { class: 'lc-seg__btn-count', text: '—' }),
+                ]);
                 seg.appendChild(btn);
+            });
+        }
+
+        // ★ PR 12 follow-up — 全量难度桶计数
+        // 后端不带按难度的总题数接口,我们走 '?limit=200' 一次性
+        // 拉足够样本 + 按 difficulty 分桶(题库本体就 13 道题,
+        // 200 limit 足矣)。只跑一次,缓存到 difficultyCounts。
+        var difficultyCounts = { '': 0, easy: 0, medium: 0, hard: 0 };
+        var difficultyCountsLoaded = false;
+        function loadDifficultyCounts() {
+            if (difficultyCountsLoaded) return Promise.resolve();
+            return litecode.api.get('/problems?limit=200')
+                .then(function (resp) {
+                    var items = (resp && resp.data && Array.isArray(resp.data.items)) ? resp.data.items : [];
+                    var buckets = { easy: 0, medium: 0, hard: 0 };
+                    items.forEach(function (it) {
+                        if (it && buckets.hasOwnProperty(it.difficulty)) buckets[it.difficulty]++;
+                    });
+                    difficultyCounts.easy   = buckets.easy;
+                    difficultyCounts.medium = buckets.medium;
+                    difficultyCounts.hard   = buckets.hard;
+                    difficultyCounts['']    = (resp && resp.data && typeof resp.data.total === 'number')
+                        ? resp.data.total : items.length;
+                    difficultyCountsLoaded = true;
+                    applyDifficultyCounts();
+                })
+                .catch(function () {
+                    // fallback:留 '—' 占位,不阻塞 UI
+                });
+        }
+        function applyDifficultyCounts() {
+            var seg = $('difficulty-seg');
+            if (!seg) return;
+            var btns = seg.querySelectorAll('.lc-seg__btn');
+            btns.forEach(function (btn) {
+                var d = btn.getAttribute('data-difficulty');
+                var countEl = btn.querySelector('.lc-seg__btn-count');
+                if (!countEl) return;
+                var v = difficultyCounts.hasOwnProperty(d) ? difficultyCounts[d] : null;
+                countEl.textContent = (v == null) ? '—' : String(v);
             });
         }
 
@@ -673,6 +760,9 @@
             els.searchInput.value = state.search;
 
             renderDifficultySeg();
+
+            // ★ PR 12 follow-up — 拉一次全量桶 + 渲染计数段
+            loadDifficultyCounts();
 
             // Wire user controls.
             els.searchInput.addEventListener('input', onSearchInput);

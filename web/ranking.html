@@ -70,7 +70,7 @@
     </div>
     <div data-nav></div>
 
-    <div class="lc-v4-page">
+    <div class="lc-v4-page lc-rank-page">
         <header class="lc-v4-page-header">
             <nav class="lc-v4-breadcrumb" aria-label="breadcrumb">
                 <a href="/index.html">首页</a>
@@ -132,7 +132,11 @@
 
         <!-- Ranking table -->
         <section class="lc-v4-card lc-fade-in" id="table-state" hidden style="padding: 0; overflow: hidden;">
-            <div class="lc-rank-table">
+            <div class="lc-rank-table lc-particles-host">
+                <!-- v1.3.4 PR 13 ★ scoped 粒子 canvas(深色模式下
+                     补全榜单区真实粒子,原 viewport fixed canvas
+                     被卡片 opaque 背景遮挡) -->
+                <canvas class="lc-particles-canvas-scoped" aria-hidden="true"></canvas>
                 <div class="lc-rank-head" role="row">
                     <div>排名</div>
                     <div>用户</div>
@@ -148,14 +152,19 @@
     </div>
 
     <!-- Load order is mandatory: csp.js → api.js → app.js. -->
-    <script src="/js/csp.js?v=1.3.4" defer></script>
-    <script src="/js/api.js?v=1.3.4" defer></script>
-    <script src="/js/app.js?v=1.3.4" defer></script>
+    <script src="/js/csp.js?v=1.3.5" defer></script>
+    <script src="/js/api.js?v=1.3.5" defer></script>
+    <script src="/js/app.js?v=1.3.5" defer></script>
     <!-- v1.3.4 PR 8 ★ 鼠标跟随 + 入场动效 -->
-    <script src="/js/mouse-deco.js?v=1.3.4" defer></script>
-    <script src="/js/fade-in.js?v=1.3.4" defer></script>
+    <script src="/js/mouse-deco.js?v=1.3.5" defer></script>
+    <!-- v1.3.4 PR 12 ★ 鼠标粒子(深/浅双套 config,粒子数大幅增强) -->
+    <script src="/js/mouse-particles.js?v=1.3.5" defer></script>
+    <script src="/js/fade-in.js?v=1.3.5" defer></script>
     <!-- v1.3.4 PR 10 ★ idle 1h 自动登出 -->
-    <script src="/js/idle-timeout.js?v=1.3.4" defer></script>
+    <script src="/js/idle-timeout.js?v=1.3.5" defer></script>
+
+    <!-- v1.3.4 PR12 ★ 鼠标粒子 canvas(全屏 fixed,z-index:-1,pointer:none) -->
+    <canvas id="lc-particles-canvas" aria-hidden="true"></canvas>
 
     <script>
     (function () {
@@ -226,12 +235,21 @@
             var username = (user.username != null && user.username !== '')
                 ? user.username
                 : (raw.username != null ? raw.username : '');
+            // v1.3.4 PR 13 ★ avatar — 后端 stats_routes.h 仍然故意
+            // 不在排行榜返回 avatar(confidentiality 注释:避免 scraper
+            // 一次拉走所有用户的头像 URL)。所以默认是 null,只有"我"
+            // 那一行在 caller (renderRows) 里补 me.avatar。结构上仍
+            // 保留字段,后续若后端决定放开可零改动启用。
+            var avatar = (user.avatar != null && user.avatar !== '')
+                ? String(user.avatar)
+                : null;
             return {
                 rank: (raw.rank != null && isFinite(Number(raw.rank))) ? Number(raw.rank) : fallbackRank,
                 userId: (user.id != null && isFinite(Number(user.id))) ? Number(user.id)
                           : (raw.user_id != null && isFinite(Number(raw.user_id)) ? Number(raw.user_id) : null),
                 userRole: user.role || raw.role || 'user',
                 username: String(username),
+                avatar: avatar,
                 solved: solved,
                 submissions: submissions,
                 accepted: accepted,
@@ -329,14 +347,49 @@
         }
 
         // ── Rendering ──────────────────────────────────────────────
+        // v1.3.4 PR12 ★ 前端深度防御 — renderRows 入口过滤测试
+        // 残留账号(后端 stats_routes.h 已经 WHERE 一层,前端再过
+        // 一层兜底)。用户原话"只需要真实的用户刷题数据(zhangxu 和
+        // admin 两个账号)" — 但 admin 单独不在正则里,正常上榜;
+        // 同 kTestUserPattern 后端常量保持一致。
+        var kTestUserPattern = /^(e2e_|lc_perf_|normaluser_|stress_|load_|fuzz_)/;
+        var kSuperAdminUsername = 'admin';
+        function isVisibleRankingItem(it) {
+            var u = (it && it.username) ? String(it.username).toLowerCase() : '';
+            if (!u) return false;
+            // admin 是被产品允许上榜的真实账号(用户原话),放行
+            if (u === kSuperAdminUsername) return true;
+            // zhangxu 在 zhangxu 自己看榜时高亮由 isMe 处理,这里只
+            // 过滤测试前缀(kTestUserPattern)
+            return !kTestUserPattern.test(u);
+        }
+
         function renderRows(items) {
             var me = (litecode.api.auth && litecode.api.auth.currentUser) || null;
             var myName = me && me.username ? String(me.username).toLowerCase() : null;
 
             var box = $('rank-rows');
             box.textContent = '';
-            items.forEach(function (it, i) {
+            // v1.3.4 PR12 ★ 先过滤,再重排 rank — 后端给到的 rank
+            // 在过滤后会留"空档",前端用 1-based 连续编号重写让榜单
+            // 看起来是连续 1,2,3...而不是 #5,#7(被过滤掉的 #4 #6
+            // 不应让 #7 显示 #6)。
+            var visibleItems = (items || []).filter(isVisibleRankingItem);
+            visibleItems.forEach(function (it, i) {
+                it.rank = i + 1;
+            });
+            // 同步更新 state.total,让 pagination / subtitle 反映真实可见数
+            state.total = visibleItems.length;
+            renderSummary();
+
+            visibleItems.forEach(function (it, i) {
                 var isMe = myName && it.username.toLowerCase() === myName;
+                // v1.3.4 PR 13 ★ 头像 — 后端目前不返回其他用户的 avatar
+                // (confidentiality 注释),normalizeRankItem 默认 null;
+                // 只有"我"那行(在 isMe 分支)用 auth.currentUser.avatar
+                // 拼上去,这样用户改完头像在排行榜"我"那行立刻可见,
+                // 其他用户仍显示首字母(后端零改动)。
+                var rowAvatar = isMe && me && me.avatar ? String(me.avatar) : it.avatar;
                 var row = el('div', {
                     class: 'lc-rank-row' + (isMe ? ' lc-rank-row--me' : ''),
                     role: 'row',
@@ -348,9 +401,23 @@
                     el('span', { text: '#' + it.rank }),
                 ]);
 
+                // v1.3.4 PR 13 ★ 行头像 — 同 profile / nav 一样的
+                // helper 套路:有 avatar URL 就显示 img,没有就首字母。
+                // .lc-avatar 的 CSS (border-radius:50% + overflow:hidden
+                // v1.3.4 PR 13 加) 保证方形上传也能裁圆。
+                var avSpan = el('span', { class: 'lc-avatar', 'aria-hidden': 'true' });
+                if (rowAvatar) {
+                    var avImg = el('img', { src: rowAvatar, alt: '' });
+                    avImg.style.width = '100%';
+                    avImg.style.height = '100%';
+                    avImg.style.objectFit = 'cover';
+                    avImg.style.display = 'block';
+                    avSpan.appendChild(avImg);
+                } else {
+                    avSpan.textContent = (it.username || '?').charAt(0).toUpperCase();
+                }
                 var userCell = el('div', { class: 'lc-rank-cell--user' }, [
-                    el('span', { class: 'lc-avatar', 'aria-hidden': 'true',
-                        text: (it.username || '?').charAt(0).toUpperCase() }),
+                    avSpan,
                     el('a', {
                         class: 'lc-rank-username',
                         href: '/profile.html?username=' + encodeURIComponent(it.username),
@@ -367,6 +434,14 @@
                     el('span', { text: formatPercent(it.acceptanceRate) }),
                     el('span', { class: 'lc-rank-sub', text: it.accepted + ' / ' + it.submissions }),
                 ]));
+                // v1.3.4 PR 11 ★ 通过率 mini-bar — 贴 row 底,
+                // 宽度 = acceptanceRate * 100%,CSS 用 var(--rate)
+                // 控制 width。绝对定位不占文档流;hover 时 row 的
+                // 其他视觉变化照常进行。
+                var ratePct = Math.round((it.acceptanceRate || 0) * 100);
+                row.style.setProperty('--rate', ratePct + '%');
+                row.appendChild(el('div', { class: 'lc-rank-row__rate-bar',
+                    'aria-hidden': 'true' }));
                 box.appendChild(row);
             });
         }

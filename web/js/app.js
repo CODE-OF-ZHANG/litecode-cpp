@@ -277,11 +277,29 @@
             if (user) {
                 var username = String(user.username || '');
                 var avatar = el('div', { class: 'lc-nav-user', dataset: { act: 'user-menu' } });
-                avatar.appendChild(el('span', {
+                // v1.3.4 PR 13 ★ nav 头像支持图片 — 之前永远只显示
+                // 用户名首字母,即便 user.avatar 有 URL 也不会渲染
+                // <img>,导致个人主页改了头像之后右上角看不到。
+                // 配合 profile.html 同步更新 cache + 这里的 img
+                // 渲染,跨页 nav 头像也能正确显示。
+                var avSpan = el('span', {
                     class: 'lc-avatar',
-                    text: username ? username.charAt(0).toUpperCase() : '?',
                     title: username,
-                }));
+                });
+                if (user.avatar) {
+                    var img = el('img', {
+                        src: String(user.avatar),
+                        alt: '',
+                    });
+                    img.style.width = '100%';
+                    img.style.height = '100%';
+                    img.style.objectFit = 'cover';
+                    img.style.display = 'block';
+                    avSpan.appendChild(img);
+                } else {
+                    avSpan.textContent = username ? username.charAt(0).toUpperCase() : '?';
+                }
+                avatar.appendChild(avSpan);
                 var name = el('span', { class: 'lc-nav-username', text: username });
                 avatar.appendChild(name);
                 avatar.addEventListener('click', function (e) {
@@ -452,8 +470,29 @@
         return api.auth.tryRefresh()
             .then(function () { return api.auth.fetchProfile(); })
             .then(function (user) {
+                // v1.3.4 PR 13 ★ 修"跳页时右上角头像闪成默认" —
+                // 之前 fetchProfile 完成后无条件 renderNav,但 server
+                // 返回的 user 对象如果 avatar 字段缺失/不同(比如
+                // 后端 /auth/profile 某些路径没 SELECT avatar 列),
+                // 第二次 renderNav 会把 <img> 拆掉换成首字母,用户
+                // 看到 "上传的头像 → 默认头像 → 又变回上传的头像"
+                // 的 flicker(emitAuthChanged + 此处 + 上面的 listener
+                // 实际可能触发 2-3 次 renderNav)。
+                //
+                // 修法:对比 cachedUser(第一次 render 用的)与 server
+                // user 的"显示关键字段"(username + role + avatar)。
+                // 三者都一致就**只更新引用、不重渲染**;任一不同
+                // 才 renderNav,确保 nav 不会在 image 完成加载后又
+                // 被拆掉重建。auth-changed listener 那里也走同一
+                // 比较逻辑(看下面)。
+                var cached = navState.user;
+                var sameDisplay =
+                    !!user && !!cached &&
+                    user.username === cached.username &&
+                    user.role     === cached.role &&
+                    String(user.avatar || '') === String(cached.avatar || '');
                 navState.user = user || null;
-                renderNav(navState.user);
+                if (!sameDisplay) renderNav(navState.user);
                 return navState.user;
             })
             .catch(function () {
@@ -696,8 +735,21 @@
         if (!navState.listenersInstalled) {
             navState.listenersInstalled = true;
             api.auth.onAuthChanged(function (user) {
+                // v1.3.4 PR 13 ★ 同样跳过无变化 render(避免 fetchProfile
+                // 完成后 emitAuthChanged + hydrateUser 第二次 renderNav
+                // 双触发导致的 flicker)。listener 在 login / logout /
+                // refresh / profile update / 头像改完之后都会 emit,
+                // 但如果新 user 跟当前 navState.user 显示字段一致,
+                // 我们只更新引用、不动 DOM。
+                var prev = navState.user;
+                var same = !!prev === !!user;
+                if (same && user) {
+                    same = user.username === prev.username
+                        && user.role     === prev.role
+                        && String(user.avatar || '') === String(prev.avatar || '');
+                }
                 navState.user = user;
-                renderNav(user);
+                if (!same) renderNav(user);
             });
 
             // v1.3.4 — 严格登录态检测 (SPEC A24 / Phase 5 ★):

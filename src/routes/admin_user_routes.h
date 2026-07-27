@@ -558,6 +558,32 @@ inline void change_user_role_handler(
         return;
     }
 
+    // ★ v1.3.4 PR 11 — admin 禁止自降权(server-side guard)。
+    // 之前只有前端在 users.html:455-460 / 614-618 做 client-side guard,
+    // 直接 curl PUT 就能 bypass 自降,破坏唯一超级管理员不变量。本 PR
+    // 在 server 层加 403 兜底,前端保留(双层防御)。
+    // 例外:admin 把自己的 role 设为 admin(no-op,前面已经早退);admin
+    // 互相提权也是合法的(由其他 admin 的 token 调),所以仅禁止自降。
+    int admin_user_id = 0;
+    try {
+        admin_user_id = std::stoi(admin_claims.user_id);
+    } catch (const std::exception&) {
+        // user_id 解析失败,继续走下面 (target_id != admin_user_id)
+        // 必然成立,守卫自然 fail-open;不抛错避免影响合法路径。
+        admin_user_id = -1;
+    }
+    if (new_role == "user" && target_id == admin_user_id) {
+        LOG_WARN("admin_users_role: self-demote denied",
+                 {{"target_id",   std::to_string(target_id)},
+                  {"admin_id",    admin_claims.user_id},
+                  {"admin_uname", admin_claims.username}});
+        send_error(res, 403, ErrorCode::FORBIDDEN,
+                   "管理员账户不可自降为普通用户",
+                   {{"reason", "admin_self_demote_forbidden"},
+                    {"admin_id", std::to_string(admin_user_id)}});
+        return;
+    }
+
     // 5) Find the target user (404 if missing). We need the
     //    username for the audit log payload, and the current role
     //    so we can detect the no-op case below.

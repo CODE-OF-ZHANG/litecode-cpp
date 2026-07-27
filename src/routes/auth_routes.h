@@ -2192,6 +2192,35 @@ inline void update_username_handler(httplib::Response& res,
         return;
     }
 
+    // ★ v1.3.4 PR 11 — admin username 硬锁定 + 'admin' 保留名黑名单。
+    // V099 用 username='admin' 作为唯一超级管理员种子,前端
+    // litecode.auth.isSuperAdmin() 只看 username 不动 schema。
+    // 这一层 server-side guard 是兜底:即使前端被 bypass(直接 curl),
+    // 也无法改 admin 自己的 username,也无法把别的用户名改成 admin
+    // 撞名接管 admin 权限。
+    if (claims.username == "admin" && new_username != "admin") {
+        LOG_WARN("auth: username change denied — super_admin locked",
+                 {{"user_id",      std::to_string(user_id)},
+                  {"cur_username", claims.username},
+                  {"new_username", new_username}});
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   "超级管理员用户名不可修改",
+                   {{"field", "username"},
+                    {"reason", "super_admin_locked"}});
+        return;
+    }
+    if (new_username == "admin" && claims.username != "admin") {
+        LOG_WARN("auth: username change denied — 'admin' reserved",
+                 {{"user_id",      std::to_string(user_id)},
+                  {"cur_username", claims.username},
+                  {"new_username", new_username}});
+        send_error(res, 409, ErrorCode::CONFLICT,
+                   "'admin' 是系统保留用户名,不可占用",
+                   {{"field", "username"},
+                    {"reason", "username_reserved"}});
+        return;
+    }
+
     // 频率限制:1 天 1 次
     const auto row = user_repo::find_by_id(pool, user_id);
     if (!row) {

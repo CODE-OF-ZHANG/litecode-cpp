@@ -20,7 +20,37 @@
     <link rel="stylesheet" href="/css/style.css?v=1.3.4">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23F8F6F0'/%3E%3Cpath d='M22 18 L42 32 L22 46' stroke='%234D7C5A' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 </head>
-<body>
+<body class="lc-cyber">
+    <!--
+      v1.3.4 PR 11 ★ admin 5 页装饰层统一(此前完全缺失)。
+      SVG path 完全复制 web/index.html:46-72 的内容,经 v1.3.4 PR 8
+      验证视觉效果。grid-strip / bg-oat / bg-aurora / spotlight /
+      4 角 deco / watermark 全部 aria-hidden + pointer-events:none,
+      不挡交互。
+    -->
+    <div class="lc-cyber-grid-strip" aria-hidden="true"></div>
+    <div class="lc-v4-bg-oat"   aria-hidden="true"></div>
+    <div class="lc-v4-bg-aurora" aria-hidden="true"></div>
+    <div class="lc-v4-bg-grid"  aria-hidden="true"></div>
+    <div class="lc-v4-spotlight"  aria-hidden="true"></div>
+
+    <div class="lc-v4-deco lc-v4-deco--tl" aria-hidden="true">
+        <svg viewBox="0 0 60 60" fill="none"><path d="M4 50 L4 14 L40 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="lc-v4-deco lc-v4-deco--tr" aria-hidden="true">
+        <svg viewBox="0 0 60 60" fill="none"><path d="M10 30 L48 30 M30 12 L30 48 M38 22 L48 30 L38 38" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="lc-v4-deco lc-v4-deco--bl" aria-hidden="true">
+        <svg viewBox="0 0 60 60" fill="none"><path d="M4 30 L40 30 M22 14 L4 30 L22 46" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="lc-v4-deco lc-v4-deco--br" aria-hidden="true">
+        <svg viewBox="0 0 60 60" fill="none"><path d="M56 10 L56 46 L20 56" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+
+    <div class="lc-v4-watermark lc-v4-watermark--br" aria-hidden="true">
+        <svg viewBox="0 0 64 64"><path d="M22 18 L42 32 L22 46" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+
     <div data-nav></div>
 
     <main class="lc-v4-page">
@@ -389,7 +419,21 @@
             var email = u.email || '';
             var role  = u.role || 'user';
 
-            var tr = el('tr', { dataset: { id: id, username: name, role: role } });
+            // v1.3.4 PR 11 ★ super_admin(username='admin')硬锁定行 —
+            // CSS class 让那一行有 cyan 边框 + 渐变高亮背景,role pill
+            // 改显示"超级管理员 🔒",actions 替换为 🔒 锁定 pill。
+            // 这是 UX 防御;后端 change_user_role_handler 在 v1.3.4 PR 11
+            // 加了 ADMIN_SELF_DEMOTE_FORBIDDEN 兜底(403),就算前端被
+            // bypass 直接 curl 也被拦。super_admin 在生产里就是那唯一
+            // 一个 V099 seed,通常 isSelf 也成立(否则没人能管它),但
+            // 即便 admin 行不属于"我",也是只读锁定 — 防止任何 admin
+            // 把唯一超级管理员降权。
+            var isSuperAdmin = (name === 'admin');
+
+            var tr = el('tr', {
+                dataset: { id: id, username: name, role: role },
+                class:   isSuperAdmin ? 'lc-user-row--super-admin' : '',
+            });
 
             // ID (small mono-ish)
             tr.appendChild(el('td', { dataset: { label: 'ID' } }, [
@@ -419,7 +463,7 @@
             tr.appendChild(el('td', { dataset: { label: '角色' } }, [
                 el('span', {
                     class: ROLE_BADGE_CLASS[role] || 'lc-pill',
-                    text: ROLE_LABELS[role] || role,
+                    text: isSuperAdmin ? '超级管理员 🔒' : (ROLE_LABELS[role] || role),
                 })
             ]));
 
@@ -452,7 +496,15 @@
                 : '提升为管理员';
 
             var actions = el('td', { dataset: { label: '操作' } }, []);
-            if (isSelf) {
+            if (isSuperAdmin) {
+                // 唯一超级管理员:任何 admin 都不能改它的 role,包括
+                // 提升到 admin(本来就是)或降为 user。后端会返 403。
+                actions.appendChild(el('span', {
+                    class: 'lc-locked-pill',
+                    text: '🔒 锁定',
+                    title: '超级管理员账户由系统硬锁定,任何 admin 不可修改其角色或用户名',
+                }));
+            } else if (isSelf) {
                 actions.appendChild(el('span', {
                     class: 'lc-form-help',
                     text: '当前账号',
@@ -752,5 +804,10 @@
         });
     })();
     </script>
+
+    <!-- v1.3.4 PR 11 ★ 鼠标粒子层 + 跟随装饰(admin 5 页之前完全缺失) -->
+    <canvas id="lc-particles-canvas" aria-hidden="true"></canvas>
+    <script src="/js/mouse-deco.js?v=1.3.5" defer></script>
+    <script src="/js/mouse-particles.js?v=1.3.5" defer></script>
 </body>
 </html>

@@ -271,20 +271,20 @@ html.dark {
        white; cyan 是函数名 (callable); pink 是 meta; lilac 是关键字
        (keyword / type / storage); 数字 amber; 字符串 neon green;
        注释 cool slate. */
-    --lc-editor-bg:        #111827;
-    --lc-editor-gutter:    #0F1521;
+    --lc-editor-bg:        #1a1b3a;       /* v1.3.4 PR 11 — 深蓝紫,极客风 */
+    --lc-editor-gutter:    #14152e;
     --lc-editor-fg:        #E5EAF5;
     --lc-editor-gutter-fg: #98A2B8;
     --lc-editor-cursor:    #E5EAF5;
     --lc-editor-selection: rgba(0, 212, 255, 0.20);
     --lc-editor-active:    rgba(255, 255, 255, 0.04);
-    --lc-editor-keyword:   #C084FC;       /* lilac */
-    --lc-editor-storage:   #C084FC;
-    --lc-editor-string:    #98D982;       /* neon green */
-    --lc-editor-comment:   #6B7280;       /* cool slate */
-    --lc-editor-number:    #F0B86C;       /* amber */
-    --lc-editor-function:  #00D4FF;       /* signal cyan */
-    --lc-editor-variable:  #E5EAF5;
+    --lc-editor-keyword:   #8ab4ff;       /* PR 11 — 亮蓝紫,int/for/if/class 等关键字更醒目 */
+    --lc-editor-storage:   #8ab4ff;
+    --lc-editor-string:    #a8e067;       /* PR 11 — 亮绿,从 neon green 提亮 */
+    --lc-editor-comment:   #6b7398;       /* PR 11 — 暗紫灰 + italic + opacity (italic 已在 .lc-ace--dark .ace_comment rule 设) */
+    --lc-editor-number:    #ffb088;       /* PR 11 — 亮橙,数字更跳 */
+    --lc-editor-function:  #80d8ff;       /* PR 11 — 更亮的青,函数名一眼识别 */
+    --lc-editor-variable:  #c5d4ff;       /* PR 11 — 淡蓝区分 identifier */
     --lc-editor-meta:      #F472B6;       /* pink */
 
     --lc-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -368,9 +368,10 @@ body:not(.dark).lc-cyber {
 }
 
 /* cyber-only 装饰条在 light 下隐藏 */
-body:not(.dark) .lc-cyber-grid-strip { display: none; }
 body:not(.dark) .lc-cyber-terminal   { display: none; }
 body:not(.dark) .lc-cyber-ribbon     { display: none; }
+/* v1.3.4 PR12 — .lc-cyber-grid-strip 现在双模式 universal display:none,
+   不再需要 light-only 这条(避免和 base 规则重复)。 */
 
 /* v1.3.4 PR 5 — system dark preference kicks in only when the user has
    NOT made an explicit choice.  theme-boot.js writes `litecode:theme`
@@ -650,11 +651,23 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
    ===================================================================== */
 
 [data-nav] {
-    background: var(--lc-color-surface);
-    border-bottom: 1px solid var(--lc-color-border);
+    /* v1.3.4 PR 11 — 毛玻璃 nav 实体背景(light 模式)。
+       之前 background: var(--lc-color-surface) 是燕麦暖白纯色不透明,
+       没有 backdrop-filter。改成半透明 + blur(14px) saturate(180%),
+       深色模式走 html.dark [data-nav](§6.3 块)。 */
+    background: rgba(248, 246, 240, 0.78);
+    backdrop-filter: blur(14px) saturate(180%);
+    -webkit-backdrop-filter: blur(14px) saturate(180%);
+    border-bottom: 1px solid rgba(125, 211, 252, 0.15);
     position: sticky;
     top: 0;
     z-index: 50;
+    transition: background 240ms ease, border-color 240ms ease;
+}
+/* nav 渲染前 [data-nav] 占位 slot 不能是 0 高度 — 否则 56px flash */
+[data-nav]:empty { min-height: 56px; }
+@media (max-width: 768px) {
+    [data-nav]:empty { min-height: 52px; }
 }
 
 .lc-nav {
@@ -724,6 +737,9 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     width: 28px;
     height: 28px;
     border-radius: 50%;
+    /* v1.3.4 PR 13 ★ 修方形头像显示成方框 — 与 .lc-v4-avatar-xl
+       同根因,nav 头像也需要 overflow:hidden。 */
+    overflow: hidden;
     background: var(--lc-color-link);
     color: #ffffff;
     font-size: var(--lc-font-size-sm);
@@ -1300,6 +1316,19 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     overflow: hidden;
     background: var(--lc-color-surface);
 }
+/* ★ PR 12 follow-up — segmented 居中模式 + 三段式按钮布局 */
+.lc-seg--centered {
+    align-self: stretch;
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 0;
+    border: 1px solid var(--lc-color-border);
+    background: var(--lc-color-surface-1);
+    border-radius: var(--lc-radius-lg);
+    padding: 4px;
+    box-shadow: var(--lc-shadow-sm, 0 1px 2px rgba(0,0,0,0.04));
+}
 .lc-seg__btn {
     appearance: none;
     background: transparent;
@@ -1323,6 +1352,227 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
 .lc-seg__btn--active {
     background: var(--lc-color-link);
     color: #ffffff;
+}
+
+/* ★ PR 12 follow-up — 难度筛选专用(三段式按钮 + 居中 + 计数) */
+.lc-problem-filters__row--difficulty {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--lc-space-4);
+    padding: var(--lc-space-3) 0;
+}
+/* ★ PR 12 follow-up-2 — 深色模式专属:难度行容器在深空
+   背景下叠 cyber 暗紫蓝渐变 + cyan 顶边线 + glow,跟
+   `.lc-v4-kpi-card` 同款"深空赛博"质感 */
+html.dark .lc-problem-filters__row--difficulty {
+    background: linear-gradient(135deg,
+        rgba(15, 23, 42, 0.55) 0%,
+        rgba(30, 41, 59, 0.45) 100%);
+    border-radius: var(--lc-radius-lg);
+    padding: var(--lc-space-4) var(--lc-space-5);
+    box-shadow: 0 6px 24px -14px rgba(34, 211, 238, 0.22),
+                inset 0 1px 0 rgba(125, 211, 252, 0.06);
+    border: 1px solid rgba(125, 211, 252, 0.12);
+    position: relative;
+}
+html.dark .lc-problem-filters__row--difficulty::before {
+    /* 顶部细 cyan 强调线,跟 ranking 的 lc-cyber-grid-strip
+       风格一致,提示这是"用户操作区" */
+    content: "";
+    position: absolute;
+    top: 0;
+    left: var(--lc-space-4);
+    right: var(--lc-space-4);
+    height: 1px;
+    background: linear-gradient(90deg,
+        transparent 0%,
+        rgba(34, 211, 238, 0.45) 50%,
+        transparent 100%);
+}
+.lc-problem-filters__heading {
+    display: flex;
+    align-items: baseline;
+    gap: var(--lc-space-3);
+    padding-left: var(--lc-space-2);
+}
+.lc-problem-filters__heading .lc-form-label {
+    /* heading 视觉权重大:字号提 + 颜色饱和 */
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--lc-color-text);
+    letter-spacing: 0.02em;
+}
+.lc-problem-filters__heading-hint {
+    font-size: 12px;
+    color: var(--lc-color-text-muted);
+    font-family: var(--lc-font-mono);
+}
+/* ★ PR 12 follow-up-2 — 深色下 heading label + hint 加
+   cyan 微光感,跟 active 按钮的 cyan 色调形成视觉层级 */
+html.dark .lc-problem-filters__heading .lc-form-label {
+    color: #f1f5f9;
+    text-shadow: 0 0 12px rgba(34, 211, 238, 0.20);
+}
+html.dark .lc-problem-filters__heading-hint {
+    color: rgba(125, 211, 252, 0.70);
+}
+.lc-seg--centered .lc-seg__btn {
+    /* 取消 segmented 原始的 border-right / 等宽 min-width */
+    border-right: 0;
+    min-width: 0;
+    /* 三段式内嵌:图标 + 文 + 计数 — flex 列让按钮内容居中 */
+    flex: 1 1 0;
+    min-width: 100px;
+    padding: 10px 18px;
+    border-radius: var(--lc-radius-md);
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    justify-content: center;
+    color: var(--lc-color-text-2);
+    font-weight: 500;
+    position: relative;
+    transition: background 200ms cubic-bezier(0.16, 1, 0.3, 1),
+                color 200ms ease,
+                transform 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.lc-seg--centered .lc-seg__btn:hover {
+    background: var(--lc-color-surface-2);
+    color: var(--lc-color-text);
+    transform: translateY(-1px);
+}
+.lc-seg--centered .lc-seg__btn--active {
+    background: linear-gradient(135deg,
+        var(--lc-color-link) 0%,
+        color-mix(in srgb, var(--lc-color-link) 80%, #6366f1) 100%);
+    color: #ffffff;
+    box-shadow: 0 6px 18px -8px var(--lc-color-link),
+                inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    transform: translateY(-1px);
+}
+/* ★ PR 12 follow-up-2 — 深色模式专属:浅色 block 只在 body
+   默认态命中,深色下 `body.lc-cyber` 不继承 link gradient。
+   这里补整段深色专属样式(容器 bg / hover / active / heading /
+   row 装饰)— 用户原话"浅色丰富了,深色没丰富"。 */
+html.dark .lc-seg--centered {
+    /* 容器在深空 #0A0E1A 上叠 cyber 渐变 + 内 cyan glow,
+       视觉与 .lc-v4-kpi-card 同款"深空赛博"质感 */
+    background: linear-gradient(135deg,
+        rgba(15, 23, 42, 0.72) 0%,
+        rgba(30, 41, 59, 0.72) 100%);
+    border-color: rgba(125, 211, 252, 0.22);
+    box-shadow: 0 6px 22px -10px rgba(34, 211, 238, 0.18),
+                inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+html.dark .lc-seg--centered .lc-seg__btn {
+    color: rgba(226, 232, 240, 0.78);
+}
+html.dark .lc-seg--centered .lc-seg__btn:hover {
+    /* hover 在深色下用 cyan→indigo 渐变 + glow,
+       比浅色 surface-2 平淡更"有反馈感" */
+    background: linear-gradient(135deg,
+        rgba(34, 211, 238, 0.18) 0%,
+        rgba(99, 102, 241, 0.18) 100%);
+    color: #f8fafc;
+    box-shadow: 0 4px 14px -6px rgba(34, 211, 238, 0.45),
+                inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    transform: translateY(-1px);
+}
+html.dark .lc-seg--centered .lc-seg__btn--active {
+    /* 浅色用 link gradient,深色下 link 已是 cyan,改用更
+       浓烈的 cyan→violet 渐变 + 双层 glow(外 cyan + 内
+       violet)+ inset 白高光,跟 cyber dark 主题对齐 */
+    background: linear-gradient(135deg,
+        #22d3ee 0%,
+        #6366f1 100%);
+    color: #0a0e1a;
+    box-shadow: 0 8px 28px -8px rgba(34, 211, 238, 0.55),
+                0 0 0 1px rgba(34, 211, 238, 0.35),
+                inset 0 1px 0 rgba(255, 255, 255, 0.30);
+    transform: translateY(-1px);
+}
+html.dark .lc-seg--centered .lc-seg__btn--active .lc-seg__btn-count {
+    /* 深色 active 下计数徽章用深色半透明 + cyan 字,避免和
+       白色按钮背景对比差 */
+    background: rgba(10, 14, 26, 0.45);
+    color: #22d3ee;
+    border-color: rgba(34, 211, 238, 0.45);
+}
+/* 深色下难度色条加 cyan 外发光,跟整体 cyber 主题共鸣 */
+html.dark .lc-seg--centered .lc-seg__btn[data-difficulty="easy"]::before {
+    box-shadow: 0 0 10px rgba(16, 185, 129, 0.65);
+}
+html.dark .lc-seg--centered .lc-seg__btn[data-difficulty="medium"]::before {
+    box-shadow: 0 0 10px rgba(245, 158, 11, 0.65);
+}
+html.dark .lc-seg--centered .lc-seg__btn[data-difficulty="hard"]::before {
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.65);
+}
+.lc-seg__btn-icon {
+    font-size: 18px;
+    line-height: 1;
+    filter: saturate(1.1);
+}
+.lc-seg__btn--active .lc-seg__btn-icon { filter: drop-shadow(0 0 6px rgba(255,255,255,0.4)) saturate(1.2); }
+.lc-seg__btn-text {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+.lc-seg__btn-count {
+    /* 计数段:小圆角徽章,active 时背景半透明白 */
+    font-size: 11px;
+    font-weight: 700;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--lc-color-surface-2);
+    color: var(--lc-color-text-muted);
+    font-variant-numeric: tabular-nums;
+    border: 1px solid var(--lc-color-border);
+    min-width: 28px;
+    text-align: center;
+    line-height: 1.4;
+}
+.lc-seg__btn--active .lc-seg__btn-count {
+    background: rgba(255, 255, 255, 0.22);
+    color: #ffffff;
+    border-color: rgba(255, 255, 255, 0.30);
+}
+/* 每个难度的语义色(在非 active 时):绿色 easy / 橙色 medium / 红色 hard
+   让按钮左侧加一道 2px 色条,让用户一眼看出对应难度家族 */
+.lc-seg--centered .lc-seg__btn[data-difficulty="easy"]::before,
+.lc-seg--centered .lc-seg__btn[data-difficulty="medium"]::before,
+.lc-seg--centered .lc-seg__btn[data-difficulty="hard"]::before {
+    content: "";
+    width: 3px;
+    height: 18px;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+.lc-seg--centered .lc-seg__btn[data-difficulty="easy"]::before {
+    background: var(--lc-pill-easy, #10b981);
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.45);
+}
+.lc-seg--centered .lc-seg__btn[data-difficulty="medium"]::before {
+    background: var(--lc-pill-medium, #f59e0b);
+    box-shadow: 0 0 8px rgba(245, 158, 11, 0.45);
+}
+.lc-seg--centered .lc-seg__btn[data-difficulty="hard"]::before {
+    background: var(--lc-pill-hard, #ef4444);
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.45);
+}
+
+@media (max-width: 768px) {
+    /* 移动端:4 个按钮改成 2x2 网格,避免横向挤 */
+    .lc-seg--centered {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+    }
+    .lc-seg--centered .lc-seg__btn {
+        min-width: 0;
+        flex: none;
+    }
 }
 .lc-seg__btn--active:hover {
     background: var(--lc-color-link-hover);
@@ -1381,6 +1631,37 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     box-shadow: var(--lc-shadow-rest);
     display: flex;
     flex-direction: column;
+}
+/* ★ PR 12 follow-up-2 — 深色下题目列表容器,跟"难度行"同款
+   cyber 暗紫蓝渐变 + cyan 边光,保证深色模式整个页面在视觉
+   重量上均衡(容器 + 列表都"漂浮"在深空上)。 */
+html.dark .lc-problem-list {
+    background: linear-gradient(135deg,
+        rgba(15, 23, 42, 0.78) 0%,
+        rgba(30, 41, 59, 0.72) 100%);
+    border-color: rgba(125, 211, 252, 0.18);
+    box-shadow: 0 8px 28px -14px rgba(34, 211, 238, 0.22),
+                inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+/* ★ PR 12 follow-up-2 — 深色下题目行 hover 从 surface-2 平淡
+   反馈改 cyan→indigo 渐变,跟 seg 按钮 hover 风格统一,避免
+   用户在过滤区看到惊艳反馈后到列表区却"没反应"的视觉断层 */
+html.dark .lc-problem-row:hover {
+    background: linear-gradient(90deg,
+        rgba(34, 211, 238, 0.10) 0%,
+        rgba(99, 102, 241, 0.08) 100%);
+    box-shadow: inset 2px 0 0 #22d3ee;
+}
+html.dark .lc-problem-row:focus-visible {
+    outline-color: rgba(34, 211, 238, 0.65);
+    background: linear-gradient(90deg,
+        rgba(34, 211, 238, 0.10) 0%,
+        rgba(99, 102, 241, 0.08) 100%);
+}
+/* ★ PR 12 follow-up-2 — 深色下行分隔线改 cyan 透明度变体,
+   视觉比 border 默认色更深邃(深空底色 + 低饱和 cyan) */
+html.dark .lc-problem-row {
+    border-top-color: rgba(125, 211, 252, 0.10);
 }
 
 .lc-problem-row {
@@ -1713,13 +1994,28 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     color: var(--lc-color-text);
 }
 
-/* Right column — editor + submit + result */
+/* Right column — editor + submit + result.
+   v1.3.4 PR12 ★ padding-right: 32px 让右列贴屏幕边缘
+   (在 .lc-problem-page 把 padding-right 改 0 后),editor
+   卡片自己的内容不贴住物理边沿。响应式断点会缩窄 / 归零,
+   见下面 @media 块。 */
 .lc-editor-pane {
     position: sticky;
     top: 70px;
     display: flex;
     flex-direction: column;
     gap: var(--lc-space-3);
+    padding-right: 32px;
+}
+@media (max-width: 1180px) {
+    .lc-editor-pane {
+        padding-right: 24px;
+    }
+}
+@media (max-width: 768px) {
+    .lc-editor-pane {
+        padding-right: 16px;
+    }
 }
 
 .lc-editor-pane__toolbar {
@@ -2628,54 +2924,98 @@ html.dark .lc-gauge--danger {
    pagination + medal styling below are the production render path.
    Reuses .lc-avatar / .lc-pagination / .lc-card / .lc-loading tokens. */
 
+/* ── v1.3.4 PR 12 follow-up ★ 排行榜页面增宽 — 类似个人主页
+   (.lc-problems-list-page) 模式,把容器从 .lc-v4-page 默认
+   1180px 升到 1440px,腾出大屏空间给 rank table(每行 8 列
+   内容: 排名 / 用户 / 已解决 / 提交数 / 通过率,加大数字
+   字号 + 加密 padding),跟大屏 KPI 卡片视觉一致。 */
+.lc-rank-page {
+    max-width: 1440px !important;
+    padding: 0 40px 96px;
+}
+@media (max-width: 1280px) {
+    .lc-rank-page {
+        max-width: 1180px !important;
+        padding: 0 24px 80px;
+    }
+}
+@media (max-width: 768px) {
+    .lc-rank-page {
+        padding: 0 16px 64px;
+    }
+}
+
 .lc-rank-table {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 4px;
 }
 .lc-rank-head,
 .lc-rank-row {
     display: grid;
-    grid-template-columns: 64px 1fr 92px 92px 104px;
+    /* ★ follow-up — 容器宽到 1440,列宽从 64/1fr/92/92/104
+       (≈1080) 升到 80/1fr/120/120/140(≈1260),大屏下留余
+       不挤。1fr 中间用户名区弹性最大。 */
+    grid-template-columns: 80px 1fr 120px 120px 140px;
     align-items: center;
-    gap: var(--lc-space-3);
-    padding: var(--lc-space-3) var(--lc-space-4);
+    gap: var(--lc-space-4);
+    padding: var(--lc-space-4) var(--lc-space-5);
 }
 .lc-rank-head {
-    font-size: var(--lc-font-size-xs);
+    /* ★ follow-up — 字大 heading 提到 13px,letter-spacing 略加 */
+    font-size: 13px;
     font-weight: 600;
     color: var(--lc-color-text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.03em;
+    letter-spacing: 0.06em;
     border-bottom: 1px solid var(--lc-color-border);
+    padding-top: var(--lc-space-3);
+    padding-bottom: var(--lc-space-3);
 }
 .lc-rank-row {
-    border-radius: var(--lc-radius-md);
+    border-radius: var(--lc-radius-lg);
     border: 1px solid transparent;
     background: var(--lc-color-surface-1);
+    min-height: 64px;
+    /* ★ follow-up hover 抬起幅度加大,与卡片视觉对齐 */
+    transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1),
+                border-color 200ms ease,
+                box-shadow 200ms ease;
 }
-.lc-rank-row:hover { border-color: var(--lc-color-border-2); }
+.lc-rank-row:hover {
+    border-color: var(--lc-color-border-2);
+    transform: translateX(4px);
+    box-shadow: 0 6px 24px -10px rgba(13, 148, 210, 0.22);
+}
 .lc-rank-row--me {
     border-color: var(--lc-color-link);
     background: color-mix(in srgb, var(--lc-color-link) 8%, var(--lc-color-surface-1));
 }
+html.dark .lc-rank-row:hover {
+    box-shadow: 0 6px 24px -8px rgba(34, 211, 238, 0.28);
+}
 .lc-rank-cell--rank {
-    font-size: var(--lc-font-size-lg);
+    /* ★ follow-up — 排名字号 18→22,更醒目 */
+    font-size: 22px;
     font-weight: 700;
     color: var(--lc-color-text-1);
     font-variant-numeric: tabular-nums;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
 }
-.lc-rank-cell--rank .lc-rank-medal { font-size: var(--lc-font-size-xl); }
+.lc-rank-cell--rank .lc-rank-medal {
+    font-size: 26px;
+}
 .lc-rank-cell--user {
     display: flex;
     align-items: center;
-    gap: var(--lc-space-2);
+    gap: var(--lc-space-3);
     min-width: 0;
 }
 .lc-rank-username {
+    /* ★ follow-up — 用户名字号 16,加半透明度区分 */
+    font-size: 16px;
     font-weight: 600;
     color: var(--lc-color-text);
     overflow: hidden;
@@ -2683,23 +3023,33 @@ html.dark .lc-gauge--danger {
     white-space: nowrap;
 }
 .lc-rank-me-tag {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--lc-color-link);
     border: 1px solid var(--lc-color-link);
     border-radius: 999px;
-    padding: 1px 6px;
+    padding: 2px 8px;
     flex-shrink: 0;
 }
 .lc-rank-cell--num {
     font-variant-numeric: tabular-nums;
     color: var(--lc-color-text-1);
     text-align: right;
+    /* ★ follow-up — 数字列字号提至 18,主指标(已解决)略大 */
+    font-size: 18px;
+    font-weight: 600;
+}
+.lc-rank-cell--solved {
+    /* ★ follow-up — 已解决作为主指标,字号略大于其他 */
+    color: var(--lc-color-link);
+    font-size: 20px;
+    font-weight: 700;
 }
 .lc-rank-cell--num .lc-rank-sub {
     display: block;
-    font-size: 11px;
+    font-size: 12px;
     color: var(--lc-color-text-muted);
+    margin-top: 2px;
 }
 
 @media (max-width: 640px) {
@@ -5805,6 +6155,10 @@ html.dark .lc-v4-auth__pw-toggle[aria-pressed="true"] {
 .lc-v4-avatar-xl {
     width: 80px; height: 80px;
     border-radius: 50%;
+    /* v1.3.4 PR 13 ★ 修方形头像"显示成方框" — border-radius:50%
+       只让父容器本身是圆,子 <img> 仍然按方形渲染 + 溢出。必须
+       overflow:hidden 才能真正把子元素裁成圆。 */
+    overflow: hidden;
     background: var(--lc-v4-grad-blue);
     color: #ffffff;
     font-weight: 800;
@@ -6027,8 +6381,14 @@ html.dark body::after {
    否则 `body > * { position: relative; z-index: 2 }` 的 specificity
    (0,1,2) 比 `.lc-menu { position: fixed; z-index: 99999 }` (0,1,0) 高,
    会把浮层的 position:fixed + 高 z-index 强制降级成 relative + 2,
-   暗色模式下头像点不出退出登录菜单(用户 bug 报告)。 */
-html.dark body > *:not(.lc-menu):not(.lc-toasts) { position: relative; z-index: 2; }
+   暗色模式下头像点不出退出登录菜单(用户 bug 报告)。
+
+   v1.3.4 PR12 ★ — :not() 排除列表再扩。
+   之前 `.lc-cyber-grid-strip` 被这条规则强制 relative,2px
+   渐变条 + opacity:0.55 在深色下顶回文档流(nav 上方),
+   形成 "导航栏上方带背景的空白区域"(用户原话)。把所有
+   fixed 装饰层一并豁免,让 fixed declaration 真正生效。 */
+html.dark body > *:not(.lc-menu):not(.lc-toasts):not(.lc-cyber-grid-strip):not(.lc-v4-bg-oat):not(.lc-v4-bg-aurora):not(.lc-v4-bg-grid):not(.lc-v4-spotlight):not(.lc-v4-deco):not(.lc-v4-watermark):not(.lc-svg-defs):not(#lc-particles-canvas):not(.lc-modal) { position: relative; z-index: 2; }
 
 /* §6.3 — 现有 v4 组件覆写 (cyber 化) */
 
@@ -6517,10 +6877,16 @@ html.dark .lc-bar-row__label,
 html.dark .lc-bar-row__count { color: var(--lc-cyber-text-muted); font-family: var(--lc-font-mono); }
 
 /* nav */
-html.dark .lc-nav {
-    background: rgba(15, 21, 33, 0.85);
-    border-bottom: 1px solid var(--lc-cyber-border);
-    backdrop-filter: blur(12px);
+/* v1.3.4 PR 11 — 深色模式 nav 实体背景 + 强 backdrop-filter。
+   background 从内层 .lc-nav 移到外层 [data-nav],这样
+   max-width:1280px 的 .lc-nav 区域内仍然是透的(只显示燕麦文字),
+   [data-nav] 全宽才有实体毛玻璃。box-shadow 加深空上浮感。 */
+html.dark [data-nav] {
+    background: rgba(10, 14, 26, 0.72);
+    border-bottom-color: rgba(125, 211, 252, 0.22);
+    backdrop-filter: blur(14px) saturate(180%);
+    -webkit-backdrop-filter: blur(14px) saturate(180%);
+    box-shadow: 0 6px 24px -12px rgba(0, 0, 0, 0.6);
 }
 html.dark .lc-nav-brand { color: var(--lc-cyber-text); }
 html.dark .lc-nav-brand::before { color: var(--lc-cyber-cyan-bright); }
@@ -6806,27 +7172,29 @@ html.dark .lc-cyber-card__value--emerald { text-shadow: 0 0 24px rgba(16, 185, 1
 }
 .lc-cyber-podium__rank {
     font-family: var(--lc-font-mono);
-    font-size: 36px;
+    /* ★ follow-up — 排名字号 36→44,podium 加大后更清晰 */
+    font-size: 44px;
     font-weight: 800;
     background: linear-gradient(180deg, var(--lc-cyber-cyan-bright), var(--lc-cyber-violet-hi));
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
     line-height: 1;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
 }
 .lc-cyber-podium__step--1 .lc-cyber-podium__rank { color: var(--lc-color-warning); -webkit-text-fill-color: var(--lc-color-warning); }
 .lc-cyber-podium__step--2 .lc-cyber-podium__rank { color: var(--lc-color-text-2); -webkit-text-fill-color: var(--lc-color-text-2); }
 .lc-cyber-podium__step--3 .lc-cyber-podium__rank { color: var(--lc-color-warning); -webkit-text-fill-color: var(--lc-color-warning); opacity: 0.85; }
 .lc-cyber-podium__name {
-    font-size: 14px;
+    /* ★ follow-up — 用户名 14→17,可读性更佳 */
+    font-size: 17px;
     font-weight: 600;
     color: var(--lc-cyber-text);
-    margin-bottom: 4px;
+    margin-bottom: 6px;
     font-family: var(--lc-font-mono);
 }
 .lc-cyber-podium__solved {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--lc-cyber-text-muted);
     font-family: var(--lc-font-mono);
 }
@@ -6924,11 +7292,19 @@ html.dark *:focus-visible {
 }
 
 /* §6.6 — cyber 装饰元素 (grid pattern + scanline 装饰条) */
+/* v1.3.4 PR 11 — 改成 position: fixed 上提,不占文档流。
+   之前 height:2px + margin:0 0 24px + position:static 让深色模式下
+   grid-strip 撑出 26px "上空"(浅色下 display:none 所以不显),
+   且 html.dark body > * 把它强制 relative 持续占流。
+
+   v1.3.4 PR12 ★ — **彻底隐藏**(双模式 display:none)。
+   用户原话:"导航栏上方不许要带背景的空白区域,改成和浅色模式
+   一样"。2px 渐变 cyan→violet + opacity:0.55 在深色
+   rgba(10,14,26,0.72) nav 上方形成发光的横向条带,正是用户
+   眼中那个"带背景的空白区域"。直接 `display: none`
+   与浅色行为完全一致,让 nav 贴在 viewport 顶部最干净。 */
 .lc-cyber-grid-strip {
-    height: 2px;
-    background: linear-gradient(90deg, transparent, var(--lc-cyber-cyan), var(--lc-cyber-violet), transparent);
-    margin: 0 0 24px;
-    opacity: 0.55;
+    display: none;
 }
 
 /* ribbon status (顶部状态栏) */
@@ -6981,28 +7357,35 @@ html.dark *:focus-visible {
          Collapses cleanly below 768px.
    ===================================================================== */
 
-/* (1) Problem page wrapper — wider, more breathing room on desktop. */
+/* (1) Problem page wrapper — v1.3.4 PR12 ★ 取消 max-width 1480
+   限制,改 padding-right: 0,让编辑器列(grid 右列)在桌面端
+   真正"贴到屏幕右边缘",与 LeetCode 风格 1:1 对齐。
+   max-width: none 让父容器 .lc-v4-page max-width:1180px 自然生效,
+   实际工作区宽度仍被 .lc-v4-page 约束,只是 problem.html 内部不再
+   二次缩窄。padding-left 保留 32px 给题目描述留白。 */
 .lc-problem-page {
-    --lc-problem-page-max: 1480px;
-    max-width: var(--lc-problem-page-max) !important;
-    padding: 0 32px 96px;
+    max-width: none !important;
+    padding: 0 0 96px 32px;
 }
 @media (max-width: 1180px) {
     .lc-problem-page {
-        padding: 0 24px 80px;
+        padding: 0 0 80px 24px;
     }
 }
 @media (max-width: 768px) {
     .lc-problem-page {
-        padding: 0 16px 64px;
+        padding: 0 0 64px 16px;
     }
 }
 
 /* (1a) Two-column layout — survive on 13" laptops instead of collapsing
-   at 1024px. The hero (left) gets more space because descriptions are
-   usually the longer column; the editor pane stays sticky on the right. */
+   at 1024px.
+   v1.3.4 PR12 ★ 改 5fr 7fr — 让编辑器列(右)占 ~58%,题目描述
+   (左)占 ~42%。从用户的反馈(编辑区域小,要像 LeetCode)来,右列
+   比例必须大于左列。同时 .lc-editor-pane 自带 padding-right: 32px,
+   内容不会贴屏幕物理边沿。 */
 .lc-problem-layout {
-    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
     gap: var(--lc-space-5);
 }
 @media (max-width: 1180px) {
@@ -7014,6 +7397,7 @@ html.dark *:focus-visible {
     }
     .lc-editor-pane {
         position: static;
+        padding-right: 0;
     }
 }
 
@@ -7528,6 +7912,7 @@ html.dark .lc-result-panel__hero {
 .lc-ace--leetcode-light .ace_comment {
     color: var(--lc-editor-comment) !important;
     font-style: italic;
+    opacity: 0.85;            /* v1.3.4 PR 11 — 注释低透明度,让代码主体更突出 */
 }
 .lc-ace--dark .ace_variable,
 .lc-ace--leetcode-light .ace_variable {
@@ -7538,6 +7923,15 @@ html.dark .lc-result-panel__hero {
 .lc-ace--leetcode-light .ace_support.ace_function,
 .lc-ace--leetcode-light .ace_entity.ace_name.ace_function {
     color: var(--lc-editor-function) !important;
+    font-weight: 500;       /* v1.3.4 PR 11 — 函数名轻微加粗 */
+}
+
+/* v1.3.4 PR 11 — identifier(纯标识符 / 变量名)用淡蓝区分,
+   避免跟 keyword/function 混色。这条 specificity (0,2,0) 高于
+   下面的 [class*="ace_"] 兜底 (0,1,0),所以能赢。 */
+.lc-ace--dark .ace_identifier,
+.lc-ace--leetcode-light .ace_identifier {
+    color: var(--lc-editor-variable) !important;
 }
 .lc-ace--dark .ace_meta,
 .lc-ace--leetcode-light .ace_meta {
@@ -7959,3 +8353,272 @@ html.dark .lc-mini-progress__bar {
 html.dark .lc-v4-bg-oat { display: none; }
 :root:not(.dark) .lc-v4-bg-aurora,
 html:not(.dark) .lc-v4-bg-aurora { display: none; }
+
+/* =====================================================================
+   v1.3.4 PR 11 ★ 侧边几何网格 + Canvas 粒子层 + 仪表盘卡片
+
+   z-index 层级约定:
+     -2  .lc-v4-bg-grid   (几何网格,最底)
+     -1  #lc-particles-canvas (鼠标粒子,叠在网格上)
+      0  .lc-v4-bg-oat / .lc-v4-bg-aurora / .lc-v4-spotlight / .lc-v4-deco / .lc-v4-watermark (现有装饰,fixed + pointer-events:none)
+     50  [data-nav]   (sticky 顶部,毛玻璃)
+    100+ 页面内容
+   ===================================================================== */
+
+/* ── 几何网格 (侧边装饰,z-index -2,绝不在前景遮挡) ──
+   56px 间距,1px 线条,中央 radial mask 让边缘淡出,不喧宾夺主。 */
+.lc-v4-bg-grid {
+    position: fixed;
+    inset: 0;
+    z-index: -2;
+    pointer-events: none;
+    background-image:
+        linear-gradient(rgba(13, 148, 210, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(13, 148, 210, 0.05) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+    -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+}
+html.dark .lc-v4-bg-grid {
+    background-image:
+        linear-gradient(rgba(125, 211, 252, 0.08) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(125, 211, 252, 0.08) 1px, transparent 1px);
+}
+
+/* ── Canvas 粒子层 (v1.3.4 PR 12 follow-up ★ 浅色可见性修法) ──
+   PR11 把它设 z-index:-1,与 .lc-v4-bg-oat 同层 — 浅色模式下 oat
+   背景 `var(--lc-color-bg, #F8F6F0)` 完全不透明且是 body 后面
+   整个 viewport 的底色,canvas 同层在 oat 之后绘制 → 浅色看不到。
+   修法:canvas 升 z-index:0(装饰层 spotlight/aurora/oat/4角
+   装饰都 pointer-events:none,不会挡交互;content 区域 z-index
+   ≥2 也盖不住 — 但 pointer-events:none 已兜住)。
+   浅色下另有 mix-blend-mode: multiply 让粒子在燕麦底上
+   自然更深;深色下是 normal(粒子本身是亮色,叠加即可)。
+   这条规则同时覆盖 PR11 把 canvas 放在 -1 的旧设定。 */
+#lc-particles-canvas {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    /* 浅色背景 #F8F6F0 — 浅色下粒子颜色 *multiply* 加深,深色
+       下 normal(粒子本身 hsl 60-70% lightness 在 #0A0E1A 上够亮) */
+    mix-blend-mode: normal;
+    opacity: 0.92;
+}
+html:not(.dark) #lc-particles-canvas {
+    mix-blend-mode: multiply;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   v1.3.4 PR 13 ★ scoped 粒子 canvas (Bug 1 收口)
+   ----------------------------------------------------------------
+   现状背景:#lc-particles-canvas 是 viewport 全屏 fixed,在浅色
+   燕麦底 + 深色 hero / oat / aurora 等"底层装饰"之间勉强可见。
+   但 .lc-problem-filters / .lc-rank-table / .lc-v4-hero /
+   #profile-content 这 4 个**带 opaque 背景**的容器在 z-index 0
+   的 canvas 之上,直接把粒子挡掉了(浅色下因 multiply 还能勉强
+   看到一点,深色下完全不可见)。
+
+   修法:给这 4 个容器加 scoped canvas(绝对定位 inset:0 +
+   z-index:0 + pointer-events:none),渲染在容器背景之上、容器
+   内容之下。粒子 alpha 比全局更弱(base 0.18 / near 0.30 / 无
+   glow),确保不挡文字。
+
+   用 .lc-particles-host helper 一并加 position:relative +
+   overflow:hidden(让粒子不会"溢出"到容器外的页面其他部分)。
+   ───────────────────────────────────────────────────────────────── */
+.lc-particles-host {
+    position: relative;
+    overflow: hidden;
+    /* 创建 stacking context,这样内部 z-index:0 的 canvas 不
+       会被外部更高 z-index 的装饰层错位覆盖 */
+    isolation: isolate;
+}
+
+.lc-particles-canvas-scoped {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    /* 透明度再压一档:这些容器本身有卡片背景 + 文字,粒子只是
+       "氛围点缀",绝对不能挡阅读。js 里 alpha 已降到 0.18/0.30,
+       这里 opacity 0.85 再保险一次。 */
+    opacity: 0.85;
+    mix-blend-mode: normal;
+}
+html:not(.dark) .lc-particles-canvas-scoped {
+    /* 浅色下用 multiply 与燕麦/卡片底融合,与全局 canvas 同思路 */
+    mix-blend-mode: multiply;
+}
+
+/* scoped canvas 必须放在容器最前面(DOM order),这样后续兄弟节点
+   自然叠在 canvas 之上,不需额外 z-index。如果某些容器有 z-index:1
+   的伪元素(::before / ::after),这里也用 z-index:0 让 canvas 落
+   在伪元素之下,避免遮挡。 */
+
+/* ── KPI 仪表盘卡片(取代原来 .lc-v4-kpi-grid 里的"小盒子") ── */
+.lc-v4-kpi-card {
+    position: relative;
+    overflow: hidden;
+    padding: 24px;
+    border-radius: 18px;
+    background: linear-gradient(135deg,
+        var(--lc-color-surface) 0%,
+        var(--lc-color-surface-2) 100%);
+    box-shadow: 0 8px 32px -16px rgba(13, 148, 210, 0.18),
+                inset 0 1px 0 rgba(255, 255, 255, 0.4);
+    min-height: 168px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1),
+                box-shadow 240ms ease;
+}
+.lc-v4-kpi-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 14px 36px -14px rgba(13, 148, 210, 0.28),
+                inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+html.dark .lc-v4-kpi-card {
+    background: linear-gradient(135deg,
+        rgba(15, 23, 42, 0.88) 0%,
+        rgba(30, 41, 59, 0.88) 100%);
+    box-shadow: 0 8px 32px -12px rgba(34, 211, 238, 0.18),
+                inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+html.dark .lc-v4-kpi-card:hover {
+    box-shadow: 0 14px 36px -10px rgba(34, 211, 238, 0.32),
+                inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.lc-v4-kpi-card__body { flex: 1; min-width: 0; }
+.lc-v4-kpi-card__label {
+    font-size: var(--lc-font-size-sm);
+    color: var(--lc-color-text-2);
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    opacity: 0.85;
+    margin-bottom: 8px;
+}
+html.dark .lc-v4-kpi-card__label { color: var(--lc-cyber-text-muted); }
+.lc-v4-kpi-card__value {
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--lc-color-text);
+    line-height: 1.1;
+    font-feature-settings: 'tnum' 1;
+}
+html.dark .lc-v4-kpi-card__value { color: var(--lc-cyber-text); }
+.lc-v4-kpi-card__sub {
+    margin-top: 4px;
+    font-size: var(--lc-font-size-sm);
+    color: var(--lc-color-text-2);
+    opacity: 0.7;
+}
+html.dark .lc-v4-kpi-card__sub { color: var(--lc-cyber-text-muted); }
+.lc-v4-kpi-card__ring { width: 88px; height: 88px; flex-shrink: 0; }
+.lc-v4-kpi-card__ring svg { transform: rotate(-90deg); display: block; }
+.lc-v4-kpi-card__ring circle.bg { fill: none; stroke: rgba(125, 211, 252, 0.12); stroke-width: 6; }
+.lc-v4-kpi-card__ring circle.fg {
+    fill: none;
+    stroke: url(#kpi-grad-cyan);
+    stroke-width: 6;
+    stroke-linecap: round;
+    transition: stroke-dasharray 600ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.lc-v4-kpi-card__ring--green circle.fg { stroke: url(#kpi-grad-green); }
+
+/* ── Rank 行 mini-bar(通过率可视化,贴行底) ── */
+.lc-rank-row { position: relative; }
+.lc-rank-row__rate-bar {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 2px;
+    background: linear-gradient(90deg, #34d399 0%, #22d3ee 100%);
+    width: var(--rate, 0%);
+    transition: width 400ms ease;
+    opacity: 0.6;
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
+}
+html.dark .lc-rank-row__rate-bar { opacity: 0.8; }
+
+/* ── Locked badge(锁定提示,profile / admin users 用) ── */
+.lc-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    font-size: var(--lc-font-size-sm);
+    margin-bottom: var(--lc-space-3);
+}
+.lc-banner--locked {
+    background: linear-gradient(135deg,
+        rgba(34, 211, 238, 0.08) 0%,
+        rgba(167, 139, 250, 0.08) 100%);
+    border: 1px solid rgba(34, 211, 238, 0.25);
+    color: var(--lc-color-text);
+}
+html.dark .lc-banner--locked {
+    background: linear-gradient(135deg,
+        rgba(34, 211, 238, 0.12) 0%,
+        rgba(167, 139, 250, 0.12) 100%);
+    border-color: rgba(34, 211, 238, 0.35);
+    color: var(--lc-cyber-cyan-bright, #67e8f9);
+}
+
+/* ── Admin users.html super_admin 行锁定 ── */
+.lc-user-row--super-admin {
+    background: linear-gradient(135deg,
+        rgba(34, 211, 238, 0.04) 0%,
+        rgba(167, 139, 250, 0.04) 100%) !important;
+    border-left: 3px solid #22d3ee;
+}
+html.dark .lc-user-row--super-admin {
+    background: linear-gradient(135deg,
+        rgba(34, 211, 238, 0.10) 0%,
+        rgba(167, 139, 250, 0.10) 100%) !important;
+    border-left-color: #22d3ee;
+}
+.lc-locked-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: var(--lc-font-size-sm);
+    font-weight: 600;
+    background: rgba(34, 211, 238, 0.10);
+    border: 1px solid rgba(34, 211, 238, 0.35);
+    color: #0e7490;
+}
+html.dark .lc-locked-pill {
+    background: rgba(34, 211, 238, 0.15);
+    border-color: rgba(34, 211, 238, 0.45);
+    color: #67e8f9;
+}
+
+/* ── SVG <defs> KPI 渐变定义(profile.html 在 body 末尾放一个共享 <svg width=0>) ── */
+.lc-svg-defs {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+/* ── Cyber podium 加大(从 160 → 220 高,更"上得了台面") ── */
+.lc-cyber-podium__step {
+    min-height: 220px;
+    padding: 28px 24px 24px;
+}
+.lc-cyber-podium__step--1 {
+    box-shadow: 0 0 32px rgba(34, 211, 238, 0.25),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+html.dark .lc-cyber-podium__step--1 {
+    box-shadow: 0 0 48px rgba(34, 211, 238, 0.40),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}

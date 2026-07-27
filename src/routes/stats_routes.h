@@ -504,11 +504,20 @@ inline constexpr int kLeaderboardMaxLimit     = 200;
 // 聚合)。零提交 / 零 AC 的用户也会出现,排在尾部。这里返回 users
 // 总数,与 list_leaderboard() 的查询语义保持一致 — 否则分页 total
 // 字段会与列表不一致。
+//
+// v1.3.4 PR12 ★ — 加 WHERE 过滤真实用户:
+//   保留 admin + zhangxu(种子/项目 owner)
+//   排除 ^e2e_ / ^lc_perf_ / ^normaluser_ / ^stress_ / ^load_ / ^fuzz_
+// scripts/e2e_acceptance.sh / load_test.sh 等持续在生产库注册测试
+// 账号,即使 V016 清洗过,30 分钟后又会被刷回来 — 这是深度防御。
+// 与 list_leaderboard() 的 WHERE 子句同步,避免分页 total 与
+// 列表行数不一致。
 inline int count_ranked_users(ConnectionPool& pool) {
     auto conn = pool.acquire();
     try {
         const auto v = conn.fetch_scalar<std::int64_t>(
-            "SELECT COUNT(*) FROM users");
+            "SELECT COUNT(*) FROM users "
+            "WHERE username NOT REGEXP '^(e2e_|lc_perf_|normaluser_|stress_|load_|fuzz_)'");
         return v.has_value() ? static_cast<int>(*v) : 0;
     } catch (const mysqlx::Error& e) {
         throw std::runtime_error(
@@ -525,20 +534,19 @@ inline int count_ranked_users(ConnectionPool& pool) {
 // 用户报"排行榜全是匿名用户"的独立根因(另一个根因是前端嵌套字段
 // 读取 bug,在 web/ranking.html:194 修)。
 //
+// v1.3.4 PR12 ★ — `WHERE u.username NOT REGEXP '^(e2e_|lc_perf_|
+// normaluser_|stress_|load_|fuzz_)'` 把 e2e_*/lc_perf_*/normaluser_*
+// 等压测残留过滤掉;V015 没覆盖这一类,v1.3.4 之前一直出现在榜单上
+// 霸占前 10。前端 web/ranking.html renderRows() 再做一层相同过滤
+// 兜底,深度防御(用户原话:"只要 zhangxu 和 admin 两个账号")。
+//
 // The query:
 //   SELECT u.id, u.username, u.role,
 //          COALESCE(agg.solved_count, 0)     AS solved_count,
 //          COALESCE(agg.submission_count, 0) AS submission_count
 //   FROM users u
-//   LEFT JOIN (
-//     SELECT s.user_id,
-//            COUNT(DISTINCT CASE WHEN s.status = 'ac' AND p.is_deleted = FALSE
-//                                THEN s.problem_id END) AS solved_count,
-//            COUNT(CASE WHEN p.is_deleted = FALSE THEN 1 END) AS submission_count
-//     FROM submissions s
-//     LEFT JOIN problems p ON p.id = s.problem_id
-//     GROUP BY s.user_id
-//   ) agg ON agg.user_id = u.id
+//   LEFT JOIN (...)
+//   WHERE u.username NOT REGEXP '^(e2e_|lc_perf_|normaluser_|...)'
 //   ORDER BY solved_count DESC, submission_count ASC, u.id ASC
 //   LIMIT ? OFFSET ?
 //
@@ -568,6 +576,7 @@ inline std::vector<LeaderboardRow> list_leaderboard(
             "  LEFT JOIN problems p ON p.id = s.problem_id "
             "  GROUP BY s.user_id "
             ") agg ON agg.user_id = u.id "
+            "WHERE u.username NOT REGEXP '^(e2e_|lc_perf_|normaluser_|stress_|load_|fuzz_)' "
             "ORDER BY solved_count DESC, "
             "         submission_count ASC, "
             "         u.id ASC "
