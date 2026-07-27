@@ -217,6 +217,23 @@
     --lc-editor-function:  #6F4E9B;             /* 函数名 (eggplant) */
     --lc-editor-variable:  #2C2C2C;             /* 变量 (warm near-black) */
     --lc-editor-meta:      #B5843A;             /* 关键字常量 (caramel) */
+
+    /* v1.3.4 PR 8 ★ 鼠标跟随动效 + 装饰层 tokens
+       (浅色默认值;深色覆盖在 html.dark 段)。
+       鼠标坐标归一化到 [-1, 1],0 = 视口中心。各装饰层用
+       calc(var(--lc-mouse-x) * Npx) 跟随;rAF 节流由
+       web/js/mouse-deco.js 写入。 */
+    --lc-mouse-x:           0;
+    --lc-mouse-y:           0;
+    --lc-spotlight-x:       50%;
+    --lc-spotlight-y:       50%;
+    --lc-spotlight-color:   rgba(77, 124, 90, 0.10);   /* 浅色:暖绿 */
+    --lc-v4-shadow-hover:   0 8px 24px rgba(15, 23, 42, 0.10);
+    --lc-v4-card-glow:      rgba(77, 124, 90, 0.30);
+    --lc-v4-deco-cyan:      rgba(0, 148, 184, 0.10);
+    --lc-v4-deco-violet:    rgba(108, 71, 153, 0.10);
+    --lc-v4-deco-green:     rgba(77, 124, 90, 0.10);
+    --lc-v4-deco-amber:     rgba(184, 132, 58, 0.10);
 }
 
 /* Dark theme — toggle by adding `.dark` on <html>.
@@ -293,6 +310,17 @@ html.dark {
     --lc-color-judge-info-bg-dark:    rgba(129, 140, 248, 0.14);
     --lc-color-judge-violet-bg-dark:  rgba(192, 132, 252, 0.14);
     --lc-color-judge-neutral-bg-dark: rgba(148, 163, 184, 0.14);
+
+    /* v1.3.4 PR 8 ★ 鼠标跟随动效 — 深空赛博覆盖。
+       spotlight 改 cyan glow,卡片 hover 阴影更深,装饰色
+       提高 alpha 让线条在深空底上看得见。 */
+    --lc-spotlight-color:   rgba(0, 212, 255, 0.12);
+    --lc-v4-shadow-hover:   0 8px 24px rgba(0, 0, 0, 0.50);
+    --lc-v4-card-glow:      rgba(0, 212, 255, 0.40);
+    --lc-v4-deco-cyan:      rgba(0, 212, 255, 0.18);
+    --lc-v4-deco-violet:    rgba(192, 132, 252, 0.18);
+    --lc-v4-deco-green:     rgba(98, 217, 130, 0.15);
+    --lc-v4-deco-amber:     rgba(255, 179, 71, 0.15);
 }
 
 /* ────────────────────────────────────────────────────────────────────
@@ -7516,6 +7544,79 @@ html.dark .lc-result-panel__hero {
     color: var(--lc-editor-meta) !important;
 }
 
+/* v1.3.4 PR 7 ★ token 兜底 — Ace 主题会给自己生成的每个 token span
+   标 `!important` 颜色,我们的覆盖必须同样 `!important` + 等/更高
+   specificity 才能盖住。问题在于:Ace 的 c_cpp mode 会输出几十个细
+   token 类(ace_punctuation / ace_identifier / ace_keyword.ace_operator
+   / ace_constant.ace_character / ace_invalid / ace_support.ace_class
+   / ace_meta.ace_preprocessor ...),我们只覆盖了 8 个最常见的;其余
+   落到 Ace 自己的 tomorrow_night/github 主题色里,某些 token
+   (如 ace_punctuation / ace_keyword.ace_operator) 在 tomorrow_night
+   是接近 #2A2A2A 的暗色,在 #111827 深空底上 = 看不见。
+
+   解法:用 [class*="ace_"] 属性选择器当兜底,把所有 ace_* token 都
+   染成 --lc-editor-fg(深色 = E5EAF5 亮灰,浅色 = 2E2A1F 暖深),
+   specificity (0,1,0) 故意低于上面 .lc-ace--{dark,light} .ace_xxx
+   的 (0,2,0),所以 keyword/string/number 等具体规则仍能赢。 */
+:where(.lc-ace--dark, .lc-ace--leetcode-light) [class*="ace_"] {
+    color: var(--lc-editor-fg) !important;
+}
+
+/* 补几个在 c_cpp 模式里高频出现但上面没覆盖的 token 类,各自指派
+   到合适的语义槽(keyword/string/number/comment/function),让深色
+   模式下所有 token 都有醒目颜色。 */
+.lc-ace--dark .ace_punctuation,
+.lc-ace--dark .ace_punctuation.ace_operator,
+.lc-ace--dark .ace_punctuation.ace_section,
+.lc-ace--leetcode-light .ace_punctuation,
+.lc-ace--leetcode-light .ace_punctuation.ace_operator,
+.lc-ace--leetcode-light .ace_punctuation.ace_section {
+    /* 标点用 fg 即可(等同上面兜底),显式声明是为了 specificity
+       跟 keyword 等大类一致,避免后天在前面插规则时漂移。 */
+    color: var(--lc-editor-fg) !important;
+}
+.lc-ace--dark .ace_keyword.ace_operator,
+.lc-ace--dark .ace_keyword.ace_control,
+.lc-ace--dark .ace_keyword.ace_directive,
+.lc-ace--leetcode-light .ace_keyword.ace_operator,
+.lc-ace--leetcode-light .ace_keyword.ace_control,
+.lc-ace--leetcode-light .ace_keyword.ace_directive {
+    color: var(--lc-editor-keyword) !important;
+}
+.lc-ace--dark .ace_constant.ace_character,
+.lc-ace--dark .ace_constant.ace_other,
+.lc-ace--leetcode-light .ace_constant.ace_character,
+.lc-ace--leetcode-light .ace_constant.ace_other {
+    color: var(--lc-editor-string) !important;
+}
+.lc-ace--dark .ace_variable.ace_parameter,
+.lc-ace--dark .ace_variable.ace_language,
+.lc-ace--dark .ace_support.ace_class,
+.lc-ace--dark .ace_support.ace_type,
+.lc-ace--dark .ace_support.ace_constant,
+.lc-ace--dark .ace_support.ace_other,
+.lc-ace--leetcode-light .ace_variable.ace_parameter,
+.lc-ace--leetcode-light .ace_variable.ace_language,
+.lc-ace--leetcode-light .ace_support.ace_class,
+.lc-ace--leetcode-light .ace_support.ace_type,
+.lc-ace--leetcode-light .ace_support.ace_constant,
+.lc-ace--leetcode-light .ace_support.ace_other {
+    color: var(--lc-editor-function) !important;
+}
+.lc-ace--dark .ace_meta.ace_preprocessor,
+.lc-ace--dark .ace_meta.ace_tag,
+.lc-ace--leetcode-light .ace_meta.ace_preprocessor,
+.lc-ace--leetcode-light .ace_meta.ace_tag {
+    color: var(--lc-editor-meta) !important;
+}
+.lc-ace--dark .ace_invalid.ace_illegal,
+.lc-ace--dark .ace_invalid.ace_deprecated,
+.lc-ace--leetcode-light .ace_invalid.ace_illegal,
+.lc-ace--leetcode-light .ace_invalid.ace_deprecated {
+    color: var(--lc-editor-keyword) !important;
+    text-decoration: underline wavy var(--lc-editor-keyword);
+}
+
 /* Editor skeleton — shown while Ace bundle is still loading
    (problem.html IIFE: litecode.editor.loadEditor hasn't resolved
    yet). A subtle pulse over a flat placeholder so the layout
@@ -7575,3 +7676,286 @@ html.dark .lc-result-panel__hero {
     0%   { background-position: 200% 0; }
     100% { background-position: -200% 0; }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   v1.3.4 PR 8 ★ 视觉提升 + 鼠标跟随动效
+   ────────────────────────────────────────────────────────────────────
+   本段统一为 4 个前端页面(index / problems_list / ranking / profile)
+   追加装饰层 + 鼠标跟随 + 卡片 hover + chip + 入场动效 + hero 3D tilt。
+   不动现有 v4 chrome / cyber 组件 / 任何 ID。浅色 + 深色共用同一份
+   CSS,差异通过 --lc-spotlight-color / --lc-v4-deco-* / --lc-v4-shadow-hover
+   / --lc-v4-card-glow 的 token cascade 自动切换(由 :root vs html.dark
+   决定)。性能预算:mouse-deco.js ≤ 0.5ms / 帧(rAF 节流);装饰 SVG
+   pointer-events: none 不挡交互;prefers-reduced-motion 全部禁用。
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── 背景层(Aurora 深空 / Oat 燕麦) ────────────────────────────────
+   position: fixed + z-index: -1 + pointer-events: none,只一份,在
+   body 起始处插一个 <div class="lc-v4-bg-aurora"> 或 "lc-v4-bg-oat"。
+   浅色用 oat 径向(更克制),深色用 aurora conic + 慢漂移。 */
+.lc-v4-bg-aurora,
+.lc-v4-bg-oat {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+}
+.lc-v4-bg-aurora {
+    background:
+        radial-gradient(800px circle at 85% 10%, rgba(192, 132, 252, 0.10), transparent 50%),
+        radial-gradient(700px circle at 10% 90%, rgba(0, 212, 255, 0.08),  transparent 50%),
+        var(--lc-color-bg, #0A0E1A);
+    background-position:
+        calc(85% + var(--lc-mouse-x) * 30px) calc(10% + var(--lc-mouse-y) * 30px),
+        calc(10% - var(--lc-mouse-x) * 30px) calc(90% - var(--lc-mouse-y) * 30px),
+        center;
+    background-repeat: no-repeat;
+    transition: background-position 300ms ease-out;
+}
+.lc-v4-bg-oat {
+    background:
+        radial-gradient(900px circle at 80% 15%, rgba(77, 124, 90, 0.07),   transparent 55%),
+        radial-gradient(700px circle at 15% 85%, rgba(184, 132, 58, 0.05), transparent 55%),
+        var(--lc-color-bg, #F8F6F0);
+    background-position:
+        calc(80% + var(--lc-mouse-x) * 20px) calc(15% + var(--lc-mouse-y) * 20px),
+        calc(15% - var(--lc-mouse-x) * 20px) calc(85% - var(--lc-mouse-y) * 20px),
+        center;
+    background-repeat: no-repeat;
+    transition: background-position 300ms ease-out;
+}
+@keyframes lc-aurora-drift {
+    0%   { filter: hue-rotate(0deg); }
+    100% { filter: hue-rotate(8deg); }
+}
+@media (prefers-reduced-motion: no-preference) {
+    .lc-v4-bg-aurora { animation: lc-aurora-drift 18s ease-in-out infinite alternate; }
+}
+
+/* ── 鼠标 spotlight(顶层光圈,跟随鼠标) ───────────────────────────
+   body 加 .lc-mouse-active 类时显示(mouse-deco.js 在 pointermove
+   时加,pointerleave 时移除)。圆心用 --lc-spotlight-x/y 由 JS
+   直接写,color 由 token 决定浅深色。 */
+.lc-v4-spotlight {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0;
+    background: radial-gradient(
+        600px circle at var(--lc-spotlight-x) var(--lc-spotlight-y),
+        var(--lc-spotlight-color),
+        transparent 60%
+    );
+    transition: opacity 400ms ease-out;
+}
+body.lc-mouse-active .lc-v4-spotlight { opacity: 1; }
+
+/* ── 4 角 SVG 装饰(视差) ──────────────────────────────────────
+   position: fixed; z-index: -1; pointer-events: none;
+   各角 translate 跟鼠标反向偏移,鼠标停下时回 0。
+   4 个角的 color 由 --lc-v4-deco-{cyan,violet,green,amber} 决定。 */
+.lc-v4-deco {
+    position: fixed;
+    z-index: -1;
+    pointer-events: none;
+    width: 60px;
+    height: 60px;
+    transition: transform 200ms ease-out;
+    will-change: transform;
+}
+.lc-v4-deco--tl { top: 80px;  left: 24px;  color: var(--lc-v4-deco-cyan);   transform: translate(calc(var(--lc-mouse-x) * -10px), calc(var(--lc-mouse-y) * -10px)); }
+.lc-v4-deco--tr { top: 80px;  right: 24px; color: var(--lc-v4-deco-violet); transform: translate(calc(var(--lc-mouse-x) *  8px),  calc(var(--lc-mouse-y) *  -8px)); }
+.lc-v4-deco--bl { bottom: 24px; left: 24px;  color: var(--lc-v4-deco-green);  transform: translate(calc(var(--lc-mouse-x) *  -8px), calc(var(--lc-mouse-y) *   8px)); }
+.lc-v4-deco--br { bottom: 24px; right: 24px; color: var(--lc-v4-deco-amber);  transform: translate(calc(var(--lc-mouse-x) *  10px), calc(var(--lc-mouse-y) *  10px)); }
+.lc-v4-deco svg { width: 100%; height: 100%; display: block; opacity: 0.85; }
+@media (max-width: 768px) {
+    .lc-v4-deco { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .lc-v4-deco { transform: none !important; }
+}
+
+/* ── 卡片 hover 增强 ────────────────────────────────────────────
+   挂在现有 .lc-v4-card 旁边(<div class="lc-v4-card lc-v4-card--hover">),
+   200ms ease-out,transform + shadow + glow border,GPU 加速。
+   reduced-motion 禁用 transform。 */
+.lc-v4-card--hover {
+    transition:
+        transform 200ms ease-out,
+        box-shadow 200ms ease-out,
+        border-color 200ms ease-out;
+    will-change: transform;
+}
+.lc-v4-card--hover:hover {
+    transform: translateY(-2px);
+    box-shadow:
+        var(--lc-v4-shadow-hover),
+        0 0 0 1px var(--lc-v4-card-glow);
+    border-color: var(--lc-v4-card-glow);
+}
+.lc-v4-card--hover:active {
+    transform: translateY(-1px);
+    transition-duration: 80ms;
+}
+@media (prefers-reduced-motion: reduce) {
+    .lc-v4-card--hover { transition: none; }
+    .lc-v4-card--hover:hover,
+    .lc-v4-card--hover:active { transform: none; }
+}
+
+/* ── 状态/难度 chip(轻量,跟现有 lc-status-cell 并存不替换) ──────
+   浅色用深实色 + 12% bg,深色用亮色 + 8px glow box-shadow。
+   字号 12-13px,圆角 6px,padding 2px 8px,内含 dot(可选)+ 文字。 */
+.lc-verdict-chip,
+.lc-difficulty-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.4;
+    font-family: var(--lc-font-mono, ui-monospace, monospace);
+    letter-spacing: 0.04em;
+    border: 1px solid currentColor;
+    background: color-mix(in srgb, currentColor 12%, transparent);
+    white-space: nowrap;
+}
+.lc-verdict-chip::before,
+.lc-difficulty-chip::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+}
+
+/* 浅色模式 chip 颜色(token cascade 自动)。 */
+.lc-verdict-chip--ac   { color: #16A34A; }
+.lc-verdict-chip--wa   { color: #DC2626; }
+.lc-verdict-chip--tle  { color: #D97706; }
+.lc-verdict-chip--re   { color: #9333EA; }
+.lc-verdict-chip--ce   { color: #475569; }
+.lc-verdict-chip--pe   { color: #0891B2; }
+.lc-difficulty-chip--easy   { color: #16A34A; }
+.lc-difficulty-chip--medium { color: #D97706; }
+.lc-difficulty-chip--hard   { color: #DC2626; }
+
+/* 深色模式:亮色 + 8px glow box-shadow。 */
+html.dark .lc-verdict-chip--ac   { color: #4ADE80; box-shadow: 0 0 8px rgba(74, 222, 128, 0.40); }
+html.dark .lc-verdict-chip--wa   { color: #F87171; box-shadow: 0 0 8px rgba(248, 113, 113, 0.40); }
+html.dark .lc-verdict-chip--tle  { color: #FBBF24; box-shadow: 0 0 8px rgba(251, 191, 36, 0.40); }
+html.dark .lc-verdict-chip--re   { color: #C084FC; box-shadow: 0 0 8px rgba(192, 132, 252, 0.40); }
+html.dark .lc-verdict-chip--ce   { color: #94A3B8; }
+html.dark .lc-verdict-chip--pe   { color: #22D3EE; box-shadow: 0 0 8px rgba(34, 211, 238, 0.40); }
+html.dark .lc-difficulty-chip--easy   { color: #4ADE80; box-shadow: 0 0 8px rgba(74, 222, 128, 0.40); }
+html.dark .lc-difficulty-chip--medium { color: #FBBF24; box-shadow: 0 0 8px rgba(251, 191, 36, 0.40); }
+html.dark .lc-difficulty-chip--hard   { color: #F87171; box-shadow: 0 0 8px rgba(248, 113, 113, 0.40); }
+
+/* ── 入场动效(IntersectionObserver 触发 .lc-fade-in--visible) ──
+   装饰元素可加 .lc-fade-in 延迟出现,stagger 用 data-lc-stagger。 */
+.lc-fade-in {
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 400ms ease-out, transform 400ms ease-out;
+}
+.lc-fade-in--visible {
+    opacity: 1;
+    transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+    .lc-fade-in {
+        opacity: 1;
+        transform: none;
+        transition: none;
+    }
+}
+
+/* ── Logo 水印(右下/左下,大尺寸低 alpha) ───────────────────────
+   复用现有 favicon SVG path,作为页面角落大水印,呼应 logo 品牌。 */
+.lc-v4-watermark {
+    position: fixed;
+    z-index: -1;
+    pointer-events: none;
+    width: 280px;
+    height: 280px;
+    opacity: 0.06;
+    color: var(--lc-color-text, #2E2A1F);
+}
+html.dark .lc-v4-watermark {
+    opacity: 0.10;
+    color: var(--lc-color-link, #00D4FF);
+}
+.lc-v4-watermark--br { bottom: -60px; right: -60px; }
+.lc-v4-watermark--bl { bottom: -60px; left: -60px; transform: scaleX(-1); }
+.lc-v4-watermark svg { width: 100%; height: 100%; display: block; }
+@media (max-width: 768px) {
+    .lc-v4-watermark { width: 180px; height: 180px; opacity: 0.04; }
+    html.dark .lc-v4-watermark { opacity: 0.07; }
+}
+
+/* ── Hero 3D tilt(首页 hero 右侧 mock 卡片) ─────────────────────
+   鼠标 hover 时根据鼠标位置做 5-8° 3D 旋转,perspective 800px。
+   JS 写 --lc-tilt-x / --lc-tilt-y(归一化 -1..1)。reduced-motion
+   禁用。 */
+.lc-v4-hero-mock {
+    transform-style: preserve-3d;
+    transition: transform 200ms ease-out, box-shadow 200ms ease-out;
+    will-change: transform;
+    transform:
+        perspective(800px)
+        rotateY(calc(var(--lc-tilt-y, 0) * 6deg))
+        rotateX(calc(var(--lc-tilt-x, 0) * -6deg));
+    box-shadow: var(--lc-v4-shadow-hover);
+}
+.lc-v4-hero-mock:hover {
+    box-shadow:
+        var(--lc-v4-shadow-hover),
+        0 0 24px var(--lc-v4-card-glow);
+}
+@media (prefers-reduced-motion: reduce) {
+    .lc-v4-hero-mock { transform: perspective(800px); transition: none; }
+}
+
+/* ── 任务进度 mini bar(ranking / profile 行内通过率) ───────────
+   8px 高,圆角 4px,带 lc-rank-progress 同款 shimmer(已有 keyframes)。 */
+.lc-mini-progress {
+    position: relative;
+    width: 100%;
+    height: 8px;
+    border-radius: 4px;
+    background: var(--lc-color-surface-2, rgba(15, 23, 42, 0.08));
+    overflow: hidden;
+}
+.lc-mini-progress__bar {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        var(--lc-color-success, #16A34A) 50%,
+        transparent 100%
+    );
+    background-size: 200% 100%;
+    border-radius: 4px;
+    transition: width 600ms ease-out;
+}
+html.dark .lc-mini-progress__bar {
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        var(--lc-color-link, #00D4FF) 50%,
+        transparent 100%
+    );
+    background-size: 200% 100%;
+}
+
+/* ── 背景层互斥(浅色只 oat,深色只 aurora) ────────────────────
+   2 个 div 都放在 DOM 里(避免 JS 切换主题时改 class),CSS 根据
+   当前 html.dark 状态二选一。 */
+html.dark .lc-v4-bg-oat { display: none; }
+:root:not(.dark) .lc-v4-bg-aurora,
+html:not(.dark) .lc-v4-bg-aurora { display: none; }

@@ -54,6 +54,26 @@
       v1.3.4 — 视觉升级到 cyber dark 主题,所有 ID / class / JS 函数不变。
     -->
     <div class="lc-cyber-grid-strip" aria-hidden="true"></div>
+
+    <!-- v1.3.4 PR 8 ★ 装饰层(背景 spotlight 4角 watermark,aria-hidden) -->
+    <div class="lc-v4-bg-oat"   aria-hidden="true"></div>
+    <div class="lc-v4-bg-aurora" aria-hidden="true"></div>
+    <div class="lc-v4-spotlight"  aria-hidden="true"></div>
+    <div class="lc-v4-deco lc-v4-deco--tl" aria-hidden="true">
+        <svg viewBox="0 0 60 60" fill="none"><path d="M4 50 L4 14 L40 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="lc-v4-deco lc-v4-deco--tr" aria-hidden="true">
+        <svg viewBox="0 0 60 60" fill="none"><path d="M10 30 L48 30 M30 12 L30 48 M38 22 L48 30 L38 38" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="lc-v4-deco lc-v4-deco--bl" aria-hidden="true">
+        <svg viewBox="0 0 60 60" fill="none"><path d="M4 30 L40 30 M22 14 L4 30 L22 46" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="lc-v4-deco lc-v4-deco--br" aria-hidden="true">
+        <svg viewBox="0 0 60 60" fill="none"><path d="M56 10 L56 46 L20 56" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="lc-v4-watermark lc-v4-watermark--br" aria-hidden="true">
+        <svg viewBox="0 0 64 64"><path d="M22 18 L42 32 L22 46" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
     <div data-nav></div>
 
     <div class="lc-v4-page">
@@ -95,9 +115,9 @@
 
         <!-- Profile content -->
         <div id="profile-content" hidden>
-            <section class="lc-v4-card lc-v4-identity-card">
-                <div class="lc-v4-avatar-xl" id="avatar">?</div>
-                <div>
+            <section class="lc-v4-card lc-v4-card--hover lc-fade-in lc-v4-identity-card">
+                <div class="lc-v4-avatar-xl" id="avatar" aria-hidden="true">?</div>
+                <div style="flex: 1; min-width: 0;">
                     <h2 class="lc-v4-identity__name" id="display-name"></h2>
                     <div class="lc-v4-identity__meta">
                         <span id="role-badge"></span>
@@ -105,14 +125,24 @@
                         <span id="last-login"></span>
                     </div>
                 </div>
+                <!-- v1.3.4 PR 9 ★ 编辑资料入口(只对当前登录用户自己显示)。
+                     foreign-state(查看他人主页)走 #foreign-self-link,这里
+                     默认 hidden,JS 在加载到 current user = 自己时再显示。 -->
+                <button type="button" class="lc-btn lc-btn--ghost lc-btn--sm"
+                        id="edit-profile-btn"
+                        hidden
+                        style="margin-left: auto; flex-shrink: 0;"
+                        aria-label="编辑个人资料">
+                    <span aria-hidden="true">✏️</span> 编辑资料
+                </button>
             </section>
 
-            <section class="lc-v4-card" style="padding: 28px; margin-bottom: 20px;">
+            <section class="lc-v4-card lc-v4-card--hover lc-fade-in" style="padding: 28px; margin-bottom: 20px;">
                 <h3 style="margin-top:0; font-size: 18px; font-weight: 700; color: var(--lc-v4-slate-900);">关键指标</h3>
                 <div class="lc-v4-kpi-grid" id="stat-grid" style="margin: 16px 0 0;"></div>
             </section>
 
-            <section class="lc-v4-card" style="padding: 28px; margin-bottom: 20px;">
+            <section class="lc-v4-card lc-v4-card--hover lc-fade-in" style="padding: 28px; margin-bottom: 20px;">
                 <h3 style="margin-top:0; font-size: 18px; font-weight: 700; color: var(--lc-v4-slate-900);">难度分布(已解决 / 题目总数)</h3>
                 <div id="difficulty-breakdown" style="margin-top: 16px;"></div>
             </section>
@@ -180,10 +210,128 @@
         </div>
     </div> <!-- /.lc-v4-page -->
 
+    <!--
+      v1.3.4 PR 9 ★ 编辑资料模态。
+      复用既有 .lc-modal / .lc-modal__backdrop / .lc-modal__panel
+      (admin/audit-logs.html 用的同款),保持视觉一致 + 不引新 CSS。
+      aria-modal="true" — 这是真的对话框,跟 audit-logs 那个
+      aria-modal="false" 的"抽屉"语义不同。
+      字段:display_name / school / bio / email + 头像(Canvas 256x256 裁剪)。
+      改 username 走独立的 inline section(因为 1 天 1 次 + 副作用大)。
+    -->
+    <div class="lc-modal" id="edit-profile-modal" hidden
+         role="dialog" aria-modal="true"
+         aria-labelledby="edit-profile-title">
+        <div class="lc-modal__backdrop" data-act="close-edit-profile"></div>
+        <div class="lc-modal__panel" role="document">
+            <header class="lc-row lc-row--between"
+                    style="margin-bottom: var(--lc-space-4);">
+                <h2 id="edit-profile-title" style="margin: 0; font-size: 18px;">
+                    编辑个人资料
+                </h2>
+                <button type="button" class="lc-btn lc-btn--ghost lc-btn--sm"
+                        data-act="close-edit-profile"
+                        aria-label="关闭编辑">关闭</button>
+            </header>
+
+            <form id="edit-profile-form" autocomplete="off">
+                <!-- 头像(点击 / drag-and-drop) -->
+                <div class="lc-form-row" style="display: flex; align-items: center; gap: 16px;">
+                    <div class="lc-v4-avatar-xl" id="edit-avatar-preview"
+                         style="cursor: pointer; overflow: hidden; position: relative;"
+                         title="点击上传新头像"
+                         role="button" tabindex="0"
+                         aria-label="点击上传新头像">?</div>
+                    <div style="flex: 1; min-width: 0;">
+                        <div class="lc-form-label" style="margin-bottom: 4px;">头像</div>
+                        <p class="lc-form-help" style="margin: 0;">
+                            点击头像或拖拽图片到这里。<br>
+                            JPEG / PNG,≤ 2MB,自动裁剪 256×256。
+                        </p>
+                        <input type="file" id="edit-avatar-input" hidden
+                               accept="image/jpeg,image/png,image/jpg">
+                    </div>
+                </div>
+
+                <div class="lc-form-row" style="margin-top: var(--lc-space-4);">
+                    <label class="lc-form-label" for="edit-display-name">昵称</label>
+                    <input type="text" id="edit-display-name" class="lc-input"
+                           maxlength="50"
+                           placeholder="留空时显示 username">
+                    <p class="lc-form-help">1..50 字符,显示在头像旁边(优先于 username)。</p>
+                </div>
+
+                <div class="lc-form-row">
+                    <label class="lc-form-label" for="edit-school">学校</label>
+                    <input type="text" id="edit-school" class="lc-input"
+                           maxlength="100"
+                           placeholder="例如:清华大学">
+                </div>
+
+                <div class="lc-form-row">
+                    <label class="lc-form-label" for="edit-bio">个人简介</label>
+                    <textarea id="edit-bio" class="lc-input" rows="3"
+                              maxlength="500"
+                              placeholder="介绍一下你自己(纯文本,≤ 500 字符)"></textarea>
+                    <p class="lc-form-help" id="edit-bio-count">0 / 500</p>
+                </div>
+
+                <div class="lc-form-row">
+                    <label class="lc-form-label" for="edit-email">邮箱</label>
+                    <input type="email" id="edit-email" class="lc-input"
+                           maxlength="100"
+                           placeholder="可选,用于找回 / 通知">
+                </div>
+
+                <p class="lc-form-help" id="edit-profile-msg" hidden></p>
+
+                <div class="lc-row lc-row--end" style="gap: 8px; margin-top: var(--lc-space-4);">
+                    <button type="button" class="lc-btn lc-btn--ghost"
+                            data-act="close-edit-profile">取消</button>
+                    <button type="submit" class="lc-btn lc-btn--primary"
+                            id="edit-profile-save-btn">保存</button>
+                </div>
+            </form>
+
+            <!--
+              改 username 独立 section:1 天 1 次 + 副作用大(URL 路径
+              /profile?username=old 还能 alias 访问但 header 显示变了)。
+              单独小表单,带冷却提示。
+            -->
+            <hr style="margin: var(--lc-space-5) 0; border: 0;
+                       border-top: 1px solid var(--lc-color-border);">
+
+            <h3 style="margin: 0 0 var(--lc-space-2); font-size: 15px;">
+                修改用户名
+            </h3>
+            <p class="lc-form-help" id="edit-username-cooldown"
+               style="margin-bottom: var(--lc-space-3);">检查中…</p>
+
+            <form id="edit-username-form" autocomplete="off"
+                  style="display: flex; gap: 8px; align-items: flex-end;">
+                <div class="lc-form-row" style="flex: 1; min-width: 0;">
+                    <label class="lc-form-label" for="edit-new-username">新用户名</label>
+                    <input type="text" id="edit-new-username" class="lc-input"
+                           maxlength="50"
+                           pattern="[A-Za-z0-9_.\-]{3,50}"
+                           placeholder="3..50 字符,字母/数字/_-. 开头">
+                </div>
+                <button type="submit" class="lc-btn lc-btn--primary"
+                        id="edit-username-save-btn">改名</button>
+            </form>
+            <p class="lc-form-help" id="edit-username-msg" hidden></p>
+        </div>
+    </div>
+
     <!-- Load order is mandatory: csp.js → api.js → app.js. -->
     <script src="/js/csp.js?v=1.3.4" defer></script>
     <script src="/js/api.js?v=1.3.4" defer></script>
     <script src="/js/app.js?v=1.3.4" defer></script>
+    <!-- v1.3.4 PR 8 ★ 鼠标跟随 + 入场动效 -->
+    <script src="/js/mouse-deco.js?v=1.3.4" defer></script>
+    <script src="/js/fade-in.js?v=1.3.4" defer></script>
+    <!-- v1.3.4 PR 10 ★ idle 1h 自动登出 -->
+    <script src="/js/idle-timeout.js?v=1.3.4" defer></script>
 
     <script>
     (function () {
@@ -631,6 +779,8 @@
                 renderHeader(currentUser);
                 renderStats(stats, probResult.total, meta.diffTotals);
                 renderRecent(subsResult.items, meta.map);
+                // v1.3.4 PR 9 ★ 自己页面 → 显示"编辑资料"按钮
+                if (typeof window.__showEditBtn === 'function') window.__showEditBtn();
 
                 var note = $('stats-note');
                 if (subsResult.capped || probResult.capped) {
@@ -702,6 +852,364 @@
                     window._profileRowMgr.destroy();
                 }
             });
+
+            // ════════════════════════════════════════════════════════
+            //  v1.3.4 PR 9 ★ 编辑资料模态逻辑
+            //  复用 .lc-modal 既有 CSS(跟 admin/audit-logs 同款),
+            //  无新依赖。包含:头像 Canvas 256x256 裁剪 / 字段保存
+            //  / username 改名(1 天 1 次 + Retry-After 显示)。
+            // ════════════════════════════════════════════════════════
+            var AVATAR_SIZE = 256;
+            var editState = {
+                open:        false,
+                avatarBlob:  null,    // 用户选好但未保存的 Blob
+                avatarUrl:   null,    // preview 用 ObjectURL
+            };
+
+            function $(id) { return document.getElementById(id); }
+
+            function openEditProfile() {
+                if (!currentUser) return;
+                editState.open = true;
+                editState.avatarBlob = null;
+                editState.avatarUrl  = null;
+
+                // 填字段
+                $('edit-display-name').value = currentUser.display_name || '';
+                $('edit-school').value       = currentUser.school       || '';
+                $('edit-bio').value          = currentUser.bio          || '';
+                $('edit-email').value        = currentUser.email        || '';
+                $('edit-new-username').value = '';
+                updateBioCount();
+                $('edit-profile-msg').hidden = true;
+                $('edit-username-msg').hidden = true;
+
+                // 头像预览
+                var preview = $('edit-avatar-preview');
+                if (currentUser.avatar) {
+                    preview.textContent = '';
+                    var img = preview.querySelector('img');
+                    if (!img) {
+                        img = document.createElement('img');
+                        img.style.width = '100%';
+                        img.style.height = '100%';
+                        img.style.objectFit = 'cover';
+                        img.alt = '头像预览';
+                        preview.appendChild(img);
+                    }
+                    img.src = currentUser.avatar + '?_=' + Date.now();  // bust cache
+                } else {
+                    // 用首字母
+                    var ch = (currentUser.display_name || currentUser.username || '?').charAt(0).toUpperCase();
+                    preview.textContent = ch;
+                    var oldImg = preview.querySelector('img');
+                    if (oldImg) oldImg.remove();
+                }
+
+                // username 冷却检查
+                renderUsernameCooldown(currentUser.username_changed_at);
+
+                $('edit-profile-modal').hidden = false;
+                setTimeout(function () { $('edit-display-name').focus(); }, 0);
+            }
+
+            function closeEditProfile() {
+                editState.open = false;
+                if (editState.avatarUrl) {
+                    URL.revokeObjectURL(editState.avatarUrl);
+                    editState.avatarUrl = null;
+                }
+                editState.avatarBlob = null;
+                $('edit-profile-modal').hidden = true;
+            }
+
+            // renderUsernameCooldown — 根据后端返回的 username_changed_at
+            // 算离下次可改还有多久。如果 < 1 天显示倒计时 + 禁按钮,
+            // 否则显示可改 + 当前 username。
+            function renderUsernameCooldown(changedAt) {
+                var helpEl  = $('edit-username-cooldown');
+                var inputEl = $('edit-new-username');
+                var saveBtn = $('edit-username-save-btn');
+                if (!changedAt) {
+                    helpEl.textContent = '当前用户名:' + (currentUser.username || '') +
+                        '。修改后旧名仍可作为 alias 访问,1 天只能改 1 次。';
+                    inputEl.disabled = false;
+                    saveBtn.disabled = false;
+                    return;
+                }
+                var m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/.exec(changedAt);
+                if (!m) {
+                    helpEl.textContent = '当前用户名:' + (currentUser.username || '') +
+                        '(冷却信息解析失败,默认可改)';
+                    return;
+                }
+                var last = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+                var elapsed = (Date.now() - last) / 1000;
+                var cooldown = 24 * 3600;
+                var remain = cooldown - elapsed;
+                if (remain <= 0) {
+                    helpEl.textContent = '当前用户名:' + (currentUser.username || '') +
+                        '。可以改名(距上次已 > 24 小时)';
+                    inputEl.disabled = false;
+                    saveBtn.disabled = false;
+                } else {
+                    var h = Math.floor(remain / 3600);
+                    var min = Math.floor((remain % 3600) / 60);
+                    helpEl.textContent = '当前用户名:' + (currentUser.username || '') +
+                        '。距离下次可改还剩 ' + h + ' 小时 ' + min + ' 分钟。';
+                    inputEl.disabled = true;
+                    saveBtn.disabled = true;
+                }
+            }
+
+            function updateBioCount() {
+                var len = ($('edit-bio').value || '').length;
+                $('edit-bio-count').textContent = len + ' / 500';
+            }
+            $('edit-bio').addEventListener('input', updateBioCount);
+
+            // ── 头像上传 + Canvas 裁剪 ────────────────────────────
+            // 策略:FileReader 读 File → 画到 Image → 用 drawImage 居中
+            // 裁剪成 256x256 → toBlob('image/jpeg', 0.9) → 存到
+            // editState.avatarBlob → 预览用 ObjectURL。提交时才真正
+            // 上传。
+            function pickAvatarFile() {
+                $('edit-avatar-input').click();
+            }
+            $('edit-avatar-preview').addEventListener('click', pickAvatarFile);
+            $('edit-avatar-preview').addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    pickAvatarFile();
+                }
+            });
+            // drag-and-drop
+            ['dragover', 'dragenter'].forEach(function (ev) {
+                $('edit-avatar-preview').addEventListener(ev, function (e) {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'copy';
+                });
+            });
+            $('edit-avatar-preview').addEventListener('drop', function (e) {
+                e.preventDefault();
+                var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+                if (f) processAvatarFile(f);
+            });
+
+            $('edit-avatar-input').addEventListener('change', function (e) {
+                var f = e.target.files && e.target.files[0];
+                if (f) processAvatarFile(f);
+            });
+
+            function processAvatarFile(file) {
+                // 客户端预校验
+                if (!/^image\/(jpeg|jpg|png)$/i.test(file.type)) {
+                    showEditMsg('edit-profile-msg', '头像必须是 JPEG 或 PNG', 'error');
+                    return;
+                }
+                if (file.size > 2 * 1024 * 1024) {
+                    showEditMsg('edit-profile-msg', '头像不能超过 2 MB', 'error');
+                    return;
+                }
+                var reader = new FileReader();
+                reader.onload = function () {
+                    var img = new Image();
+                    img.onload = function () {
+                        // 居中正方形裁剪
+                        var side = Math.min(img.width, img.height);
+                        var sx = (img.width  - side) / 2;
+                        var sy = (img.height - side) / 2;
+                        var canvas = document.createElement('canvas');
+                        canvas.width  = AVATAR_SIZE;
+                        canvas.height = AVATAR_SIZE;
+                        var ctx = canvas.getContext('2d');
+                        ctx.imageSmoothingQuality = 'high';
+                        ctx.drawImage(img, sx, sy, side, side,
+                                      0, 0, AVATAR_SIZE, AVATAR_SIZE);
+                        canvas.toBlob(function (blob) {
+                            if (!blob) {
+                                showEditMsg('edit-profile-msg', '图像处理失败', 'error');
+                                return;
+                            }
+                            if (editState.avatarUrl) {
+                                URL.revokeObjectURL(editState.avatarUrl);
+                            }
+                            editState.avatarBlob = blob;
+                            editState.avatarUrl  = URL.createObjectURL(blob);
+                            // 预览
+                            var preview = $('edit-avatar-preview');
+                            preview.textContent = '';
+                            var prevImg = preview.querySelector('img');
+                            if (!prevImg) {
+                                prevImg = document.createElement('img');
+                                prevImg.style.width = '100%';
+                                prevImg.style.height = '100%';
+                                prevImg.style.objectFit = 'cover';
+                                prevImg.alt = '头像预览';
+                                preview.appendChild(prevImg);
+                            }
+                            prevImg.src = editState.avatarUrl;
+                            showEditMsg('edit-profile-msg', '新头像已选,点"保存"上传', 'info');
+                        }, 'image/jpeg', 0.9);
+                    };
+                    img.onerror = function () {
+                        showEditMsg('edit-profile-msg', '无法读取图像', 'error');
+                    };
+                    img.src = reader.result;
+                };
+                reader.onerror = function () {
+                    showEditMsg('edit-profile-msg', '文件读取失败', 'error');
+                };
+                reader.readAsDataURL(file);
+            }
+
+            function showEditMsg(elId, msg, kind) {
+                var el = $(elId);
+                el.textContent = msg;
+                el.hidden = false;
+                el.style.color = kind === 'error' ? 'var(--lc-color-danger, #DC2626)'
+                              : kind === 'info'  ? 'var(--lc-color-text-muted, #475569)'
+                                                 : 'var(--lc-color-success, #16A34A)';
+            }
+
+            // ── 字段表单保存(只走 display_name / school / bio / email) ──
+            $('edit-profile-form').addEventListener('submit', function (e) {
+                e.preventDefault();
+                if (!editState.open) return;
+                var btn = $('edit-profile-save-btn');
+                btn.disabled = true;
+                btn.textContent = '保存中…';
+
+                var payload = {
+                    display_name: $('edit-display-name').value || null,
+                    school:       $('edit-school').value       || null,
+                    bio:          $('edit-bio').value          || null,
+                    email:        $('edit-email').value        || null,
+                };
+
+                var p = litecode.api.auth.updateProfile(payload);
+
+                if (editState.avatarBlob) {
+                    p = p.then(function () {
+                        return litecode.api.auth.uploadAvatar(
+                            editState.avatarBlob, 'avatar.jpg');
+                    });
+                }
+
+                p.then(function (resp) {
+                    var user = (resp && resp.user) || (resp && resp.avatar) ? null : null;
+                    // updateProfile 已经写缓存 + emit auth-changed,header 会自动更新
+                    // avatar 那条路径只返回 { avatar: url },也要同步到 currentUser.avatar
+                    if (resp && resp.avatar) {
+                        // 单独走上传,刷新页面左侧头像
+                        if (currentUser) currentUser.avatar = resp.avatar;
+                        var headerAvatar = $('avatar');
+                        if (headerAvatar) {
+                            headerAvatar.textContent = '';
+                            if (!headerAvatar.querySelector('img')) {
+                                var hi = document.createElement('img');
+                                hi.style.width = '100%';
+                                hi.style.height = '100%';
+                                hi.style.objectFit = 'cover';
+                                hi.alt = '';
+                                headerAvatar.appendChild(hi);
+                            }
+                            headerAvatar.querySelector('img').src =
+                                resp.avatar + '?_=' + Date.now();
+                        }
+                    }
+                    showEditMsg('edit-profile-msg', '已保存', 'success');
+                    btn.disabled = false;
+                    btn.textContent = '保存';
+                    editState.avatarBlob = null;
+                    setTimeout(closeEditProfile, 600);
+                }).catch(function (err) {
+                    btn.disabled = false;
+                    btn.textContent = '保存';
+                    showEditMsg('edit-profile-msg',
+                        '保存失败:' + ((err && err.message) || err), 'error');
+                });
+            });
+
+            // ── 改 username ──────────────────────────────────────
+            $('edit-username-form').addEventListener('submit', function (e) {
+                e.preventDefault();
+                if (!editState.open) return;
+                var newName = ($('edit-new-username').value || '').trim();
+                if (!newName) {
+                    showEditMsg('edit-username-msg', '请输入新用户名', 'error');
+                    return;
+                }
+                if (newName === currentUser.username) {
+                    showEditMsg('edit-username-msg', '跟当前用户名一样', 'error');
+                    return;
+                }
+                var btn = $('edit-username-save-btn');
+                btn.disabled = true;
+                btn.textContent = '提交中…';
+
+                litecode.api.auth.changeUsername(newName).then(function (data) {
+                    btn.disabled = false;
+                    btn.textContent = '改名';
+                    showEditMsg('edit-username-msg',
+                        '改名成功!旧名 "' + (data && data.old_alias) +
+                        '" 仍可作为 alias 访问。', 'success');
+                    // 当前 user 对象同步
+                    if (currentUser) {
+                        currentUser.username = newName;
+                        currentUser.username_changed_at = new Date().toISOString()
+                            .replace('T', ' ').slice(0, 19);
+                    }
+                    // 重新渲染冷却
+                    renderUsernameCooldown(currentUser.username_changed_at);
+                    $('edit-new-username').value = '';
+                    // header name 立刻更新
+                    $('display-name').textContent = currentUser.display_name
+                        || currentUser.username;
+                    $('page-title').textContent = (currentUser.username || '') + ' 的主页';
+                    $('page-subtitle').textContent = '@' + currentUser.username + ' 的做题统计';
+                }).catch(function (err) {
+                    btn.disabled = false;
+                    btn.textContent = '改名';
+                    var msg = (err && err.message) || String(err);
+                    if (err && err.envelope && err.envelope.error
+                        && err.envelope.error.message) {
+                        msg = err.envelope.error.message;
+                    }
+                    var retryAfter = (err && err.envelope
+                        && err.envelope.error && err.envelope.error.details
+                        && err.envelope.error.details.retry_after_seconds);
+                    if (retryAfter) {
+                        var h = Math.floor(retryAfter / 3600);
+                        var min = Math.floor((retryAfter % 3600) / 60);
+                        msg += ' (还需 ' + h + ' 小时 ' + min + ' 分钟)';
+                    }
+                    showEditMsg('edit-username-msg', msg, 'error');
+                });
+            });
+
+            // ── 模态关闭(backdrop / X / 取消) ───────────────────
+            $('edit-profile-modal').addEventListener('click', function (e) {
+                var t = e.target;
+                while (t && t !== document.body) {
+                    if (t.dataset && t.dataset.act === 'close-edit-profile') {
+                        closeEditProfile();
+                        return;
+                    }
+                    t = t.parentNode;
+                }
+            });
+            document.addEventListener('keydown', function (e) {
+                if (editState.open && e.key === 'Escape') closeEditProfile();
+            });
+
+            // ── 入口:点击 #edit-profile-btn 打开模态 ────────────────
+            $('edit-profile-btn').addEventListener('click', openEditProfile);
+
+            // 暴露给 loadStats 完成后的代码 — 把自己页面时显示按钮
+            window.__showEditBtn = function () {
+                $('edit-profile-btn').hidden = false;
+            };
         });
     })();
     </script>

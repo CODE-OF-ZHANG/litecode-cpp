@@ -45,6 +45,32 @@
     -->
     <div class="lc-cyber-grid-strip" aria-hidden="true"></div>
 
+    <!--
+      v1.3.4 PR 8 ★ 装饰层 (背景 / spotlight / 4 角 / watermark)
+      全部 aria-hidden + pointer-events: none,不挡交互。
+      浅深色靠 2 个 div 互斥(CSS `:not(html.dark) .lc-v4-bg-aurora { display:none }` 等)。
+    -->
+    <div class="lc-v4-bg-oat"   aria-hidden="true"></div>
+    <div class="lc-v4-bg-aurora" aria-hidden="true"></div>
+    <div class="lc-v4-spotlight"  aria-hidden="true"></div>
+
+    <div class="lc-v4-deco lc-v4-deco--tl" aria-hidden="true">
+        <svg viewBox="0 0 60 60" fill="none"><path d="M4 50 L4 14 L40 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="lc-v4-deco lc-v4-deco--tr" aria-hidden="true">
+        <svg viewBox="0 0 60 60" fill="none"><path d="M10 30 L48 30 M30 12 L30 48 M38 22 L48 30 L38 38" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="lc-v4-deco lc-v4-deco--bl" aria-hidden="true">
+        <svg viewBox="0 0 60 60" fill="none"><path d="M4 30 L40 30 M22 14 L4 30 L22 46" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="lc-v4-deco lc-v4-deco--br" aria-hidden="true">
+        <svg viewBox="0 0 60 60" fill="none"><path d="M56 10 L56 46 L20 56" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+
+    <div class="lc-v4-watermark lc-v4-watermark--br" aria-hidden="true">
+        <svg viewBox="0 0 64 64"><path d="M22 18 L42 32 L22 46" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+
     <!-- Navigation slot — app.js injects the shared nav here. -->
     <div data-nav></div>
 
@@ -101,7 +127,7 @@
                     </ul>
                 </div>
 
-                <aside class="lc-v4-hero__card" aria-label="实时判题示例">
+                <aside class="lc-v4-hero__card lc-v4-hero-mock" aria-label="实时判题示例">
                     <div class="lc-v4-hero__card-head">
                         <span class="lc-v4-hero__card-dot lc-v4-hero__card-dot--green" aria-hidden="true"></span>
                         <span class="lc-v4-hero__card-title">two-sum · AC</span>
@@ -139,32 +165,32 @@ cout <span class="tok-key">&lt;&lt;</span> ans <span class="tok-key">&lt;&lt;</s
           发光 + hover 浮起。所有 lc-v4-stat-card 名称不变,JS / API 不动。
         -->
         <section class="lc-v4-stat-grid" aria-label="判题结果一览" style="margin: 64px 0;">
-            <a href="/?status=ac"  class="lc-v4-stat-card lc-v4-stat-card--ac">
+            <a href="/?status=ac"  class="lc-v4-stat-card lc-v4-card--hover lc-v4-stat-card--ac lc-fade-in" data-lc-stagger="0">
                 <span class="lc-v4-stat-card__num">AC</span>
                 <span class="lc-v4-stat-card__label">通过</span>
                 <span class="lc-v4-stat-card__meta">12 cases · 0 fail</span>
             </a>
-            <a href="/?status=wa"  class="lc-v4-stat-card lc-v4-stat-card--wa">
+            <a href="/?status=wa"  class="lc-v4-stat-card lc-v4-card--hover lc-v4-stat-card--wa lc-fade-in" data-lc-stagger="1">
                 <span class="lc-v4-stat-card__num">WA</span>
                 <span class="lc-v4-stat-card__label">答案错误</span>
                 <span class="lc-v4-stat-card__meta">case-by-case diff</span>
             </a>
-            <a href="/?status=tle" class="lc-v4-stat-card lc-v4-stat-card--tle">
+            <a href="/?status=tle" class="lc-v4-stat-card lc-v4-card--hover lc-v4-stat-card--tle lc-fade-in" data-lc-stagger="2">
                 <span class="lc-v4-stat-card__num">TLE</span>
                 <span class="lc-v4-stat-card__label">超时</span>
                 <span class="lc-v4-stat-card__meta">rejected by limit</span>
             </a>
-            <a href="/?status=re"  class="lc-v4-stat-card lc-v4-stat-card--re">
+            <a href="/?status=re"  class="lc-v4-stat-card lc-v4-card--hover lc-v4-stat-card--re lc-fade-in" data-lc-stagger="3">
                 <span class="lc-v4-stat-card__num">RE</span>
                 <span class="lc-v4-stat-card__label">运行错误</span>
                 <span class="lc-v4-stat-card__meta">segfault / panic</span>
             </a>
-            <a href="/?status=ce"  class="lc-v4-stat-card lc-v4-stat-card--ce">
+            <a href="/?status=ce"  class="lc-v4-stat-card lc-v4-card--hover lc-v4-stat-card--ce lc-fade-in" data-lc-stagger="4">
                 <span class="lc-v4-stat-card__num">CE</span>
                 <span class="lc-v4-stat-card__label">编译错误</span>
                 <span class="lc-v4-stat-card__meta">g++ stderr captured</span>
             </a>
-            <a href="/?status=scf" class="lc-v4-stat-card lc-v4-stat-card--scf">
+            <a href="/?status=scf" class="lc-v4-stat-card lc-v4-card--hover lc-v4-stat-card--scf lc-fade-in" data-lc-stagger="5">
                 <span class="lc-v4-stat-card__num">SCF</span>
                 <span class="lc-v4-stat-card__label">系统故障</span>
                 <span class="lc-v4-stat-card__meta">infra-side failure</span>
@@ -307,6 +333,11 @@ cout <span class="tok-key">&lt;&lt;</span> ans <span class="tok-key">&lt;&lt;</s
     <script src="/js/csp.js?v=1.3.4" defer></script>
     <script src="/js/api.js?v=1.3.4" defer></script>
     <script src="/js/app.js?v=1.3.4" defer></script>
+    <!-- v1.3.4 PR 8 ★ 鼠标跟随 + 入场动效(无依赖,defer) -->
+    <script src="/js/mouse-deco.js?v=1.3.4" defer></script>
+    <script src="/js/fade-in.js?v=1.3.4" defer></script>
+    <!-- v1.3.4 PR 10 ★ idle 1h 自动登出(登录用户页面,公开页 noop) -->
+    <script src="/js/idle-timeout.js?v=1.3.4" defer></script>
 
     <!--
       Boot sentinel — diagnostics if the framework didn't load.
