@@ -111,9 +111,12 @@ COPY --from=builder /src/build/bin/litecode_server /usr/local/bin/litecode_serve
 COPY web/ /app/web/
 
 # 非 root 运行（SPEC §15.5）
+# v1.3.4 PR 9 ★ 也建 /app/uploads(头像上传落点),named volume
+# litecode-uploads 挂到这里,提前 chown 给 litecode 用户避免
+# runtime Permission denied。
 RUN groupadd -g 1000 litecode \
     && useradd  -u 1000 -g litecode -m -s /bin/bash litecode \
-    && mkdir -p /app/logs \
+    && mkdir -p /app/logs /app/uploads \
     && chown -R litecode:litecode /app
 
 USER litecode
