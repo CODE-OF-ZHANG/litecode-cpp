@@ -102,13 +102,18 @@ namespace litecode {
 struct UserRow {
     int                          id           = 0;
     std::string                  username;
+    std::optional<std::string>   display_name;   // v1.3.4 PR 9 — 昵称(可空,空时回退到 username)
     std::string                  password_hash;
     std::string                  role;
+    int                          token_version = 0;  // v1.3.4 PR 9 — JWT 缓存失效钩子(预留,本 PR 不强制)
     std::optional<std::string>   email;
+    std::optional<std::string>   school;         // v1.3.4 PR 9 — 学校(0..100, 可空)
+    std::optional<std::string>   bio;            // v1.3.4 PR 9 — 简介(0..500, 可空)
     std::optional<std::string>   avatar;
     std::string                  created_at;
     std::optional<std::string>   last_login;
     std::optional<std::string>   last_login_ip;
+    std::optional<std::string>   username_changed_at;  // v1.3.4 PR 9 — 改名频率限制
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -282,13 +287,18 @@ inline UserRow row_to_user(const mysqlx::Row& row) {
     UserRow u;
     u.id            = req_int   (row, 0, "id");
     u.username      = req_string(row, 1, "username");
-    u.password_hash = req_string(row, 2, "password_hash");
-    u.role          = req_string(row, 3, "role");
-    u.email         = opt_string(row, 4);
-    u.avatar        = opt_string(row, 5);
-    u.created_at    = req_string(row, 6, "created_at");
-    u.last_login    = opt_string(row, 7);
-    u.last_login_ip = opt_string(row, 8);
+    u.display_name  = opt_string(row, 2);
+    u.password_hash = req_string(row, 3, "password_hash");
+    u.role          = req_string(row, 4, "role");
+    u.token_version = req_int   (row, 5, "token_version");
+    u.email         = opt_string(row, 6);
+    u.school        = opt_string(row, 7);
+    u.bio           = opt_string(row, 8);
+    u.avatar        = opt_string(row, 9);
+    u.created_at    = req_string(row, 10, "created_at");
+    u.last_login    = opt_string(row, 11);
+    u.last_login_ip = opt_string(row, 12);
+    u.username_changed_at = opt_string(row, 13);
     return u;
 }
 
@@ -397,10 +407,12 @@ inline std::optional<UserRow> find_by_username(ConnectionPool& pool,
                                                std::string_view username) {
     auto conn = pool.acquire();
     const auto row = conn.fetch_one(
-        "SELECT id, username, password_hash, role, email, avatar, "
+        "SELECT id, username, display_name, password_hash, role, token_version, "
+        "       email, school, bio, avatar, "
         "       DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at, "
         "       DATE_FORMAT(last_login,  '%Y-%m-%d %H:%i:%s') AS last_login, "
-        "       last_login_ip "
+        "       last_login_ip, "
+        "       DATE_FORMAT(username_changed_at, '%Y-%m-%d %H:%i:%s') AS username_changed_at "
         "FROM users WHERE username = ? LIMIT 1",
         std::string(username));
     if (!row) return std::nullopt;
@@ -412,10 +424,12 @@ inline std::optional<UserRow> find_by_username(ConnectionPool& pool,
 inline std::optional<UserRow> find_by_id(ConnectionPool& pool, int id) {
     auto conn = pool.acquire();
     const auto row = conn.fetch_one(
-        "SELECT id, username, password_hash, role, email, avatar, "
+        "SELECT id, username, display_name, password_hash, role, token_version, "
+        "       email, school, bio, avatar, "
         "       DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at, "
         "       DATE_FORMAT(last_login,  '%Y-%m-%d %H:%i:%s') AS last_login, "
-        "       last_login_ip "
+        "       last_login_ip, "
+        "       DATE_FORMAT(username_changed_at, '%Y-%m-%d %H:%i:%s') AS username_changed_at "
         "FROM users WHERE id = ? LIMIT 1",
         id);
     if (!row) return std::nullopt;
@@ -462,6 +476,128 @@ inline bool update_role(ConnectionPool& pool, int id, std::string_view role) {
         "UPDATE users SET role = ? WHERE id = ?",
         std::string(role), id);
     return rs.getAffectedItemsCount() > 0;
+}
+
+// ────────────────────────────────────────────────────────────────────
+//  v1.3.4 PR 9 ★ 个人资料编辑 + 用户名可改
+//  SPEC §5.1 / §5.2 + 新功能
+// ────────────────────────────────────────────────────────────────────
+//
+// update_profile — 写入 display_name / school / bio / email。
+// 调用方负责长度校验(前端 50/100/500/100 字符上限),这里只负责
+// 类型安全的 optional 绑定。email 通过 SET email = NULL 也允许
+// 清空邮箱。返回 true iff 至少 1 行受影响(用户存在)。
+inline bool update_profile(ConnectionPool& pool, int id,
+                           std::optional<std::string> display_name,
+                           std::optional<std::string> school,
+                           std::optional<std::string> bio,
+                           std::optional<std::string> email) {
+    auto conn = pool.acquire();
+    mysqlx::Value display_name_val = display_name
+        ? mysqlx::Value(*display_name) : mysqlx::Value(nullptr);
+    mysqlx::Value school_val = school
+        ? mysqlx::Value(*school) : mysqlx::Value(nullptr);
+    mysqlx::Value bio_val = bio
+        ? mysqlx::Value(*bio) : mysqlx::Value(nullptr);
+    mysqlx::Value email_val = email
+        ? mysqlx::Value(*email) : mysqlx::Value(nullptr);
+    try {
+        auto rs = conn.execute(
+            "UPDATE users SET display_name = ?, school = ?, bio = ?, email = ? "
+            "WHERE id = ?",
+            display_name_val, school_val, bio_val, email_val, id);
+        return rs.getAffectedItemsCount() > 0;
+    } catch (const mysqlx::Error& e) {
+        // 邮箱 UNIQUE 冲突(V007 加的 uq_users_email)
+        const std::string what = e.what();
+        if (what.find("Duplicate entry") != std::string::npos ||
+            what.find("duplicate")        != std::string::npos ||
+            what.find("1062")             != std::string::npos) {
+            return false;  // 调用方应该再走 email_exists 区分
+        }
+        throw UserRepoError(std::string("user_repo::update_profile: ") + what);
+    }
+}
+
+// update_avatar — 单字段写头像 URL(由上传路由裁剪后写入的相对路径
+// /uploads/avatars/{user_id}.jpg)。NULL 不允许(由前端传 null 时
+// 也写入 NULL,即"恢复默认")。
+inline bool update_avatar(ConnectionPool& pool, int id,
+                          std::optional<std::string> avatar_url) {
+    auto conn = pool.acquire();
+    mysqlx::Value avatar_val = avatar_url
+        ? mysqlx::Value(*avatar_url) : mysqlx::Value(nullptr);
+    auto rs = conn.execute(
+        "UPDATE users SET avatar = ? WHERE id = ?",
+        avatar_val, id);
+    return rs.getAffectedItemsCount() > 0;
+}
+
+// update_username — 改名核心:
+//   1) 写 user_username_history(user_id, old_username, NOW())
+//   2) UPDATE users SET username = ?, username_changed_at = NOW()
+//
+// 频率限制(1 天 1 次)由 route 层负责,本函数无条件执行;route 层
+// 先 SELECT users.username_changed_at 比对当前时间 < 1 day 则拒绝。
+// UNIQUE 冲突(新名已存在)由 route 层先 SELECT username_exists()
+// 检查,这里仍然 catch 兜底返回 false 区分"用户不存在"和"重名"。
+inline bool update_username(ConnectionPool& pool, int id,
+                            std::string_view new_username) {
+    auto conn = pool.acquire();
+    try {
+        // 先读旧 username(用于写 history)
+        const auto old_row = conn.fetch_scalar<std::string>(
+            "SELECT username FROM users WHERE id = ? LIMIT 1", id);
+        if (!old_row) return false;
+        const std::string old_username = *old_row;
+        if (old_username == new_username) return true;  // 幂等
+
+        // 1) 写 history(UNIQUE 兜底)
+        conn.execute(
+            "INSERT INTO user_username_history (user_id, old_username) "
+            "VALUES (?, ?)",
+            id, old_username);
+
+        // 2) UPDATE users
+        auto rs = conn.execute(
+            "UPDATE users SET username = ?, username_changed_at = NOW() "
+            "WHERE id = ?",
+            std::string(new_username), id);
+        return rs.getAffectedItemsCount() > 0;
+    } catch (const mysqlx::Error& e) {
+        const std::string what = e.what();
+        if (what.find("Duplicate entry") != std::string::npos ||
+            what.find("duplicate")        != std::string::npos ||
+            what.find("1062")             != std::string::npos) {
+            return false;  // 新名已存在
+        }
+        throw UserRepoError(std::string("user_repo::update_username: ") + what);
+    }
+}
+
+// find_by_old_username — alias 查找。profile?username=oldname 时,
+// users 表 miss 后查 history 表,如果 oldname 命中 → 跳当前 user_id。
+// 返回当前 user_id + 当前 username(给前端做 301 跳的 target)。
+struct OldUsernameHit {
+    int          user_id;
+    std::string  current_username;
+};
+inline std::optional<OldUsernameHit> find_by_old_username(
+        ConnectionPool& pool, std::string_view old_username) {
+    auto conn = pool.acquire();
+    const auto row = conn.fetch_one(
+        "SELECT h.user_id, u.username "
+        "FROM user_username_history h "
+        "JOIN users u ON u.id = h.user_id "
+        "WHERE h.old_username = ? LIMIT 1",
+        std::string(old_username));
+    if (!row) return std::nullopt;
+    OldUsernameHit h;
+    // fetch_one 返回 std::optional<mysqlx::Row>,row[0] 实际是
+    // (*row)[0](optional 本身没 operator[]);mysqlx::Row 有 operator[]。
+    h.user_id         = static_cast<int>((*row)[0].get<std::int64_t>());
+    h.current_username = (*row)[1].get<std::string>();
+    return h;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -589,10 +725,12 @@ inline std::vector<UserListRow> list_users(ConnectionPool& pool,
         // at execute() time because the SqlStatement has the
         // shorter sql cached.
         std::string sql =
-            "SELECT u.id, u.username, u.password_hash, u.role, u.email, u.avatar, "
+            "SELECT u.id, u.username, u.display_name, u.password_hash, u.role, u.token_version, "
+            "       u.email, u.school, u.bio, u.avatar, "
             "       DATE_FORMAT(u.created_at, '%Y-%m-%d %H:%i:%s') AS created_at, "
             "       DATE_FORMAT(u.last_login,  '%Y-%m-%d %H:%i:%s') AS last_login, "
             "       u.last_login_ip, "
+            "       DATE_FORMAT(u.username_changed_at, '%Y-%m-%d %H:%i:%s') AS username_changed_at, "
             "       (SELECT COUNT(*) FROM submissions s WHERE s.user_id = u.id) "
             "         AS submission_count "
             "FROM users u WHERE 1=1";

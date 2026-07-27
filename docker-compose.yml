@@ -215,6 +215,9 @@ services:
       # 存储区里，web 容器和判题容器都能挂载到同一个 backing
       # storage——不需要穿越 host 文件系统。
       - judge-tmp:/tmp/litecode-judge
+      # v1.3.4 PR 9: 用户上传头像(以及其他未来上传资源)持久化。
+      # 用 named volume 便于将来横向扩展 web 容器时共享。
+      - litecode-uploads:/app/uploads
     networks:
       - litecode-net
     ports:
@@ -621,3 +624,7 @@ volumes:
     name: litecode-loki-data
   promtail-positions:
     name: litecode-promtail-positions
+  # v1.3.4 PR 9: 用户上传资源 named volume(头像等)。
+  # web 容器写 /app/uploads,server.mount("/uploads", ...) 静态服务。
+  litecode-uploads:
+    name: litecode-uploads

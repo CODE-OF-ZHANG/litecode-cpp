@@ -1054,6 +1054,85 @@
                 });
         },
 
+        // v1.3.4 PR 9 ★ 个人资料编辑 / 头像上传 / 改 username / alias 查找
+
+        // updateProfile — PUT /auth/profile,任意字段可选。
+        // 传 { field: null } 清空该字段。成功后只更新缓存 + currentUser,
+        // 不调 fetchProfile(避免 round-trip)。
+        updateProfile: function (fields) {
+            var self = this;
+            return fetchWithAutoRefresh(
+                '/auth/profile',
+                { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(fields || {}) },
+                { noRetryOn401: false }
+            ).then(function (resp) {
+                var user = (resp && resp.data && resp.data.user) || null;
+                if (user) {
+                    writeCachedUser(user);
+                    self.currentUser = user;
+                    emitAuthChanged();
+                }
+                return user;
+            });
+        },
+
+        // uploadAvatar — POST /auth/avatar (multipart/form-data)。
+        // 走 rawFetch(自动带 Bearer)因为 FormData 需要浏览器自动设
+        // Content-Type + boundary,不能用 doMethod(强制 application/json)。
+        // rawFetch 返回的是裸 fetch Response,需要 .json() 解 envelope。
+        uploadAvatar: function (blob, filename) {
+            var form = new FormData();
+            // 字段名 'avatar' 跟后端 httplib::MultipartFormDataMap key 一致
+            form.append('avatar', blob, filename || 'avatar.jpg');
+            return rawFetch('/auth/avatar', {
+                method: 'POST',
+                body:   form,
+            }).then(function (resp) {
+                if (!resp.ok) {
+                    // 跟 fetchWithAutoRefresh 兼容:把 !ok 转成抛
+                    return resp.json().then(function (env) {
+                        var msg = (env && env.error && env.error.message) ||
+                                  ('avatar upload failed: HTTP ' + resp.status);
+                        var err = new Error(msg);
+                        err.status = resp.status;
+                        err.envelope = env;
+                        throw err;
+                    });
+                }
+                return resp.json().then(function (env) {
+                    return env && env.data;
+                });
+            });
+        },
+
+        // changeUsername — PUT /auth/username,1 天 1 次频率限制。
+        // 后端 429 会带 Retry-After 头;异常 LitecodeApiError 透传。
+        changeUsername: function (newUsername) {
+            return fetchWithAutoRefresh(
+                '/auth/username',
+                { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ username: newUsername }) },
+                { noRetryOn401: false }
+            ).then(function (resp) {
+                return resp && resp.data;
+            });
+        },
+
+        // lookupUser — GET /users/lookup?username=X,公开,找用户 ID。
+        // 命中 users 表:via='current';命中 history 表:via='alias'
+        // (current_username 可能是改名后的新名,前端跳转到新名)。
+        lookupUser: function (username) {
+            var q = encodeURIComponent(username);
+            return fetchWithAutoRefresh(
+                '/users/lookup?username=' + q,
+                undefined,
+                { noRetryOn401: true }   // 公开端点,401 也不需要 refresh
+            ).then(function (resp) {
+                return resp && resp.data;
+            });
+        },
+
         // Phase 5 ★ tryRefresh() — issue a single /auth/refresh call
         // (cookie path). Returns the new access token + user; throws
         // LitecodeApiError on failure (no cookie, cookie expired,

@@ -124,6 +124,10 @@
 #include <string_view>
 #include <unordered_map>
 #include <utility>
+#include <filesystem>
+#include <fstream>
+#include <cstdio>      // sscanf
+#include <ctime>       // timegm / time_t / tm
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -1782,9 +1786,21 @@ inline void profile_handler(httplib::Response&      res,
     nlohmann::json user_block = {
         {"id",         row->id},
         {"username",   row->username},
+        // v1.3.4 PR 9:display_name / school / bio 加入 profile 响应。
+        // display_name 空时回退到 username(front-end profile 渲染判断
+        // 路径需要 null vs 字符串,所以这里不替前端做 fallback)。
+        {"display_name", row->display_name
+                            ? nlohmann::json(*row->display_name)
+                            : nlohmann::json(nullptr)},
         {"role",       row->role},
         {"email",      row->email
                           ? nlohmann::json(*row->email)
+                          : nlohmann::json(nullptr)},
+        {"school",     row->school
+                          ? nlohmann::json(*row->school)
+                          : nlohmann::json(nullptr)},
+        {"bio",        row->bio
+                          ? nlohmann::json(*row->bio)
                           : nlohmann::json(nullptr)},
         {"avatar",     row->avatar
                           ? nlohmann::json(*row->avatar)
@@ -1793,8 +1809,489 @@ inline void profile_handler(httplib::Response&      res,
         {"last_login", row->last_login
                           ? nlohmann::json(*row->last_login)
                           : nlohmann::json(nullptr)},
+        // v1.3.4 PR 9:改名冷却 — 前端用这个判断能否改 username
+        {"username_changed_at", row->username_changed_at
+                                  ? nlohmann::json(*row->username_changed_at)
+                                  : nlohmann::json(nullptr)},
     };
     send_success(res, {{"user", user_block}});
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  v1.3.4 PR 9 ★ 个人资料编辑 + 用户名可改 + 头像上传 + alias
+//  SPEC §5.1 / §5.2 + 新功能
+// ────────────────────────────────────────────────────────────────────────────
+//
+// 4 个新端点:
+//   - PUT  /api/v1/auth/profile  — 改 display_name / school / bio / email
+//   - POST /api/v1/auth/avatar   — 上传头像(jpg/png,≤ 2MB,前端已 resize 256x256)
+//   - PUT  /api/v1/auth/username — 改名(1 天 1 次,旧名永久 alias 写到 history)
+//   - GET  /api/v1/users/lookup?username=X — alias 查找(公开,无需鉴权)
+//
+// 三个写端点都用 require_authentication 拿 user_id,profile_handler
+// 风格的 claims.sub → atoi 取 id。
+//
+// 头像落盘到 /app/uploads/avatars/{user_id}.{ext}(容器内路径),
+// 静态文件走 server.mount("/uploads", "/app/uploads")(main.cpp 注册),
+// URL = /uploads/avatars/{user_id}.{ext},CSP img-src 'self' 通过。
+// 前端用 Canvas API 256x256 resize + toBlob,后端只校验 + 写文件,
+// 避免引入 stb/libvips 依赖。
+// ────────────────────────────────────────────────────────────────────────────
+
+// 复用工具:从 claims.user_id(数字字符串)拿 user_id,失败抛 401。
+inline int user_id_from_claims(const Claims& claims) {
+    int user_id = 0;
+    try {
+        user_id = std::stoi(std::string(claims.user_id));
+    } catch (const std::exception&) {
+        throw ApiException(401, ErrorCode::UNAUTHORIZED,
+                           "invalid sub claim");
+    }
+    if (user_id <= 0) {
+        throw ApiException(401, ErrorCode::UNAUTHORIZED,
+                           "non-positive sub claim");
+    }
+    return user_id;
+}
+
+// validate_display_name / school / bio / email 长度 + email 格式。
+// 通过返回 true;失败把 reason 写到 out_err。
+inline bool validate_display_name(std::string_view s, std::string* out_err) {
+    if (s.empty()) {
+        if (out_err) *out_err = "display_name must not be empty (use null to clear)";
+        return false;
+    }
+    if (s.size() > 50) {
+        if (out_err) *out_err = "display_name too long (max 50 chars)";
+        return false;
+    }
+    return true;
+}
+inline bool validate_school(std::string_view s, std::string* out_err) {
+    if (s.size() > 100) {
+        if (out_err) *out_err = "school too long (max 100 chars)";
+        return false;
+    }
+    return true;
+}
+inline bool validate_bio(std::string_view s, std::string* out_err) {
+    if (s.size() > 500) {
+        if (out_err) *out_err = "bio too long (max 500 chars)";
+        return false;
+    }
+    return true;
+}
+inline bool validate_email_field(std::string_view s, std::string* out_err) {
+    if (s.empty()) {
+        if (out_err) *out_err = "email must not be empty (use null to clear)";
+        return false;
+    }
+    if (s.size() > 100) {
+        if (out_err) *out_err = "email too long (max 100 chars)";
+        return false;
+    }
+    // 简单 RFC 5322 子集:有 @,前/后非空,@后有一个 .
+    const auto at = s.find('@');
+    if (at == std::string_view::npos || at == 0 || at == s.size() - 1) {
+        if (out_err) *out_err = "email missing '@' or local/domain part empty";
+        return false;
+    }
+    const auto dot = s.find('.', at + 1);
+    if (dot == std::string_view::npos || dot == s.size() - 1) {
+        if (out_err) *out_err = "email domain part missing '.'";
+        return false;
+    }
+    return true;
+}
+
+// update_profile_handler — PUT /api/v1/auth/profile
+//
+// Body: { display_name?: string|null, school?: string|null,
+//         bio?: string|null, email?: string|null }
+// 全部 optional;不在 body 的字段不动(走"保留旧值"语义,NULL 即清空)。
+inline void update_profile_handler(httplib::Response& res,
+                                   const httplib::Request& req,
+                                   ConnectionPool& pool,
+                                   const JwtConfig& jwt_cfg) {
+    const Claims claims = require_authentication(req, jwt_cfg);
+    const int user_id = user_id_from_claims(claims);
+
+    nlohmann::json j;
+    try {
+        j = nlohmann::json::parse(req.body);
+    } catch (const std::exception& e) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   std::string("malformed JSON: ") + e.what());
+        return;
+    }
+    if (!j.is_object()) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT, "body must be a JSON object");
+        return;
+    }
+
+    // 解析 optional 字段
+    std::optional<std::string> display_name, school, bio, email;
+    std::string err;
+    if (j.contains("display_name") && !j["display_name"].is_null()) {
+        if (!j["display_name"].is_string()) {
+            send_error(res, 400, ErrorCode::INVALID_INPUT,
+                       "display_name must be a string or null",
+                       {{"field", "display_name"}});
+            return;
+        }
+        const auto v = j["display_name"].get<std::string>();
+        if (!validate_display_name(v, &err)) {
+            send_error(res, 400, ErrorCode::INVALID_INPUT, err,
+                       {{"field", "display_name"}});
+            return;
+        }
+        display_name = v;
+    } else if (j.contains("display_name") && j["display_name"].is_null()) {
+        // 显式 null → 清空
+        display_name = std::nullopt;
+    }
+    if (j.contains("school")) {
+        if (!j["school"].is_null()) {
+            if (!j["school"].is_string()) {
+                send_error(res, 400, ErrorCode::INVALID_INPUT,
+                           "school must be a string or null",
+                           {{"field", "school"}});
+                return;
+            }
+            const auto v = j["school"].get<std::string>();
+            if (!validate_school(v, &err)) {
+                send_error(res, 400, ErrorCode::INVALID_INPUT, err,
+                           {{"field", "school"}});
+                return;
+            }
+            school = v;
+        }
+    }
+    if (j.contains("bio")) {
+        if (!j["bio"].is_null()) {
+            if (!j["bio"].is_string()) {
+                send_error(res, 400, ErrorCode::INVALID_INPUT,
+                           "bio must be a string or null",
+                           {{"field", "bio"}});
+                return;
+            }
+            const auto v = j["bio"].get<std::string>();
+            if (!validate_bio(v, &err)) {
+                send_error(res, 400, ErrorCode::INVALID_INPUT, err,
+                           {{"field", "bio"}});
+                return;
+            }
+            bio = v;
+        }
+    }
+    if (j.contains("email")) {
+        if (!j["email"].is_null()) {
+            if (!j["email"].is_string()) {
+                send_error(res, 400, ErrorCode::INVALID_INPUT,
+                           "email must be a string or null",
+                           {{"field", "email"}});
+                return;
+            }
+            const auto v = j["email"].get<std::string>();
+            if (!validate_email_field(v, &err)) {
+                send_error(res, 400, ErrorCode::INVALID_INPUT, err,
+                           {{"field", "email"}});
+                return;
+            }
+            email = v;
+        }
+    }
+
+    if (!user_repo::update_profile(pool, user_id,
+                                    display_name, school, bio, email)) {
+        // 可能是邮箱 UNIQUE 冲突,或用户不存在。再 email_exists 区分
+        if (email.has_value() && user_repo::email_exists(pool, *email)) {
+            send_error(res, 409, ErrorCode::CONFLICT,
+                       "email already in use",
+                       {{"field", "email"}});
+            return;
+        }
+        send_error(res, 404, ErrorCode::NOT_FOUND, "user not found");
+        return;
+    }
+
+    // 返回新 profile(复用现有 profile_handler 风格的 user block)
+    const auto row = user_repo::find_by_id(pool, user_id);
+    if (!row) {
+        send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                   "user vanished after update");
+        return;
+    }
+    LOG_INFO("auth: profile updated",
+             {{"user_id", std::to_string(user_id)}});
+    send_success(res, {{"user", nlohmann::json{
+        {"id",         row->id},
+        {"username",   row->username},
+        {"display_name", row->display_name
+                            ? nlohmann::json(*row->display_name)
+                            : nlohmann::json(nullptr)},
+        {"role",       row->role},
+        {"email",      row->email
+                          ? nlohmann::json(*row->email)
+                          : nlohmann::json(nullptr)},
+        {"school",     row->school
+                          ? nlohmann::json(*row->school)
+                          : nlohmann::json(nullptr)},
+        {"bio",        row->bio
+                          ? nlohmann::json(*row->bio)
+                          : nlohmann::json(nullptr)},
+        {"avatar",     row->avatar
+                          ? nlohmann::json(*row->avatar)
+                          : nlohmann::json(nullptr)},
+        {"created_at", row->created_at},
+        {"last_login", row->last_login
+                          ? nlohmann::json(*row->last_login)
+                          : nlohmann::json(nullptr)},
+        {"username_changed_at", row->username_changed_at
+                                  ? nlohmann::json(*row->username_changed_at)
+                                  : nlohmann::json(nullptr)},
+    }}});
+}
+
+// update_avatar_handler — POST /api/v1/auth/avatar (multipart/form-data)
+//
+// Field name: "avatar"。校验 + 写文件 + UPDATE users.avatar。
+// 不做 server 端 resize(避免引入图像库;前端 Canvas 已裁剪成 256x256)。
+inline void update_avatar_handler(httplib::Response& res,
+                                  const httplib::Request& req,
+                                  ConnectionPool& pool,
+                                  const JwtConfig& jwt_cfg) {
+    const Claims claims = require_authentication(req, jwt_cfg);
+    const int user_id = user_id_from_claims(claims);
+
+    // multipart 字段
+    const auto it = req.files.find("avatar");
+    if (it == req.files.end()) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   "missing 'avatar' field in multipart body",
+                   {{"expected_field", "avatar"}});
+        return;
+    }
+    const auto& file = it->second;
+    const std::string& bytes      = file.content;
+    const std::string& ctype      = file.content_type;
+    (void)file.filename;  // 不用,但 keep 住避免 warning
+
+    // 1) size 校验
+    constexpr std::size_t kMaxAvatarBytes = 2 * 1024 * 1024;  // 2 MB
+    if (bytes.size() > kMaxAvatarBytes) {
+        send_error(res, 413, ErrorCode::INVALID_INPUT,
+                   "avatar too large (max 2 MB)",
+                   {{"max_bytes", static_cast<int>(kMaxAvatarBytes)},
+                    {"got_bytes", static_cast<int>(bytes.size())}});
+        return;
+    }
+    if (bytes.empty()) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT, "avatar file is empty");
+        return;
+    }
+
+    // 2) magic bytes 校验(避免只信 Content-Type)
+    //    JPEG:FF D8 FF     PNG:89 50 4E 47 0D 0A 1A 0A
+    std::string ext;
+    if (bytes.size() >= 3 &&
+        static_cast<unsigned char>(bytes[0]) == 0xFF &&
+        static_cast<unsigned char>(bytes[1]) == 0xD8 &&
+        static_cast<unsigned char>(bytes[2]) == 0xFF) {
+        ext = ".jpg";
+    } else if (bytes.size() >= 8 &&
+        static_cast<unsigned char>(bytes[0]) == 0x89 &&
+        bytes[1] == 'P' && bytes[2] == 'N' && bytes[3] == 'G' &&
+        static_cast<unsigned char>(bytes[4]) == 0x0D &&
+        static_cast<unsigned char>(bytes[5]) == 0x0A &&
+        static_cast<unsigned char>(bytes[6]) == 0x1A &&
+        static_cast<unsigned char>(bytes[7]) == 0x0A) {
+        ext = ".png";
+    } else {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   "avatar must be JPEG or PNG (magic bytes mismatch)",
+                   {{"content_type", ctype}});
+        return;
+    }
+
+    // 3) 写文件到 /app/uploads/avatars/{user_id}{ext}
+    //    容器内路径。docker-compose.yml 把 litecode-uploads volume
+    //    挂到 /app/uploads,host 端是 named volume 的 backing storage。
+    const std::string dir  = "/app/uploads/avatars";
+    const std::string path = dir + "/" + std::to_string(user_id) + ext;
+    try {
+        std::filesystem::create_directories(dir);
+        std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
+        if (!ofs) {
+            send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                       "failed to open avatar file for writing: " + path);
+            return;
+        }
+        ofs.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        ofs.close();
+        if (!ofs) {
+            send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                       "failed to write avatar bytes to: " + path);
+            return;
+        }
+    } catch (const std::exception& e) {
+        send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                   std::string("avatar write failed: ") + e.what());
+        return;
+    }
+
+    // 4) UPDATE users.avatar = '/uploads/avatars/{user_id}{ext}'
+    const std::string url = "/uploads/avatars/" + std::to_string(user_id) + ext;
+    if (!user_repo::update_avatar(pool, user_id, url)) {
+        send_error(res, 404, ErrorCode::NOT_FOUND, "user not found");
+        return;
+    }
+    LOG_INFO("auth: avatar updated",
+             {{"user_id", std::to_string(user_id)},
+              {"size",    std::to_string(bytes.size())},
+              {"ext",     ext}});
+    send_success(res, {{"avatar", url}});
+}
+
+// kUsernameChangeCooldownSeconds — 1 天 1 次(SPEC v1.3.4 PR 9)
+inline constexpr int kUsernameChangeCooldownSeconds = 24 * 3600;
+
+// update_username_handler — PUT /api/v1/auth/username
+//
+// Body: { "username": "newname" }
+// 1) 形状校验
+// 2) 频率限制(>1 天改 1 次 → 429)
+// 3) 重名检查 → 409
+// 4) update_username(写 history + UPDATE users)
+inline void update_username_handler(httplib::Response& res,
+                                    const httplib::Request& req,
+                                    ConnectionPool& pool,
+                                    const JwtConfig& jwt_cfg) {
+    const Claims claims = require_authentication(req, jwt_cfg);
+    const int user_id = user_id_from_claims(claims);
+
+    nlohmann::json j;
+    try {
+        j = nlohmann::json::parse(req.body);
+    } catch (const std::exception& e) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   std::string("malformed JSON: ") + e.what());
+        return;
+    }
+    if (!j.is_object() || !j.contains("username") || !j["username"].is_string()) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   "missing or non-string `username`",
+                   {{"field", "username"}});
+        return;
+    }
+    const std::string new_username = j["username"].get<std::string>();
+    std::string err;
+    if (!validate_username(new_username, &err)) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT, err,
+                   {{"field", "username"}});
+        return;
+    }
+
+    // 频率限制:1 天 1 次
+    const auto row = user_repo::find_by_id(pool, user_id);
+    if (!row) {
+        send_error(res, 404, ErrorCode::NOT_FOUND, "user not found");
+        return;
+    }
+    if (row->username == new_username) {
+        // 幂等:没变就直接 200 返回 profile
+        send_success(res, {{"username", new_username}, {"changed", false}});
+        return;
+    }
+    if (row->username_changed_at.has_value()) {
+        // "YYYY-MM-DD HH:MM:SS" → time_t
+        std::tm tm{};
+        if (sscanf(row->username_changed_at->c_str(), "%d-%d-%d %d:%d:%d",
+                   &tm.tm_year, &tm.tm_mon, &tm.tm_mday,
+                   &tm.tm_hour, &tm.tm_min, &tm.tm_sec) == 6) {
+            tm.tm_year -= 1900; tm.tm_mon -= 1;
+            const auto last = timegm(&tm);
+            const auto now  = time(nullptr);
+            const auto elapsed = static_cast<long>(now - last);
+            if (elapsed < kUsernameChangeCooldownSeconds) {
+                const int retry_after = kUsernameChangeCooldownSeconds
+                                        - static_cast<int>(elapsed);
+                res.set_header("Retry-After", std::to_string(retry_after));
+                send_error(res, 429, ErrorCode::RATE_LIMITED,
+                           "username can only be changed once per day",
+                           {{"retry_after_seconds", retry_after}});
+                return;
+            }
+        }
+        // 解析失败就当没改过,继续
+    }
+
+    // 重名检查
+    if (user_repo::username_exists(pool, new_username)) {
+        send_error(res, 409, ErrorCode::CONFLICT,
+                   "username already taken",
+                   {{"field", "username"}});
+        return;
+    }
+
+    if (!user_repo::update_username(pool, user_id, new_username)) {
+        // 可能是 race condition 后被其他进程抢了 UNIQUE
+        send_error(res, 409, ErrorCode::CONFLICT,
+                   "username already taken (race)",
+                   {{"field", "username"}});
+        return;
+    }
+    LOG_INFO("auth: username changed",
+             {{"user_id",      std::to_string(user_id)},
+              {"old_username", row->username},
+              {"new_username", new_username}});
+    send_success(res, {{"username",   new_username},
+                       {"old_alias",  row->username},  // 旧名仍可作为 alias
+                       {"changed",    true}});
+}
+
+// lookup_user_handler — GET /api/v1/users/lookup?username=X
+//
+// 公开端点(无需鉴权)。profile 详情页需要根据 username 找 user_id:
+//   1) 查 users.username → 命中 → 返回 found=true, current_username=该值
+//   2) miss → 查 user_username_history.old_username → 命中 → 返回
+//      found=true, via='alias', current_username=users.username(可能是
+//      改名后的新名,前端跳转到新名)
+//   3) miss → 404
+inline void lookup_user_handler(httplib::Response& res,
+                                const httplib::Request& req,
+                                ConnectionPool& pool) {
+    const std::string username = req.get_param_value("username");
+    if (username.empty()) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   "missing `username` query parameter",
+                   {{"field", "username"}});
+        return;
+    }
+
+    if (const auto row = user_repo::find_by_username(pool, username)) {
+        nlohmann::json payload = {
+            {"found",            true},
+            {"via",              "current"},
+            {"user_id",          row->id},
+            {"current_username", row->username},
+        };
+        send_success(res, payload);
+        return;
+    }
+    if (const auto hit = user_repo::find_by_old_username(pool, username)) {
+        nlohmann::json payload = {
+            {"found",            true},
+            {"via",              "alias"},
+            {"user_id",          hit->user_id},
+            {"current_username", hit->current_username},
+        };
+        send_success(res, payload);
+        return;
+    }
+    send_error(res, 404, ErrorCode::NOT_FOUND,
+               "no such user (and no alias)",
+               {{"username", username}});
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -2014,6 +2511,95 @@ inline HttpServer& register_auth_routes(HttpServer&        server,
                 throw;
             } catch (const std::exception& e) {
                 LOG_ERROR("profile: handler threw",
+                          {{"type",   typeid(e).name()},
+                           {"reason", e.what()}});
+                if (res.body.empty()) {
+                    send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                               std::string("internal error: ") + e.what());
+                } else {
+                    throw;
+                }
+            }
+        });
+
+    // v1.3.4 PR 9 ★ 个人资料编辑 + 用户名可改 + 头像上传 + alias
+    //
+    // PUT  /api/v1/auth/profile  — 改 display_name / school / bio / email
+    //                                60/min/IP(走 auth 通用 quota,register/login
+    //                                之外不单独限流;profile 流量低)
+    // POST /api/v1/auth/avatar   — multipart, jpg/png, ≤ 2MB
+    // PUT  /api/v1/auth/username — 1 天 1 次(后端强制),旧名永久 alias
+    // GET  /api/v1/users/lookup  — 公开,profile 详情页 alias 跳转
+    server.put("/api/v1/auth/profile",
+        [&pool, jwt_cfg]
+        (const httplib::Request& req, httplib::Response& res) {
+            try {
+                update_profile_handler(res, req, pool, jwt_cfg);
+            } catch (const ApiException&) {
+                throw;
+            } catch (const std::exception& e) {
+                LOG_ERROR("update_profile: handler threw",
+                          {{"type",   typeid(e).name()},
+                           {"reason", e.what()}});
+                if (res.body.empty()) {
+                    send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                               std::string("internal error: ") + e.what());
+                } else {
+                    throw;
+                }
+            }
+        });
+
+    server.post("/api/v1/auth/avatar",
+        [&pool, jwt_cfg]
+        (const httplib::Request& req, httplib::Response& res) {
+            try {
+                update_avatar_handler(res, req, pool, jwt_cfg);
+            } catch (const ApiException&) {
+                throw;
+            } catch (const std::exception& e) {
+                LOG_ERROR("update_avatar: handler threw",
+                          {{"type",   typeid(e).name()},
+                           {"reason", e.what()}});
+                if (res.body.empty()) {
+                    send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                               std::string("internal error: ") + e.what());
+                } else {
+                    throw;
+                }
+            }
+        });
+
+    server.put("/api/v1/auth/username",
+        [&pool, jwt_cfg]
+        (const httplib::Request& req, httplib::Response& res) {
+            try {
+                update_username_handler(res, req, pool, jwt_cfg);
+            } catch (const ApiException&) {
+                throw;
+            } catch (const std::exception& e) {
+                LOG_ERROR("update_username: handler threw",
+                          {{"type",   typeid(e).name()},
+                           {"reason", e.what()}});
+                if (res.body.empty()) {
+                    send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                               std::string("internal error: ") + e.what());
+                } else {
+                    throw;
+                }
+            }
+        });
+
+    // lookup_user_handler 公开,只读;不接 jwt_cfg,只接 pool。
+    server.get("/api/v1/users/lookup",
+        [&pool]
+        (const httplib::Request& req, httplib::Response& res) {
+            try {
+                lookup_user_handler(res, req, pool);
+            } catch (const ApiException&) {
+                throw;
+            } catch (const std::exception& e) {
+                LOG_ERROR("lookup_user: handler threw",
                           {{"type",   typeid(e).name()},
                            {"reason", e.what()}});
                 if (res.body.empty()) {

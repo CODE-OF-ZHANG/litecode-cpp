@@ -140,6 +140,10 @@ int main() {
     // always win, so /api/v1/* hits the registered handlers and
     // everything else (CSS / JS / *.html) hits the filesystem.
     server.mount("/", "/app/web");
+    // v1.3.4 PR 9: 头像上传后静态服务 /uploads/avatars/{user_id}.{ext}。
+    // web 容器的 litecode-uploads volume 挂到 /app/uploads,跟 judge-tmp
+    // 同款做法;named volume 允许将来横向扩展 web 实例共享头像。
+    server.mount("/uploads", "/app/uploads");
 
     // ── 4. Register every route set ───────────────────────────────────────
     // Order doesn't matter to the server (matches are prefix-based),
