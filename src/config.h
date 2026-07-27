@@ -80,7 +80,7 @@ struct DatabaseConfig {
 struct JwtConfig {
     std::string secret;                      // REQUIRED, >= 32 bytes (SPEC §5.1)
     std::string issuer = "litecode";
-    int access_ttl_seconds = 2 * 3600;       // 2h
+    int access_ttl_seconds = 60 * 60;        // v1.3.4 PR 10: 1h(SPEC §5.1)
     int refresh_ttl_seconds = 7 * 24 * 3600; // 7d
 };
 

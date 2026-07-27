@@ -529,9 +529,9 @@ POST /api/v1/submissions
 | POST | `/api/v1/auth/logout` | 已登录 | - | 注销：cookie `lc_refresh` 优先 → optional body `{refresh_token}`；body 缺失或空 → 200 `{logged_out:true, revoked:false}`；始终发 `Set-Cookie lc_refresh=; Max-Age=0` 关 cookie；malformed JSON / present malformed field → 400 但仍 clear-cookie（v1.3.3.8 Phase 5 修正） |
 | GET  | `/api/v1/auth/profile` | 已登录 | - | 获取当前用户信息 |
 
-> **JWT 细节**（v1.2 明确）:
+> **JWT 细节**（v1.2 明确，v1.3.4 收紧 access）:
 > - 算法：HS256（secret 从环境变量 `JWT_SECRET` 读取，启动时校验非空且 ≥ 32 字节）
-> - access token TTL：2 小时；refresh token TTL：7 天
+> - access token TTL：**1 小时**（v1.3.4 PR 10，从 2h 收紧，前端 `idle-timeout.js` 同步检测无操作 + BroadcastChannel 多 tab 通知 + 最后 5min 弹模态）；refresh token TTL：7 天
 > - Payload：`{sub: user_id, username, role, iat, exp}`
 > - 黑名单：refresh token 注销时写入 Redis（key=`jwt:blacklist:<jti>`，TTL=剩余有效期）
 
@@ -670,6 +670,10 @@ POST /api/v1/submissions
 | **深色模式** | 用户体验 | CSS 变量 + `prefers-color-scheme`，支持手动切换并持久化 |
 | **移动端** | 响应式 | 刷题页在 < 768px 切换为上下布局；管理后台在 < 1024px 折叠侧栏 |
 | **a11y** | 可访问性 | 主要按钮/链接加 `aria-label`，编辑器支持键盘 Tab 缩进 |
+| **装饰层 + 鼠标动效** (v1.3.4 PR 8) | 4 页(index/problems_list/ranking/profile)空旷区域有动态背景 + 4 角 SVG + logo 水印 + 鼠标 spotlight + 4 角视差 + Aurora 跟移 + 卡片 hover + chip + 入场动效 + hero 3D tilt | `web/css/style.css` §5 token(8 个 `--lc-v4-shadow-hover/glow` + `--lc-v4-deco-cyan/violet/green/amber`) + 9 套新 class(`.lc-v4-bg-aurora/oat` / `.lc-v4-spotlight` / `.lc-v4-deco--{tl,tr,bl,br}` / `.lc-v4-card--hover` / `.lc-verdict-chip--*` / `.lc-difficulty-chip--*` / `.lc-fade-in` / `.lc-v4-watermark` / `.lc-v4-hero-mock` + 3D tilt);`web/js/mouse-deco.js`(rAF 节流 + 写 `--lc-mouse-x/y` + `--lc-spotlight-x/y`)+ `web/js/fade-in.js`(IntersectionObserver + stagger)。浅深色通过 token cascade 自动切换,`prefers-reduced-motion` 全部禁用 |
+| **代码编辑器高亮精修** (v1.3.4 PR 7) | 浅深色下所有 token(关键字/类型/字符串/数字/注释/函数/标点/操作符/常量/无效)都清晰高对比 | `web/css/style.css` 加 `[class*="ace_"]` 兜底(用 `:where()` 把 specificity 降到 (0,1,0)) + 12 个常见 token 类显式覆盖;`web/js/editor.js:85` `cin.tie(nullptr)` 缩进补 4 空格 |
+| **1h idle 自动登出** (v1.3.4 PR 10) | 登录用户 1 小时无操作自动登出 + 5min 前弹模态 + 多 tab 同步 | 后端 `src/config.h` `access_ttl_seconds = 60*60`(从 2h 收紧);前端 `web/js/idle-timeout.js`(监听 mousedown/keydown/touchstart/scroll + visibilitychange,30s tick,55min 弹模态"继续/立即登出",60min `forceLogout` 清 token + BroadcastChannel 通知 + 跳 `login.html?reason=timeout&next=`);`web/login.html` 解析 `?reason=timeout` 显示暖琥珀色 banner |
+| **个人资料编辑** (v1.3.4 PR 9) | profile 页可改 display_name / school / bio / email + 头像上传(jpg/png, ≤ 2MB,前端 Canvas 256x256 裁剪)+ username 1 天 1 次改名 + 旧名永久 alias | 后端 V014 SQL(5 个新列 + `user_username_history` 表,idempotent);`src/db/user_repo.h` 5 个新函数(`update_profile/update_avatar/update_username/find_by_old_username` + UserRow 14 列);`src/routes/auth_routes.h` 4 个新 handler + 路由:`PUT /api/v1/auth/profile` / `POST /api/v1/auth/avatar`(multipart,magic bytes 校验 + 256² resize 留给前端) / `PUT /api/v1/auth/username`(24h cooldown → 429 + Retry-After) / `GET /api/v1/users/lookup`(公开,alias 查找);`docker-compose.yml` `litecode-uploads` named volume + `src/main.cpp` `server.mount("/uploads", "/app/uploads)`;前端 `web/js/api.js` 4 个新方法 + `web/profile.html` 模态(头像拖拽 + Canvas 裁剪 + 改 username 独立 section + 冷却倒计时) |
 
 ---
 
@@ -868,7 +872,7 @@ files: problems/*.json
 | **数据库** | MySQL 8.0.19+ | 关系型存储（`UNIQUE NULLS NOT DISTINCT` 需要 ≥ 8.0.19） |
 | **数据库连接** | mysql-connector/cpp 或 sqlpp11 | C++ MySQL 驱动 |
 | **判题沙箱** | Docker Engine API（经 Socket 代理） | 容器隔离执行 |
-| **认证** | JWT (jwt-cpp 库) | HS256，access 2h + refresh 7d |
+| **认证** | JWT (jwt-cpp 库) | HS256，access 1h + refresh 7d（v1.3.4 PR 10 收紧）|
 | **密码哈希** | bcrypt | cost=12 |
 | **限流** | 内存令牌桶（单实例）/ Redis（多实例） | MVP 用内存 |
 | **Token 黑名单** | Redis | refresh token 注销用 |
@@ -1250,7 +1254,7 @@ litecode-cpp/
 ### 15.1 认证与会话
 
 - bcrypt cost=12 哈希密码
-- JWT HS256，access 2h + refresh 7d
+- JWT HS256，access 1h（v1.3.4 PR 10 收紧） + refresh 7d
 - refresh token 注销入 Redis 黑名单（TTL = 剩余有效期）
 - refresh token 走 `HttpOnly; Secure; SameSite=Strict` cookie
 - 失败登录 5 次 → 写 audit_logs，可选锁定 15 分钟

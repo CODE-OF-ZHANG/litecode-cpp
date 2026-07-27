@@ -11,6 +11,32 @@
     <script src="/js/theme-boot.js?v=1.3.4"></script>
     <link rel="stylesheet" href="/css/style.css?v=1.3.4">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23F8F6F0'/%3E%3Cpath d='M22 18 L42 32 L22 46' stroke='%234D7C5A' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+    <!--
+      v1.3.4 PR 10 ★ Idle timeout banner(暖琥珀色)?reason=timeout 时显示。
+      放在这里而不是 web/css/style.css 是为了让本 PR 独立 — style.css
+      改动(v1.3.4 PR 8 装饰层)已经在前面 commit,本 PR 只动 login.html +
+      idle-timeout.js + 7 个其它 HTML 注入 script,不重复碰 style.css。
+    -->
+    <style>
+    .lc-v4-auth__timeout-banner {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 12px 0 16px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: rgba(217, 119, 6, 0.10);
+        border: 1px solid rgba(217, 119, 6, 0.40);
+        color: #92400E;
+        font-size: 13px;
+        line-height: 1.5;
+    }
+    html.dark .lc-v4-auth__timeout-banner {
+        background: rgba(255, 179, 71, 0.12);
+        border-color: rgba(255, 179, 71, 0.40);
+        color: #FBBF24;
+    }
+    </style>
 </head>
 <body class="lc-cyber">
     <!--
@@ -64,6 +90,16 @@
                 <span class="lc-cyber-ribbon">SECURE LOGIN</span>
                 <h1 style="margin-top: 12px;">欢迎回来</h1>
                 <p class="lc-v4-auth__form-sub">登录后即可继续刷题,提交历史自动归档。</p>
+
+                <!-- v1.3.4 PR 10 ★ ?reason=timeout 时显示"会话已过期"banner
+                     红色背景 + ⏰ 图标,跟普通表单错误区分。
+                     default 显示 banner + auto-fill username(从 next 解 query
+                     不现实,只 banner 即可,让用户感觉"我被踢了") -->
+                <div id="timeout-banner" class="lc-v4-auth__timeout-banner"
+                     hidden role="status" aria-live="polite">
+                    <span aria-hidden="true">⏰</span>
+                    <span>会话已过期(1 小时无操作)。请重新登录。</span>
+                </div>
 
                 <div class="lc-v4-auth__field">
                     <label class="lc-v4-auth__label" for="username">用户名</label>
@@ -151,6 +187,20 @@
     <script src="/js/csp.js?v=1.3.4" defer></script>
     <script src="/js/api.js?v=1.3.4" defer></script>
     <script src="/js/app.js?v=1.3.4" defer></script>
+    <!-- v1.3.4 PR 10 ★ idle timeout:login 页本身 noop,但 ?reason=timeout
+         时显示 banner(见 inline script 在下方);idle 检测由其他页面做。 -->
+    <script src="/js/idle-timeout.js?v=1.3.4" defer></script>
+
+    <script>
+    // v1.3.4 PR 10 ★ 解析 ?reason=timeout,显示"会话已过期"banner。
+    (function () {
+        var sp = new URLSearchParams(window.location.search);
+        if (sp.get('reason') === 'timeout') {
+            var b = document.getElementById('timeout-banner');
+            if (b) b.hidden = false;
+        }
+    })();
+    </script>
 
     <script>
     (function () {
