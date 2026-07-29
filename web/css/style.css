@@ -7428,9 +7428,25 @@ html.dark .lc-cyber-podium__step--3 .lc-cyber-podium__rank { color: #b45309; -we
 .lc-rank-cell--rank { color: var(--lc-cyber-cyan-bright); font-family: var(--lc-font-mono); }
 .lc-rank-username { color: var(--lc-cyber-text); }
 .lc-rank-username:hover { color: var(--lc-cyber-cyan-bright); }
-.lc-rank-me-tag {
+/* "我"标 — 实心填充版**只在深色模式生效**。
+   v1.3.4 bugfix:这条规则原本是无条件的,配 `color: var(--lc-cyber-bg)`。
+   但 PR 5 把 light 下的 `--lc-cyber-bg` 重映射成了 `transparent`
+   (§ body:not(.dark).lc-cyber),于是浅色模式下这个 pill = 绿色底 +
+   **完全透明的文字** → "我"字看不见;双击选中后 selection 高亮
+   替浏览器重绘了字形,所以"点两下才出现"。
+   而且 `--lc-cyber-bg` 在**深色模式下同样是 transparent**:那条
+   remap 的选择器是 `body:not(.dark).lc-cyber`,但 `.dark` 是加在
+   `<html>` 上的(theme-boot.js),body 永远没有 .dark 类 → 选择器
+   两个模式都命中;又因为它落在 body 上(比 html.dark 更近的祖先),
+   custom property 查找时 body 的声明胜出。所以这个 token 不能用来
+   当文字色 —— 这里直接用 mode-aware 的 `--lc-color-bg`
+   (light #F8F6F0 / dark #0A0E1A),深色下配 cyan 底对比充足。
+   填充 + 反色属于霓虹装饰,按 PR 6 Bug C 的策略锁 html.dark;
+   浅色模式回落到 §5 的描边 pill(link 色文字 + link 色边框),
+   与页面其他 link 配色一致。 */
+html.dark .lc-rank-me-tag {
     background: var(--lc-cyber-cyan);
-    color: var(--lc-cyber-bg);           /* light = #2E2A1F, dark = #0a0e14 — 都跟 cyan 形成对比 */
+    color: var(--lc-color-bg);           /* dark = #0A0E1A,跟 cyan 形成对比 */
 }
 .lc-rank-cell--solved,
 .lc-rank-cell--subs,
