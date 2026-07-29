@@ -11,7 +11,7 @@
 # =============================================================
 
 # ───── Stage 1: builder ───────────────────────────────────────
-FROM ubuntu:22.04 AS builder
+FROM ubuntu:26.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -67,7 +67,7 @@ RUN cmake -S . -B build \
     && cmake --build build -j2
 
 # ───── Stage 2: runtime ──────────────────────────────────────
-FROM ubuntu:22.04 AS runtime
+FROM ubuntu:26.04 AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 
