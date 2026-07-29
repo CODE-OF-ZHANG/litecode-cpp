@@ -15,8 +15,8 @@
     <title>LiteCode · 排行榜</title>
 
     <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. v1.3.4 默认 cyber dark。 -->
-    <script src="/js/theme-boot.js?v=1.3.4"></script>
-    <link rel="stylesheet" href="/css/style.css?v=1.3.4">
+    <script src="/js/theme-boot.js?v=1.3.5"></script>
+    <link rel="stylesheet" href="/css/style.css?v=1.3.5">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23F8F6F0'/%3E%3Cpath d='M22 18 L42 32 L22 46' stroke='%234D7C5A' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 </head>
 <body class="lc-cyber">
@@ -131,7 +131,7 @@
         </div>
 
         <!-- Ranking table -->
-        <section class="lc-v4-card lc-fade-in" id="table-state" hidden style="padding: 0; overflow: hidden;">
+        <section class="lc-v4-card lc-rank-card-frame lc-fade-in" id="table-state" hidden>
             <div class="lc-rank-table lc-particles-host">
                 <!-- v1.3.4 PR 13 ★ scoped 粒子 canvas(深色模式下
                      补全榜单区真实粒子,原 viewport fixed canvas
@@ -240,6 +240,12 @@
             // 一次拉走所有用户的头像 URL)。所以默认是 null,只有"我"
             // 那一行在 caller (renderRows) 里补 me.avatar。结构上仍
             // 保留字段,后续若后端决定放开可零改动启用。
+            // v1.3.4 PR 14 ★ avatar — 后端 stats_routes.h 现在会
+            // 返回每个 user 的 avatar 字段(null 时 null)。前端原
+            // 来只把"我"那一行用 auth.currentUser.avatar 拼上,
+            // 现在改成"统一读 user.avatar",admin 也能看见 zhangxu
+            // 改后的头像。"我"行的 avatar 仍然是 currentUser.avatar
+            // 兜底(用户自己刚改的图可能 server 还没回写)。
             var avatar = (user.avatar != null && user.avatar !== '')
                 ? String(user.avatar)
                 : null;
@@ -365,7 +371,30 @@
         }
 
         function renderRows(items) {
-            var me = (litecode.api.auth && litecode.api.auth.currentUser) || null;
+            // v1.3.4 PR 13 ★ — 排行榜「我」标首次刷新丢失 bug 修复。
+            // renderRows() 同步读 currentUser,但 boot.shell() 是异步
+            // (内部 fetchProfile → writeCachedUser),首屏直接同步读
+            // 会拿到 null → myName=null → 没有行被标 isMe。
+            // 兜底:从 **sessionStorage**('litecode:user') 读一份缓存
+            // 用户。注意 api.js 的 writeCachedUser() 走的是 sessionStorage
+            // 不是 localStorage — 之前用 localStorage 永远读不到,「我」
+            // 标直接消失。
+            // v1.3.4 PR 15 ★ — trySessionStorage 工具函数。某些环境
+            // (Safari ITP / sandboxed iframe / 隐私模式 quota) 可能
+            // 抛 SecurityError,统一 try/catch 兜底静默。
+            function trySessionStorage(key) {
+                try { return window.sessionStorage.getItem(key); }
+                catch (_) { return null; }
+            }
+            var me = null;
+            try {
+                if (litecode.api.auth && litecode.api.auth.currentUser) {
+                    me = litecode.api.auth.currentUser;
+                } else {
+                    var raw = trySessionStorage('litecode:user');
+                    if (raw) me = JSON.parse(raw);
+                }
+            } catch (_) { /* 缓存损坏时静默 */ }
             var myName = me && me.username ? String(me.username).toLowerCase() : null;
 
             var box = $('rank-rows');
@@ -384,12 +413,22 @@
 
             visibleItems.forEach(function (it, i) {
                 var isMe = myName && it.username.toLowerCase() === myName;
-                // v1.3.4 PR 13 ★ 头像 — 后端目前不返回其他用户的 avatar
-                // (confidentiality 注释),normalizeRankItem 默认 null;
-                // 只有"我"那行(在 isMe 分支)用 auth.currentUser.avatar
-                // 拼上去,这样用户改完头像在排行榜"我"那行立刻可见,
-                // 其他用户仍显示首字母(后端零改动)。
-                var rowAvatar = isMe && me && me.avatar ? String(me.avatar) : it.avatar;
+                // v1.3.4 PR 14 ★ 头像 — 后端现在统一返回 avatar。
+                // "我"那行额外用 currentUser.avatar 兜底(用户刚改完
+                // 图 → server cache 还没回写 → 列表里的还是旧图),
+                // 其他用户直接用 server 返回的 it.avatar。
+                // v1.3.4 PR 15 ★ 头像 cache busting — 后端 avatar
+                // 落盘到固定 URL (/uploads/avatars/{id}.{ext}),重新
+                // 上传会**覆盖**文件而不改 URL。即使响应头是
+                // Cache-Control: no-store,部分浏览器(尤其 Safari)
+                // 内存 cache 仍会用旧图。给 <img> 加 ?_={ts} 强制
+                // 重抓,与 profile.html applyAvatarToElement 同款
+                // 套路(那里已有 bust=true 默认)。
+                var rowAvatar = it.avatar
+                    || (isMe && me && me.avatar ? String(me.avatar) : null);
+                if (rowAvatar) {
+                    rowAvatar = rowAvatar + '?_=' + Date.now();
+                }
                 var row = el('div', {
                     class: 'lc-rank-row' + (isMe ? ' lc-rank-row--me' : ''),
                     role: 'row',
@@ -564,22 +603,33 @@
         }
 
         window.addEventListener('DOMContentLoaded', function () {
-            litecode.boot.shell({ title: 'LiteCode · 排行榜' });
-            readUrl();
-            // v1.3.4 PR 4 — Retry button must invalidate the cache
-            // so the user gets a fresh fetch (otherwise the
-            // 60s read-through cache re-serves the stale payload
-            // that just produced the error).
-            $('retry-btn').addEventListener('click', function () {
-                litecode.api.invalidateCache('stats');
+            // v1.3.4 PR 13 ★ — 等 boot.shell() 完成后再首屏 load(),
+            // 保证 litecode.api.auth.currentUser 在 renderRows() 时
+            // 已 hydrate,「我」标首屏不丢。再加 renderRows() 内部
+            // sessionStorage 兜底,双保险。
+            var boot = litecode.boot.shell({ title: 'LiteCode · 排行榜' });
+            var start = function () {
+                readUrl();
+                // v1.3.4 PR 4 — Retry button must invalidate the cache
+                // so the user gets a fresh fetch (otherwise the
+                // 60s read-through cache re-serves the stale payload
+                // that just produced the error).
+                $('retry-btn').addEventListener('click', function () {
+                    litecode.api.invalidateCache('stats');
+                    load();
+                });
+                window.addEventListener('popstate', function () { readUrl(); load(true); });
+                // v1.3.4 PR 4 — boot.shell is fire-and-forget (nav
+                // renders from cache immediately, refreshes in the
+                // background). Now wrapped in .then so first paint
+                // sees currentUser.
                 load();
-            });
-            window.addEventListener('popstate', function () { readUrl(); load(true); });
-            // v1.3.4 PR 4 — boot.shell is fire-and-forget (nav
-            // renders from cache immediately, refreshes in the
-            // background). Keeping it off the critical path drops
-            // one event-loop tick before the first fetch starts.
-            load();
+            };
+            if (boot && typeof boot.then === 'function') {
+                boot.then(start, start);
+            } else {
+                start();
+            }
         });
     })();
     </script>

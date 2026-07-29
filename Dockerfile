@@ -114,10 +114,24 @@ COPY web/ /app/web/
 # v1.3.4 PR 9 ★ 也建 /app/uploads(头像上传落点),named volume
 # litecode-uploads 挂到这里,提前 chown 给 litecode 用户避免
 # runtime Permission denied。
+#
+# v1.3.4 PR 13 ★ 也建 /tmp/litecode-judge(web→judge 任务目录共享
+# 卷挂载点)。该路径在 /tmp 下,不在 chown -R /app 覆盖范围内;
+# v1.2.50 引入此卷时 web 容器还跑 root,后切到 litecode(uid=1000)
+# 只 chown 了 /app → /tmp/litecode-judge 保持 root:root 0755,
+# create_directories 抛 Permission denied。Dockerfile 这一行负责
+# 新部署直接生效(空 volume + 镜像目录所有权继承);entrypoint.sh
+# 额外兜底自愈老部署的脏 volume。
 RUN groupadd -g 1000 litecode \
     && useradd  -u 1000 -g litecode -m -s /bin/bash litecode \
-    && mkdir -p /app/logs /app/uploads \
-    && chown -R litecode:litecode /app
+    && mkdir -p /app/logs /app/uploads /tmp/litecode-judge \
+    && chown -R litecode:litecode /app /tmp/litecode-judge
+
+# v1.3.4 PR 13: entrypoint 兜底修复 named volume 所有权（详见
+# docker-entrypoint.sh 注释）。在 tini 之前插入,确保 tini 仍是
+# PID 1 接收信号。
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 USER litecode
 WORKDIR /app
@@ -128,7 +142,7 @@ ENV SERVER_HOST=0.0.0.0 \
 EXPOSE 8080
 
 # tini 负责信号转发，litecode 接收 SIGTERM 优雅退出
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["/usr/local/bin/litecode_server"]
 
 # 健康检查（SPEC §16.1）

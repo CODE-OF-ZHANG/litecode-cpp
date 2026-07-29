@@ -14,8 +14,8 @@
     <meta name="theme-color" content="#F8F6F0">
     <title>LiteCode · 个人主页</title>
     <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. v1.3.4 默认 cyber dark。 -->
-    <script src="/js/theme-boot.js?v=1.3.4"></script>
-    <link rel="stylesheet" href="/css/style.css?v=1.3.4">
+    <script src="/js/theme-boot.js?v=1.3.5"></script>
+    <link rel="stylesheet" href="/css/style.css?v=1.3.5">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23F8F6F0'/%3E%3Cpath d='M22 18 L42 32 L22 46' stroke='%234D7C5A' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 </head>
 <body class="lc-cyber">
@@ -82,6 +82,14 @@
       url(#kpi-grad-green),定义在这里集中管理。css/style.css §新加
       的 .lc-svg-defs class 让这个 svg 在屏幕外不占布局。
     -->
+    <!--
+      v1.3.4 PR 16 ★ KPI visual SVG defs
+      4 类装饰 SVG(multi-bar donut / radial / sparkline / pct-stack)
+      在 kpiCard() 内部用 createElementNS(因 <svg> namespace) 动态
+      创建,这里只放共享 linearGradient 复用。
+      kpiCardVisual() 直接吐字符串 SVG(走 innerHTML),样式靠
+      .lc-v4-kpi-card__visual + 4 个 --visual-* modifier。
+    -->
     <svg class="lc-svg-defs" aria-hidden="true">
         <defs>
             <linearGradient id="kpi-grad-cyan" x1="0" y1="0" x2="1" y2="1">
@@ -91,6 +99,21 @@
             <linearGradient id="kpi-grad-green" x1="0" y1="0" x2="1" y2="1">
                 <stop offset="0%"  stop-color="#34d399" />
                 <stop offset="100%" stop-color="#22d3ee" />
+            </linearGradient>
+            <!-- PR16 ★ 火花图柱状峰值渐变(浅色 navy → cyan,深色 cyan glow) -->
+            <linearGradient id="kpi-spark-peak" x1="0" y1="1" x2="0" y2="0">
+                <stop offset="0%"  stop-color="#22d3ee" />
+                <stop offset="100%" stop-color="#38BDF8" />
+            </linearGradient>
+            <!-- PR16 ★ pct-stack 3 色 mini bar -->
+            <linearGradient id="kpi-stack-easy" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%"  stop-color="#34d399" /><stop offset="100%" stop-color="#2F6F44" />
+            </linearGradient>
+            <linearGradient id="kpi-stack-medium" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%"  stop-color="#FBBF24" /><stop offset="100%" stop-color="#8C5A1F" />
+            </linearGradient>
+            <linearGradient id="kpi-stack-hard" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%"  stop-color="#F87171" /><stop offset="100%" stop-color="#8C2F1F" />
             </linearGradient>
         </defs>
     </svg>
@@ -567,33 +590,204 @@
             ]);
         }
 
-        // kpiCard — v1.3.4 PR 11 ★ 仪表盘大卡片
-        // 可选带 SVG 进度环 (ringPct 0..1),无 ring 时只显示大数字。
-        // 替代原来 4 个 lc-stat-card "小盒子",撑起页面空间。
-        function kpiCard(value, label, sub, ringPct, ringColor) {
-            var ring = null;
-            if (ringPct != null && isFinite(ringPct)) {
-                var pct = Math.max(0, Math.min(1, ringPct));
-                var C = 2 * Math.PI * 40;          // r=40,周长≈251.33
-                var dash = (pct * C).toFixed(2);
-                var gradId = ringColor === 'green' ? 'kpi-grad-green' : 'kpi-grad-cyan';
-                ring = el('div', { class: 'lc-v4-kpi-card__ring' + (ringColor === 'green' ? ' lc-v4-kpi-card__ring--green' : '') }, [
-                    el('svg', { viewBox: '0 0 88 88' }, [
-                        el('circle', { class: 'bg', cx: '44', cy: '44', r: '40' }),
-                        el('circle', { class: 'fg', cx: '44', cy: '44', r: '40',
-                            'stroke-dasharray': dash + ' ' + C.toFixed(2),
-                            'stroke-dashoffset': '0' }),
-                    ]),
-                ]);
+        // kpiCard — v1.3.4 PR 19 ★ Dashboard 紧凑风
+        // ──────────────────────────────────────────────
+        // 替代 PR 11/16/18 三轮迭代的"ring + 大块 decor + body"框架。
+        // 用户报"竖排 + 排列丑 + 看不懂",新设计:
+        //   · 大数字(36px mono) + label(11px uppercase) + sub(12px muted)
+        //     三行紧凑堆叠,数字本身是主角
+        //   · 装饰 SVG 缩到 90×60 右上角,视觉权重 ≤12%,不抢戏
+        //   · ring 进度环彻底移除(数字本身就是进度 — 如 "5/82")
+        // 4 类装饰保持多样(radial/sparkline/donut/pct-stack),
+        // 但每类都是 ≤90×60 mini 版,数据维度跟卡语义对齐:
+        //   · 已解决 5/82         → radial  (solved 难度分布)
+        //   · 通过率 50%          → sparkline (近 7 天 AC 节奏)
+        //   · 总提交 6            → donut   (4 段状态分布)
+        //   · 已尝试 5            → pct-stack(已尝试难度比例)
+        function kpiCard(value, label, sub, decor, decorData) {
+            var visual = null;
+            if (decor) {
+                visual = el('div', {
+                    class: 'lc-v4-kpi-card__visual lc-v4-kpi-card__visual--' + decor,
+                    'aria-hidden': 'true',
+                });
+                visual.innerHTML = kpiCardVisual(decor, decorData);
             }
-            return el('div', { class: 'lc-v4-kpi-card' }, [
-                ring,
-                el('div', { class: 'lc-v4-kpi-card__body' }, [
-                    el('div', { class: 'lc-v4-kpi-card__label', text: label }),
-                    el('div', { class: 'lc-v4-kpi-card__value', text: value }),
-                    sub ? el('div', { class: 'lc-v4-kpi-card__sub', text: sub }) : null,
-                ]),
+            return el('div', {
+                class: 'lc-v4-kpi-card'
+                    + (visual ? ' lc-v4-kpi-card--decor' : ''),
+            }, [
+                el('div', { class: 'lc-v4-kpi-card__label', text: label }),
+                el('div', { class: 'lc-v4-kpi-card__value', text: value }),
+                sub ? el('div', { class: 'lc-v4-kpi-card__sub', text: sub }) : null,
+                visual,
             ]);
+        }
+
+        // kpiCardVisual — 4 类 mini SVG visual(PR 19,viewBox 90×60)
+        //   decor:  'radial'    6 段 mini bars(简/中/难 3 色,数据:{byDiff})
+        //           'sparkline' 7 折线 + fill area(数据:{values})
+        //           'donut'      56×56 mini 4 段圆环(数据:{pass,fail,warn,info})
+        //           'pct-stack'  28px 高 横向 mini bar(数据:{easy,medium,hard})
+        //
+        // 设计要点:
+        //   · 纯几何 / 纯色块,无任何文字(数字已在卡 body 显示)
+        //   · viewBox 90×60 = 卡右上角区域,SVG 自然 fit 无变形
+        //   · 深色模式走 --lc-cyber-* token + drop-shadow 自发光
+        function kpiCardVisual(decor, data) {
+            data = data || {};
+            var maxFn = function (arr) {
+                var m = 0; for (var i = 0; i < arr.length; i++) if (arr[i] > m) m = arr[i];
+                return m || 1;
+            };
+
+            // ── (a) radial — 6 段 mini bars(简/中/难 3 色 + 3 灰底) ──
+            if (decor === 'radial') {
+                var byDiff = data.byDiff || { easy: 0, medium: 0, hard: 0, unknown: 0 };
+                // 简/中/难 + 0 占位 = 4 列(全空也铺底,看着稳定)
+                var vals = [
+                    { v: byDiff.easy    || 0, cls: 'seg-fg-easy'   },
+                    { v: byDiff.medium  || 0, cls: 'seg-fg-medium' },
+                    { v: byDiff.hard    || 0, cls: 'seg-fg-hard'   },
+                    { v: byDiff.unknown || 0, cls: 'seg-fg-other'  },
+                ];
+                var m = maxFn(vals.map(function (x) { return x.v; }));
+                var W = 90, H = 60, top = 6, bottom = 56;
+                var usable = bottom - top;
+                var colW = 12, gap = 4;
+                var startX = (W - colW * 4 - gap * 3) / 2;
+                var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '">';
+                for (var i = 0; i < vals.length; i++) {
+                    var h = Math.max(2, (vals[i].v / m) * usable);
+                    var x = startX + i * (colW + gap);
+                    var y = bottom - h;
+                    svg += '<rect class="seg-bg" x="' + x + '" y="' + top +
+                           '" width="' + colW + '" rx="2" height="' + usable + '"/>';
+                    svg += '<rect class="' + vals[i].cls + '" x="' + x + '" y="' + y +
+                           '" width="' + colW + '" rx="2" height="' + h + '"/>';
+                }
+                svg += '</svg>';
+                return svg;
+            }
+
+            // ── (b) sparkline — 7 点折线 + fill area ──
+            if (decor === 'sparkline') {
+                var vals2 = (data.values || []).slice(0, 7);
+                while (vals2.length < 7) vals2.unshift(0);
+                var m2 = maxFn(vals2);
+                var peakIdx = 0; for (var k2 = 1; k2 < vals2.length; k2++)
+                    if (vals2[k2] > vals2[peakIdx]) peakIdx = k2;
+                var W2 = 90, H2 = 60;
+                var top2 = 8, bottom2 = 50;
+                var usable2 = bottom2 - top2;
+                var n = vals2.length;
+                var stepX = (W2 - 4) / (n - 1);
+                var pts = [];
+                for (var b = 0; b < n; b++) {
+                    var h2 = Math.max(2, (vals2[b] / m2) * usable2);
+                    var x2 = 2 + b * stepX;
+                    var y2 = bottom2 - h2;
+                    pts.push({ x: x2.toFixed(2), y: y2.toFixed(2), v: vals2[b] });
+                }
+                var svg2 = '<svg viewBox="0 0 ' + W2 + ' ' + H2 + '">';
+                // fill area (折线下方 + 底边围成的多边形)
+                var fillPath = 'M ' + pts[0].x + ' ' + bottom2;
+                for (var p = 0; p < pts.length; p++) {
+                    fillPath += ' L ' + pts[p].x + ' ' + pts[p].y;
+                }
+                fillPath += ' L ' + pts[pts.length - 1].x + ' ' + bottom2 + ' Z';
+                svg2 += '<path class="fill" d="' + fillPath + '"/>';
+                // line stroke
+                var linePath = 'M ' + pts[0].x + ' ' + pts[0].y;
+                for (var p2 = 1; p2 < pts.length; p2++) {
+                    linePath += ' L ' + pts[p2].x + ' ' + pts[p2].y;
+                }
+                svg2 += '<path class="line" d="' + linePath + '"/>';
+                // 峰值点
+                if (vals2[peakIdx] > 0) {
+                    svg2 += '<circle class="dot peak" cx="' + pts[peakIdx].x +
+                            '" cy="' + pts[peakIdx].y + '" r="2.5"/>';
+                }
+                svg2 += '</svg>';
+                return svg2;
+            }
+
+            // ── (c) donut — mini 56×56 圆环(纯几何,0 文字) ──
+            if (decor === 'donut') {
+                var segs = [
+                    { v: data.pass || 0, cls: 'fg-pass' },
+                    { v: data.fail || 0, cls: 'fg-fail' },
+                    { v: data.warn || 0, cls: 'fg-warn' },
+                    { v: data.info || 0, cls: 'fg-info' },
+                ];
+                var sumD = segs.reduce(function (s, x) { return s + x.v; }, 0);
+                if (sumD === 0) segs = segs.map(function (x) { return { v: 1, cls: x.cls }; });
+                var sumD2 = segs.reduce(function (s, x) { return s + x.v; }, 0);
+                var W3 = 90, H3 = 60, cx = W3 / 2, cy = H3 / 2, R = 22;
+                var C3 = 2 * Math.PI * R;
+                var off = 0;
+                var svg3 = '<svg viewBox="0 0 ' + W3 + ' ' + H3 + '">';
+                svg3 += '<circle class="track" cx="' + cx + '" cy="' + cy + '" r="' + R + '"/>';
+                for (var s = 0; s < segs.length; s++) {
+                    var len = (segs[s].v / sumD2) * C3;
+                    var dash = len.toFixed(2) + ' ' + (C3 - len).toFixed(2);
+                    svg3 += '<circle class="' + segs[s].cls + '" cx="' + cx +
+                            '" cy="' + cy + '" r="' + R +
+                            '" stroke-dasharray="' + dash +
+                            '" stroke-dashoffset="' + ((C3 * 0.25) - off).toFixed(2) +
+                            '" transform="rotate(-90 ' + cx + ' ' + cy + ')"/>';
+                    off += len;
+                }
+                svg3 += '</svg>';
+                return svg3;
+            }
+
+            // ── (d) pct-stack — 28px 高 横向 mini bar(3 段比例) ──
+            // 紧凑比例条,无文字,色彩本身说明难度分布。Legend 在 sub 行。
+            if (decor === 'pct-stack') {
+                var easy   = data.easy   || 0;
+                var medium = data.medium || 0;
+                var hard   = data.hard   || 0;
+                var sumP = easy + medium + hard;
+                var W4 = 90, H4 = 60;
+                var Wbar = W4 - 4, Hbar = 10;
+                var Xbar = (W4 - Wbar) / 2;
+                var Ybar = (H4 - Hbar) / 2;
+                var svg4 = '<svg viewBox="0 0 ' + W4 + ' ' + H4 + '">';
+                // 背景轨道
+                svg4 += '<rect class="bg" x="' + Xbar + '" y="' + Ybar +
+                        '" width="' + Wbar + '" height="' + Hbar +
+                        '" rx="' + (Hbar / 2) + '"/>';
+                if (sumP > 0) {
+                    var wEasy   = easy   / sumP * Wbar;
+                    var wMedium = medium / sumP * Wbar;
+                    var wHard   = hard   / sumP * Wbar;
+                    var xCursor = Xbar;
+                    if (easy > 0) {
+                        svg4 += '<rect class="fg-easy" x="' + xCursor +
+                                '" y="' + Ybar + '" width="' + wEasy +
+                                '" height="' + Hbar + '" rx="' + (Hbar / 2) +
+                                '" ry="' + (Hbar / 2) + '"/>';
+                        xCursor += wEasy;
+                    }
+                    if (medium > 0) {
+                        svg4 += '<rect class="fg-medium" x="' + xCursor +
+                                '" y="' + Ybar + '" width="' + wMedium +
+                                '" height="' + Hbar + '"/>';
+                        xCursor += wMedium;
+                    }
+                    if (hard > 0) {
+                        svg4 += '<rect class="fg-hard" x="' + xCursor +
+                                '" y="' + Ybar + '" width="' + wHard +
+                                '" height="' + Hbar + '" rx="' + (Hbar / 2) +
+                                '" ry="' + (Hbar / 2) + '"/>';
+                    }
+                }
+                svg4 += '</svg>';
+                return svg4;
+            }
+
+            return '';
         }
 
         function barRow(label, count, denom, fillModifier) {
@@ -681,35 +875,66 @@
 
         function renderStats(stats, problemsTotal, diffTotals) {
             // v1.3.4 PR 11 ★ 4 张 KPI 仪表盘卡片(替代原来 4 个小盒子)
+            // v1.3.4 PR 16 ★:每张卡右下加 mini-visual SVG 装饰,4 类各
+            // 不重复。用户报"关键指标没图案,显得空"。每张卡的 visual
+            // 数据用 stats + 按当前订阅最新 submissions[] 算的衍生量,
+            // 即使数据少也不空白(各 decor 内部自动 zero-safe)。
             var grid = $('stat-grid');
             grid.textContent = '';
-            // 1) 已解决 — 带 ring(solvedCount / problemsTotal)
+
+            // decor 数据派生 ──────────────────────────────────────
+            // (1) 已解决按难度分布 → 4 类堆柱图
+            var byDiff = stats.byDifficultySolved || { easy: 0, medium: 0, hard: 0, unknown: 0 };
+
+            // (2) 最近 7 天每天的 AC / 总提交比 → sparkline
+            var recent7 = sparkLast7Days(_lastSubs || []);
+            var sparkVals = recent7.map(function (x) {
+                return x.total > 0 ? (x.ac / x.total) : 0;
+            });
+
+            // (3) 提交状态 4 段圆环(pass/fail/warn/info)
+            var donutSeg = classifyStatusForDonut(stats.byStatus || {});
+
+            // (4) 已解决按难度 3 段 pct-stack
+            var pctStack = {
+                easy:   byDiff.easy   || 0,
+                medium: byDiff.medium || 0,
+                hard:   byDiff.hard   || 0,
+            };
+
+            // 1) 已解决 — radial(按难度堆柱 mini)
             grid.appendChild(kpiCard(
                 stats.solvedCount + ' / ' + problemsTotal,
                 '已解决题目',
                 problemsTotal > 0 ? '覆盖率 ' + formatPercent(pct(stats.solvedCount, problemsTotal)) : '',
-                problemsTotal > 0 ? pct(stats.solvedCount, problemsTotal) : 0,
-                'cyan'
+                'radial',
+                { byDiff: byDiff }
             ));
-            // 2) 通过率 — 带 ring(acceptanceRate 0..1)
+            // 2) 通过率 — sparkline(近 7 天 AC 节奏)
             grid.appendChild(kpiCard(
                 formatPercent(stats.acceptanceRate),
                 '提交通过率',
                 stats.acSubmissions + ' AC / ' + stats.totalSubmissions + ' 提交',
-                stats.acceptanceRate || 0,
-                'green'
+                'sparkline',
+                { values: sparkVals }
             ));
-            // 3) 总提交数 — 无 ring
+            // 3) 总提交数 — donut(状态 4 段分布 mini)
             grid.appendChild(kpiCard(
                 String(stats.totalSubmissions),
                 '总提交数',
-                '全部判题记录'
+                '全部判题记录',
+                'donut',
+                donutSeg
             ));
-            // 4) 尝试过的题目 — 无 ring
+            // 4) 尝试过的题目 — pct-stack(3 段比例 mini)
             grid.appendChild(kpiCard(
                 String(stats.attemptedCount),
                 '尝试过的题目',
-                '提交过至少一次'
+                '已尝试 · 简 ' + (byDiff.easy || 0) +
+                ' · 中 ' + (byDiff.medium || 0) +
+                ' · 难 ' + (byDiff.hard || 0),
+                'pct-stack',
+                pctStack
             ));
 
             // Difficulty breakdown.
@@ -890,6 +1115,51 @@
         var currentUser = null;
         var target = null;
 
+        // v1.3.4 PR 16 ★ 给 KPI sparkline 用 — 在 loadStats 时写一份当前
+        // subs 引用,kpiCard 调用时即使 stats 已经聚合完也能拿回原始
+        // 行算"近 7 天 AC 节奏"。
+        var _lastSubs = [];
+
+        // sparkLast7Days(subs) → [{date, total, ac}] 长度 7。
+        // 按 created_at(YYYY-MM-DD HH:MM:SS)分桶,key=date(YYYY-MM-DD),
+        // 只回滚 6 整天 + 今天共 7 个 bucket。
+        function sparkLast7Days(subs) {
+            var buckets = {};
+            for (var i = 0; i < 7; i++) {
+                var d = new Date(Date.now() - i * 86400000);
+                buckets[d.toISOString().slice(0, 10)] = { total: 0, ac: 0 };
+            }
+            (subs || []).forEach(function (s) {
+                if (!s || typeof s.created_at !== 'string') return;
+                var d = s.created_at.slice(0, 10);
+                var b = buckets[d];
+                if (!b) return;
+                b.total++;
+                if (s.status === 'ac') b.ac++;
+            });
+            // 反向成"6 天前 → 今天"顺序
+            var out = [];
+            var keys = Object.keys(buckets).sort();
+            for (var k = 0; k < keys.length; k++) out.push(buckets[keys[k]]);
+            return out;
+        }
+
+        // classifyStatusForDonut(byStatus) → {pass, fail, warn, info}
+        // pass:ac
+        // fail:wa+re+se  (答案错误 / 运行错 / 系统错)
+        // warn:tle+ole+pe+ce  (超时 / 输出超限 / 格式错 / 编译错)
+        // info:mle  (内存超限 — 唯一 violet)
+        function classifyStatusForDonut(byStatus) {
+            byStatus = byStatus || {};
+            return {
+                pass: byStatus.ac   || 0,
+                fail: (byStatus.wa  || 0) + (byStatus.re || 0) + (byStatus.se || 0),
+                warn: (byStatus.tle || 0) + (byStatus.ole|| 0) +
+                      (byStatus.pe  || 0) + (byStatus.ce || 0),
+                info: byStatus.mle  || 0,
+            };
+        }
+
         function loadStats() {
             showState('loading');
             $('page-subtitle').textContent = '正在加载做题统计…';
@@ -909,6 +1179,8 @@
                 var probResult = results[1];
                 var meta = buildProblemMeta(probResult.items);
                 var stats = computeStats(subsResult.items, meta.map);
+                // v1.3.4 PR 16 ★ 给 KPI sparkline 用 — 缓存最新全量
+                _lastSubs = subsResult.items || [];
 
                 renderHeader(currentUser);
                 renderStats(stats, probResult.total, meta.diffTotals);
@@ -929,6 +1201,22 @@
                 $('page-subtitle').textContent = currentUser.username
                     ? '@' + currentUser.username + ' 的做题统计' : '';
                 showState('content');
+
+                // v1.3.4 PR 16 ★ — profile.html 的 #profile-content
+                // 是 hidden=true 起手,DOMContentLoaded 时 mouse-particles.js
+                // ResizeObserver 看不见 0×0 容器 → 粒子系统未初始化。
+                // 等到 showState('content') 把容器变 visible,但 ResizeObserver
+                // 在 hidden→visible 这一帧不一定火。手动 trigger 一次
+                // 强制 mouse-particles 重新 discover+measure+init,
+                // 让"后深色模式也要有 Canvas 粒子"在 profile 页
+                // 也 work。同主题切换时也强制 rebuild 一次。
+                try {
+                    if (window.litecode && window.litecode.particles
+                        && typeof window.litecode.particles.start === 'function') {
+                        window.litecode.particles.stop();
+                        window.litecode.particles.start();
+                    }
+                } catch (_) { /* 静态场景 no-op,不影响主流程 */ }
             });
         }
 
@@ -1276,6 +1564,20 @@
                                 'litecode:user',
                                 JSON.stringify(cachedUser)); } catch (_) {}
                         }
+
+                        // 4) v1.3.4 PR 15 ★ 头像改完后立刻清掉排行榜
+                        //    cache —— /stats/ranking 是 read-through
+                        //    60s sessionStorage 缓存,不清的话用户改完
+                        //    头像直接进 /ranking.html 会看到旧 avatar
+                        //    URL(因为上次拉过的 response 还在 cache 里),
+                        //    报告"admin 头像改了排行榜没变"就是这条路径。
+                        //    现在的 busting(?_=Date.now())只在 ranking
+                        //    端帮用户拿到新图,但 response 里的 it.avatar
+                        //    仍是旧字符串(下次其他用户看自己 admin 行
+                        //    才会用到 me.avatar 兜底),从源头清掉 cache
+                        //    让下一次 fetch 拿到新 URL 是根治。
+                        try { litecode.api.invalidateCache('stats'); }
+                        catch (_) { /* 同 tag 下 cache 不存在也无害 */ }
                     }
                     showEditMsg('edit-profile-msg', '已保存', 'success');
                     btn.disabled = false;
@@ -1373,8 +1675,10 @@
     })();
     </script>
 
-    <!-- v1.3.4 PR 11 ★ 鼠标粒子层(profile 已有 mouse-deco.js,只补 canvas + particles) -->
+    <!-- v1.3.4 PR 11 ★ 鼠标粒子层(profile 已有 mouse-deco.js,
+         只补 canvas。mouse-particles.js 已在本文件 line 364 加载;
+         之前在此处二次重复加载,两套 IIFE 互相 clearRect 让粒子
+         看起来消失 — v1.3.4 PR13 ★ 已移除重复 script tag。) -->
     <canvas id="lc-particles-canvas" aria-hidden="true"></canvas>
-    <script src="/js/mouse-particles.js?v=1.3.5" defer></script>
 </body>
 </html>

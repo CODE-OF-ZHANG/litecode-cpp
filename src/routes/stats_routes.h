@@ -483,7 +483,20 @@ struct LeaderboardRow {
     std::string        role;
     int                solved_count      = 0;
     int                submission_count  = 0;
+    // v1.3.4 PR 13 ★ accepted_count — total AC submissions on non
+    // deleted problems (NOT distinct problems; solved_count is the
+    // distinct-problem one). Front-end renders "X / Y" under the
+    // rate cell where X = accepted_count and Y = submission_count.
+    // Adding the field fixes the bug where X was always 0 because
+    // serialize_leaderboard_row didn't emit it.
+    int                accepted_count    = 0;
     double             acceptance_rate   = 0.0;
+    // v1.3.4 PR 14 ★ avatar — user 头像 URL(/uploads/avatars/N.ext),
+    // nullopt 时前端 fallback 到首字母圈。原先前端注释说后端"故意
+    // 不返回",但用户实测报"排行榜看不见 zhangxu 换了头像"——ranking
+    // 是公开页面,头像只用于展示不构成泄露(其他 user info 已经返回),
+    // 所以放开。
+    std::optional<std::string> avatar;
 };
 
 // kLeaderboardDefaultLimit — SPEC §5.4 "默认 100 名". Surfaced as a
@@ -561,7 +574,9 @@ inline std::vector<LeaderboardRow> list_leaderboard(
         mysqlx::SqlResult rs = conn.execute(
             "SELECT u.id, u.username, u.role, "
             "       COALESCE(agg.solved_count, 0), "
-            "       COALESCE(agg.submission_count, 0) "
+            "       COALESCE(agg.submission_count, 0), "
+            "       COALESCE(agg.accepted_count, 0), "
+            "       u.avatar "
             "FROM users u "
             "LEFT JOIN ( "
             "  SELECT s.user_id, "
@@ -571,7 +586,11 @@ inline std::vector<LeaderboardRow> list_leaderboard(
             "           AS solved_count, "
             "         COUNT(CASE WHEN p.is_deleted = FALSE "
             "                    THEN 1 END) "
-            "           AS submission_count "
+            "           AS submission_count, "
+            "         COUNT(CASE WHEN s.status = 'ac' "
+            "                    AND p.is_deleted = FALSE "
+            "                    THEN 1 END) "
+            "           AS accepted_count "
             "  FROM submissions s "
             "  LEFT JOIN problems p ON p.id = s.problem_id "
             "  GROUP BY s.user_id "
@@ -590,6 +609,20 @@ inline std::vector<LeaderboardRow> list_leaderboard(
                 r.role             = row[2].get<std::string>();
                 r.solved_count     = static_cast<int>(row[3].get<std::int64_t>());
                 r.submission_count = static_cast<int>(row[4].get<std::int64_t>());
+                r.accepted_count   = static_cast<int>(row[5].get<std::int64_t>());
+                // v1.3.4 PR 14 ★ avatar — u.avatar 是 nullable 列,
+                // mysqlx::Value 没有 get<optional<string>> 实例化,
+                // 走 try/catch 兼容 NULL:get<std::string>() 抛
+                // mysqlx::Error(NULL) 时回退到 nullopt。
+                try {
+                    if (!row[6].isNull()) {
+                        r.avatar = row[6].get<std::string>();
+                    } else {
+                        r.avatar = std::nullopt;
+                    }
+                } catch (...) {
+                    r.avatar = std::nullopt;
+                }
             } catch (const std::exception&) {
                 // Skip individual malformed rows so one bad row
                 // doesn't tank the whole page.
@@ -771,6 +804,7 @@ inline nlohmann::json serialize_user_meta(
 //        "user":  { "id": 42, "username": "alice", "role": "user" },
 //        "solved_count":     25,
 //        "submission_count": 80,
+//        "accepted_count":   35,
 //        "acceptance_rate":  31.25
 //      }
 //
@@ -784,15 +818,27 @@ inline nlohmann::json serialize_user_meta(
 
 inline nlohmann::json serialize_leaderboard_row(
         const litecode::stats_routes::detail::LeaderboardRow& r) {
+    // v1.3.4 PR 14 ★ avatar — 公开排名页面附带用户头像 URL,前端
+    // `<img>` 渲染。前后端都不写匿名占位 URL,直接 nullopt → JSON
+    // null → 前端 fallback 到首字母圆。原文"deliberately OMIT"的
+    // 隐私考量已经过权衡放开——排行榜本身就把 username 公开,头像
+    // 是同等级展示信息(用户在 profile 页也公开),不是新泄漏面。
+    nlohmann::json user_block = nlohmann::json{
+        {"id",       r.user_id},
+        {"username", r.username},
+        {"role",     r.role},
+    };
+    if (r.avatar.has_value()) {
+        user_block["avatar"] = *r.avatar;
+    } else {
+        user_block["avatar"] = nullptr;
+    }
     return nlohmann::json{
         {"rank",             0 /* filled in by handler */},
-        {"user",             nlohmann::json{
-                                  {"id",       r.user_id},
-                                  {"username", r.username},
-                                  {"role",     r.role},
-                              }},
+        {"user",             user_block},
         {"solved_count",     r.solved_count},
         {"submission_count", r.submission_count},
+        {"accepted_count",   r.accepted_count},
         {"acceptance_rate",  r.acceptance_rate},
     };
 }

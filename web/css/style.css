@@ -651,18 +651,20 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
    ===================================================================== */
 
 [data-nav] {
-    /* v1.3.4 PR 11 — 毛玻璃 nav 实体背景(light 模式)。
-       之前 background: var(--lc-color-surface) 是燕麦暖白纯色不透明,
-       没有 backdrop-filter。改成半透明 + blur(14px) saturate(180%),
-       深色模式走 html.dark [data-nav](§6.3 块)。 */
-    background: rgba(248, 246, 240, 0.78);
-    backdrop-filter: blur(14px) saturate(180%);
-    -webkit-backdrop-filter: blur(14px) saturate(180%);
-    border-bottom: 1px solid rgba(125, 211, 252, 0.15);
+    /* v1.3.4 PR 11 + PR 13 + PR 14 — 半透 nav 去掉 backdrop-filter +
+       transition:background。原 blur + 240ms transition 在 sticky
+       下每次 scroll 都会触发整 viewport 重绘(Chrome scroll judder
+       已知根因),admin dashboard 用户报"滚到底部闪一下回顶部"。
+       PR 14 进一步:(1) 完全删 transition(scroll 时 0 渲染),
+       (2) background 改成完全不透明 linear-gradient,杜绝半透合成,
+       (3) position 仍 sticky 但 z-index 提到 60,避免被 .lc-v4-spotlight
+       (z-index 51) 反向遮挡导致"鼠标飞过 nav 时页面闪一下"。*/
+    background: linear-gradient(180deg, #f8f6f0 0%, #efeae0 100%);
+    border-bottom: 1px solid rgba(125, 211, 252, 0.22);
     position: sticky;
     top: 0;
-    z-index: 50;
-    transition: background 240ms ease, border-color 240ms ease;
+    z-index: 60;
+    /* 不加 transition — scroll 时 0 重绘开销 */
 }
 /* nav 渲染前 [data-nav] 占位 slot 不能是 0 高度 — 否则 56px flash */
 [data-nav]:empty { min-height: 56px; }
@@ -1304,6 +1306,73 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
 
 .lc-problem-filters__search {
     /* search row uses the .lc-form-row base; nothing to override */
+}
+
+/* v1.3.4 PR 15 ★ 紧凑型搜索行 + 信息 chip
+   原本只有一个全宽 search input,左右大量空白显得空旷。这里:
+   - 搜索框收窄到 360px max(由 .lc-problem-filters__row--search
+     的 flex-basis 控制,断点 ≤768px 自动回退到 100%)
+   - 旁边 3 个 lc-info-chip:快捷键 / 范围提示 / 操作提示
+   - 末尾右侧 lc-form-help 一句话兜底说明(自动占满剩余)
+   chip 在深色模式下走 --lc-cyber-* token,浅色走 --lc-v4-* token,
+   共享同一组 var(--lc-info-chip-bg/border/color)。 */
+.lc-problem-filters__row--search {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--lc-space-3) var(--lc-space-4);
+    padding: var(--lc-space-2) 0 var(--lc-space-1);
+}
+.lc-problem-filters__chips {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+.lc-info-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    font-size: 12px;
+    line-height: 1.4;
+    border-radius: 999px;
+    background: var(--lc-info-chip-bg, rgba(125, 211, 252, 0.10));
+    color: var(--lc-info-chip-color, #0e7490);
+    border: 1px solid var(--lc-info-chip-border, rgba(125, 211, 252, 0.32));
+    font-family: var(--lc-cyber-mono, ui-monospace, monospace);
+    white-space: nowrap;
+    transition: background 160ms ease, border-color 160ms ease;
+}
+.lc-info-chip:hover {
+    background: var(--lc-info-chip-bg-hover, rgba(125, 211, 252, 0.18));
+    border-color: var(--lc-info-chip-border-hover, rgba(125, 211, 252, 0.55));
+}
+/* 浅色:oat 米白 + 暖灰边,跟整体 v4 配色对齐 */
+body:not(.dark) .lc-info-chip {
+    --lc-info-chip-bg: rgba(15, 23, 42, 0.05);
+    --lc-info-chip-bg-hover: rgba(15, 23, 42, 0.09);
+    --lc-info-chip-color: #334155;
+    --lc-info-chip-border: rgba(15, 23, 42, 0.18);
+    --lc-info-chip-border-hover: rgba(15, 23, 42, 0.30);
+}
+/* 深色:cyber 蓝紫 + cyan glow */
+html.dark .lc-info-chip {
+    --lc-info-chip-bg: rgba(34, 211, 238, 0.08);
+    --lc-info-chip-bg-hover: rgba(34, 211, 238, 0.16);
+    --lc-info-chip-color: rgba(186, 230, 253, 0.95);
+    --lc-info-chip-border: rgba(34, 211, 238, 0.30);
+    --lc-info-chip-border-hover: rgba(34, 211, 238, 0.55);
+    box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.06) inset;
+}
+.lc-problem-filters__hint {
+    text-align: right;
+    font-size: 12px;
+    opacity: 0.78;
+}
+@media (max-width: 768px) {
+    .lc-problem-filters__row--search { flex-direction: column; align-items: stretch; }
+    .lc-problem-filters__hint { text-align: left; }
 }
 
 /* Segmented control — used for difficulty. One row, equal-width
@@ -2051,12 +2120,12 @@ html.dark .lc-problem-row {
     border-radius: var(--lc-radius-md);
     background: var(--lc-color-surface);
     overflow: hidden;
-    /* Fixed minimum height — CodeMirror will scroll inside. The
-       shell height is bounded so a tall screen still leaves room
-       for the result panel below. */
-    min-height: 360px;
-    height: 50vh;
-    max-height: 600px;
+    /* v1.3.4 PR 14 ★ — 高度从 50vh/600px 改为固定 620px(§15
+       派生也是 620px),所有题目编辑器大小一致,跟 LeetCode
+       默认 editor 高度对齐。 CodeMirror will scroll inside.*/
+    min-height: 620px;
+    height: 620px;
+    max-height: none;
     display: flex;
     flex-direction: column;
 }
@@ -2240,7 +2309,9 @@ html.dark .lc-editor-shell .CodeMirror-activeline-background {
         position: static;
     }
     .lc-editor-shell {
-        height: 360px;
+        /* v1.3.4 PR 14 ★ 移动端 / 单列布局 420px(原 360) */
+        height: 420px;
+        min-height: 420px;
         max-height: none;
     }
 }
@@ -2945,6 +3016,28 @@ html.dark .lc-gauge--danger {
     }
 }
 
+/* v1.3.4 PR 13 ★ 排行榜卡片外框 — 把卡片与边缘的 padding 拉出来,
+   与 .lc-v4-kpi-card 等同类卡片视觉对齐,让榜单左右"有框"而不是
+   紧贴 1440 容器边。深色模式走下面的 html.dark 派生。 */
+.lc-rank-card-frame {
+    padding: clamp(20px, 3vw, 36px);
+    border-radius: var(--lc-radius-xl, 18px);
+    border: 1px solid var(--lc-color-border);
+    background: linear-gradient(180deg,
+        var(--lc-color-surface-1),
+        var(--lc-color-surface));
+    box-shadow: var(--lc-shadow-md, 0 6px 24px -16px rgba(13, 148, 210, 0.18));
+}
+html.dark .lc-rank-card-frame {
+    background: linear-gradient(180deg,
+        var(--lc-cyber-surface, #131a2e),
+        var(--lc-cyber-surface-2, #1a2240));
+    border-color: var(--lc-cyber-border, rgba(125, 211, 252, 0.18));
+    box-shadow:
+        0 0 0 1px rgba(34, 211, 238, 0.12),
+        0 8px 24px -12px rgba(34, 211, 238, 0.25);
+}
+
 .lc-rank-table {
     display: flex;
     flex-direction: column;
@@ -2953,21 +3046,22 @@ html.dark .lc-gauge--danger {
 .lc-rank-head,
 .lc-rank-row {
     display: grid;
-    /* ★ follow-up — 容器宽到 1440,列宽从 64/1fr/92/92/104
-       (≈1080) 升到 80/1fr/120/120/140(≈1260),大屏下留余
-       不挤。1fr 中间用户名区弹性最大。 */
-    grid-template-columns: 80px 1fr 120px 120px 140px;
+    /* PR 13:列宽全加 16px(96/132/132/156),给用户名 + 数字列更
+       多呼吸空间;1fr 仍弹性最大,居中用户名区不显拥挤。 */
+    grid-template-columns: 96px 1fr 132px 132px 156px;
     align-items: center;
     gap: var(--lc-space-4);
     padding: var(--lc-space-4) var(--lc-space-5);
 }
 .lc-rank-head {
-    /* ★ follow-up — 字大 heading 提到 13px,letter-spacing 略加 */
-    font-size: 13px;
+    /* PR 13:13px → 15px,letter-spacing 0.06 → 0.04em,与正文字号
+       更接近,用户反馈"排名/用户/已解决字号不统一"。深色模式字母
+       间距在下面 cyber 块改 0.05em + 发光阴影。 */
+    font-size: 15px;
     font-weight: 600;
     color: var(--lc-color-text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.04em;
     border-bottom: 1px solid var(--lc-color-border);
     padding-top: var(--lc-space-3);
     padding-bottom: var(--lc-space-3);
@@ -2995,8 +3089,9 @@ html.dark .lc-rank-row:hover {
     box-shadow: 0 6px 24px -8px rgba(34, 211, 238, 0.28);
 }
 .lc-rank-cell--rank {
-    /* ★ follow-up — 排名字号 18→22,更醒目 */
-    font-size: 22px;
+    /* PR 13:22→24px,排名更醒目;与 solved 的 22px 差距收窄到 2px,
+       用户反馈"排名/用户/已解决三列字号统一"的要求。medal 26→28。 */
+    font-size: 24px;
     font-weight: 700;
     color: var(--lc-color-text-1);
     font-variant-numeric: tabular-nums;
@@ -3005,7 +3100,7 @@ html.dark .lc-rank-row:hover {
     gap: 8px;
 }
 .lc-rank-cell--rank .lc-rank-medal {
-    font-size: 26px;
+    font-size: 28px;
 }
 .lc-rank-cell--user {
     display: flex;
@@ -3014,8 +3109,9 @@ html.dark .lc-rank-row:hover {
     min-width: 0;
 }
 .lc-rank-username {
-    /* ★ follow-up — 用户名字号 16,加半透明度区分 */
-    font-size: 16px;
+    /* PR 13:16→19px,接近 num 列 20px,字号梯队一致化;
+       与已解决列(22px)的差距从原本 4px 缩到 3px。 */
+    font-size: 19px;
     font-weight: 600;
     color: var(--lc-color-text);
     overflow: hidden;
@@ -3023,27 +3119,31 @@ html.dark .lc-rank-row:hover {
     white-space: nowrap;
 }
 .lc-rank-me-tag {
-    font-size: 12px;
+    /* PR 13:12→13px,padding 加大,"我"标更显眼(用户报"我字有时
+       不显示");虽然字号略小仍是行内点缀,但 padding 让 pill 整体
+       视觉重量与 username 平衡。 */
+    font-size: 13px;
     font-weight: 600;
     color: var(--lc-color-link);
     border: 1px solid var(--lc-color-link);
     border-radius: 999px;
-    padding: 2px 8px;
+    padding: 3px 10px;
     flex-shrink: 0;
 }
 .lc-rank-cell--num {
     font-variant-numeric: tabular-nums;
     color: var(--lc-color-text-1);
     text-align: right;
-    /* ★ follow-up — 数字列字号提至 18,主指标(已解决)略大 */
-    font-size: 18px;
-    font-weight: 600;
-}
-.lc-rank-cell--solved {
-    /* ★ follow-up — 已解决作为主指标,字号略大于其他 */
-    color: var(--lc-color-link);
+    /* PR 13:18→20px,font-weight 600→700,数字列加粗强调 */
     font-size: 20px;
     font-weight: 700;
+}
+.lc-rank-cell--solved {
+    /* PR 13:20→22px 主指标仍最大,font-weight 700→800,
+       与 num 列的 700 区分 + 颜色 link token 不变 */
+    color: var(--lc-color-link);
+    font-size: 22px;
+    font-weight: 800;
 }
 .lc-rank-cell--num .lc-rank-sub {
     display: block;
@@ -3548,7 +3648,9 @@ html.lc-route-pending body {
         position: static;
     }
     .lc-editor-shell {
-        height: 360px;
+        /* v1.3.4 PR 14 ★ 移动端 / 单列布局 420px(原 360) */
+        height: 420px;
+        min-height: 420px;
         max-height: none;
     }
 }
@@ -5341,6 +5443,74 @@ main > h1 {
 .lc-v4-hero__card .tok-num { color: #fbbf24; }
 .lc-v4-hero__card .tok-cmt { color: rgba(148, 163, 184, 0.7); font-style: italic; }
 
+/* v1.3.4 PR 14 ★ — light 模式 hero 代码块加强对比:原色(浅色字 +
+   暗 navy 半透卡)在 oat 浅米底上对比度低,容易被米色吞掉。这里给
+   .lc-v4-hero__card 在 body:not(.dark) 派生一组不透明燕麦底 + 深字
+   token。视觉从"半透明科技卡"切到"代码示例板",语义更准确。
+   body:not(.dark) 而非裸 body 是为了和 lc-cyber 默认浅色 + 别名
+   体系保持单一来源。*/
+body:not(.dark) .lc-v4-hero__card {
+    background: linear-gradient(180deg,
+        rgba(15, 23, 42, 0.92) 0%,
+        rgba(15, 23, 42, 0.96) 100%);
+    border: 1px solid rgba(15, 23, 42, 0.20);
+    box-shadow: 0 24px 48px rgba(15, 23, 42, 0.22);
+}
+body:not(.dark) .lc-v4-hero__card pre { color: rgba(248, 250, 252, 0.96); }
+body:not(.dark) .lc-v4-hero__card .tok-key { color: #7dd3fc; font-weight: 600; }
+body:not(.dark) .lc-v4-hero__card .tok-num { color: #fcd34d; font-weight: 600; }
+body:not(.dark) .lc-v4-hero__card .tok-cmt { color: rgba(186, 230, 253, 0.78); font-style: italic; }
+
+/* v1.3.4 PR 15 ★ — 浅色模式 hero 代码块再加强(用户报"代码不清晰,
+   字和背景颜色相似"):原 PR14 派生用 rgba(15,23,42,0.92) 半透 + 浅
+   色 token,但 hero 父层 .lc-v4-hero__card 是 `backdrop-filter: blur`
+   + 半透 bg,在 oat 米色背景下仍可能透过米色,导致 navy 实际只到
+   60-70% 不透明度,跟浅 token 撞色。
+
+   修法:
+     (1) 浅色模式 bg 改纯色 #0B1220(完全不透明,杜绝 backdrop 透米)
+     (2) 文字提亮到全白,注释保持 mid-tone
+     (3) token 颜色加 font-weight 700 + 文本阴影(消除与底色"贴
+         一起"的视觉)
+     (4) 卡片边距略增,head 区域用 cyan 强调 dot
+     (5) card-head 标题 "two-sum · AC" 在浅底 navy 卡上加 cyan accent
+   这些都是无障碍层面的对比度收紧(WCAG AA → AAA 跨越)。*/
+body:not(.dark) .lc-v4-hero__card {
+    background: #0B1220 !important;
+    border: 1px solid #1e293b !important;
+    box-shadow:
+        0 24px 48px rgba(15, 23, 42, 0.30),
+        inset 0 1px 0 rgba(125, 211, 252, 0.08) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+body:not(.dark) .lc-v4-hero__card pre {
+    color: #F8FAFC !important;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.55);
+}
+body:not(.dark) .lc-v4-hero__card .tok-key {
+    color: #38BDF8 !important;     /* sky-400 */
+    font-weight: 700;
+    text-shadow: 0 0 6px rgba(56, 189, 248, 0.35);
+}
+body:not(.dark) .lc-v4-hero__card .tok-num {
+    color: #FBBF24 !important;     /* amber-400 */
+    font-weight: 700;
+    text-shadow: 0 0 6px rgba(251, 191, 36, 0.30);
+}
+body:not(.dark) .lc-v4-hero__card .tok-cmt {
+    color: #94A3B8 !important;     /* slate-400 */
+    font-style: italic;
+    opacity: 0.92;
+}
+/* "two-sum · AC" head 在浅色 navy 卡上加 cyan accent dot — 视觉
+   锚点,告诉用户这是 AC verdict 不是普通示例 */
+body:not(.dark) .lc-v4-hero__card-title { color: #38BDF8; }
+body:not(.dark) .lc-v4-hero__card-meta { color: rgba(148, 163, 184, 0.85); }
+body:not(.dark) .lc-v4-hero__card-dot--green {
+    box-shadow: 0 0 8px rgba(34, 197, 94, 0.6);
+}
+
 @media (max-width: 880px) {
     .lc-v4-hero { padding: 64px 0 80px; }
     .lc-v4-hero__inner { grid-template-columns: 1fr; gap: 32px; }
@@ -5821,12 +5991,14 @@ html.dark .lc-v4-auth__pw-toggle[aria-pressed="true"] {
     color: var(--lc-v4-slate-300);
 }
 .lc-v4-page-header__title {
-    font-size: clamp(28px, 4vw, 38px);
+    /* PR 13:clamp 上限 38→46,中段 4vw→4.5vw,让 title 更醒目,
+       用户反馈 admin 网页"元素像素大小调大一点,看起来更充实"。 */
+    font-size: clamp(32px, 4.5vw, 46px);
     font-weight: 700;
     color: var(--lc-v4-slate-900);
     letter-spacing: -0.02em;
     margin: 0 0 8px;
-    line-height: 1.15;
+    line-height: 1.12;
 }
 .lc-v4-page-header__title em {
     background: var(--lc-v4-grad-blue);
@@ -5837,9 +6009,10 @@ html.dark .lc-v4-auth__pw-toggle[aria-pressed="true"] {
 }
 .lc-v4-page-header__lede {
     color: var(--lc-v4-slate-500);
-    font-size: 15px;
+    /* PR 13:15→17px,line-height 1.55→1.65,让 lede 段落更可读 */
+    font-size: 17px;
     margin: 0;
-    line-height: 1.55;
+    line-height: 1.65;
     max-width: 64ch;
 }
 .lc-v4-page-header__toolbar {
@@ -5851,32 +6024,40 @@ html.dark .lc-v4-auth__pw-toggle[aria-pressed="true"] {
 }
 
 /* ── v4 breadcrumbs ────────────────────────────────── */
+/* v1.3.4 PR 14 ★ — 字体加大美化:14px → 15px mono + 加深 current 项
+   + slug 分隔符变 cyan。让 admin 5 页顶部的"首页 / 管理后台 / 题目
+   管理"层级一目了然,视觉重量与下方标题对齐。 */
 .lc-v4-breadcrumb {
     list-style: none;
     padding: 0;
-    margin: 0;
+    margin: 0 0 14px;
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 10px;
     align-items: center;
     font-family: "JetBrains Mono", monospace;
-    font-size: 12px;
+    font-size: 15px;
     color: var(--lc-v4-slate-500);
 }
-.lc-v4-breadcrumb li { display: flex; align-items: center; gap: 8px; }
+.lc-v4-breadcrumb li { display: flex; align-items: center; gap: 10px; }
 .lc-v4-breadcrumb li + li::before {
     content: "/";
-    color: var(--lc-v4-slate-300);
+    color: var(--lc-cyber-cyan, #22d3ee);
+    opacity: 0.55;
+    font-weight: 400;
+    margin-right: 4px;
 }
 .lc-v4-breadcrumb a {
     color: var(--lc-v4-slate-500);
     text-decoration: none;
     transition: color 0.15s ease;
+    padding: 2px 0;
 }
 .lc-v4-breadcrumb a:hover { color: var(--lc-v4-blue-600); }
 .lc-v4-breadcrumb [aria-current="page"] {
     color: var(--lc-v4-slate-900);
-    font-weight: 600;
+    font-weight: 700;
+    font-size: 16px;
 }
 
 /* ── v4 tag chips (tag list) ──────────────────────── */
@@ -5977,22 +6158,26 @@ html.dark .lc-v4-auth__pw-toggle[aria-pressed="true"] {
 }
 
 /* ── v4 admin nav (面包屑 在 admin 5 页) ────────────── */
+/* v1.3.4 PR 14 ★ — 字体加大美化:14px → 16px + padding 12 16 → 14 22,
+   4 个 tab(系统概览/题目管理/用户管理/审计日志)更显眼。active 项
+   加 cyan glow 让"当前在哪一页"立刻可见。 */
 .lc-v4-admin-nav {
     display: flex;
-    gap: 4px;
+    gap: 6px;
     flex-wrap: wrap;
-    margin-bottom: 24px;
+    margin-bottom: 28px;
     border-bottom: 1px solid var(--lc-v4-card-border);
 }
 .lc-v4-admin-nav__link {
-    padding: 12px 16px;
+    padding: 14px 22px;
     color: var(--lc-v4-slate-500);
     text-decoration: none;
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 500;
-    border-bottom: 2px solid transparent;
+    border-bottom: 3px solid transparent;
     transition: color 0.15s ease, border-color 0.15s ease;
     margin-bottom: -1px;
+    letter-spacing: 0.02em;
 }
 .lc-v4-admin-nav__link:hover {
     color: var(--lc-v4-slate-900);
@@ -6001,7 +6186,7 @@ html.dark .lc-v4-auth__pw-toggle[aria-pressed="true"] {
 .lc-v4-admin-nav__link[aria-current="page"] {
     color: var(--lc-v4-blue-600);
     border-bottom-color: var(--lc-v4-blue-500);
-    font-weight: 600;
+    font-weight: 700;
 }
 
 /* ── v4 KPI grid ────────────────────────────────────── */
@@ -6343,9 +6528,12 @@ html.dark body {
         /* 网格 */
         linear-gradient(rgba(34, 211, 238, 0.04) 1px, transparent 1px),
         linear-gradient(90deg, rgba(34, 211, 238, 0.04) 1px, transparent 1px);
+    /* v1.3.4 PR 14 ★ 删 background-attachment:fixed — 三个 fixed bg
+       在 Chrome scroll 时会触发整 viewport 重绘,搭配 sticky nav +
+       cyber 装饰层就是用户看到的"突然跳一下又恢复"。改默认(scroll),
+       由 .lc-v4-bg-aurora / .lc-v4-bg-grid 单独 fixed 提供装饰。 */
     background-size: 100% 100%, 48px 48px, 48px 48px;
     background-position: 0 0, 0 0, 0 0;
-    background-attachment: fixed, fixed, fixed;
     min-height: 100vh;
 }
 
@@ -6877,15 +7065,13 @@ html.dark .lc-bar-row__label,
 html.dark .lc-bar-row__count { color: var(--lc-cyber-text-muted); font-family: var(--lc-font-mono); }
 
 /* nav */
-/* v1.3.4 PR 11 — 深色模式 nav 实体背景 + 强 backdrop-filter。
-   background 从内层 .lc-nav 移到外层 [data-nav],这样
-   max-width:1280px 的 .lc-nav 区域内仍然是透的(只显示燕麦文字),
-   [data-nav] 全宽才有实体毛玻璃。box-shadow 加深空上浮感。 */
+/* v1.3.4 PR 11 + PR 13 — 深色模式 nav 实体背景,与浅色模式
+   同步去掉 backdrop-filter(同上 scroll judder 修法),改用深空
+   渐变 + 边下 cyan 边沿 + 上浮阴影。 */
 html.dark [data-nav] {
-    background: rgba(10, 14, 26, 0.72);
-    border-bottom-color: rgba(125, 211, 252, 0.22);
-    backdrop-filter: blur(14px) saturate(180%);
-    -webkit-backdrop-filter: blur(14px) saturate(180%);
+    /* PR 14: 同上,完全不透明 + 0 transition */
+    background: linear-gradient(180deg, #0a0e1a 0%, #131a2e 100%);
+    border-bottom-color: rgba(125, 211, 252, 0.32);
     box-shadow: 0 6px 24px -12px rgba(0, 0, 0, 0.6);
 }
 html.dark .lc-nav-brand { color: var(--lc-cyber-text); }
@@ -7231,9 +7417,13 @@ html.dark .lc-cyber-podium__step--3 .lc-cyber-podium__rank { color: #b45309; -we
     color: var(--lc-cyber-text-muted);
     border-bottom: 1px solid var(--lc-cyber-border);
     font-family: var(--lc-font-mono);
-    font-size: 11px;
+    /* PR 13:深色模式排行头部 11→13px,letter-spacing 0.08→0.05em,
+       letter-spacing 收一档防止过散,加 cyan glow 让深色模式下头部
+       文字也"发光",与浅色模式加到 15px 对齐字体梯队。 */
+    font-size: 13px;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.05em;
+    text-shadow: 0 0 12px rgba(34, 211, 238, 0.35);
 }
 .lc-rank-cell--rank { color: var(--lc-cyber-cyan-bright); font-family: var(--lc-font-mono); }
 .lc-rank-username { color: var(--lc-cyber-text); }
@@ -7401,16 +7591,22 @@ html.dark *:focus-visible {
     }
 }
 
-/* (1b) Editor pane — slightly taller shell so Ace can show ~25 lines
-   without scrolling on a 1440x900 viewport. Was 50vh / max 600px. */
+/* (1b) Editor pane — v1.3.4 PR 14 ★ 统一固定高度 620px,不再 vh。
+   原 56vh 在 900px viewport 上是 504px、1080px 上是 604px,用户报"不
+   同题目编辑器大小不一样"(实际是浏览器高度不同)。改 620px 后:
+   - 笔记本 (1366×768) 和外接显示器 (1920×1080) 都一样
+   - Ace 默认显示 ~32 行,scroll 后更多,不用拖高
+   - 移动端单列布局额外降到 420px 兼顾屏幕
+   620 ≈ LeetCode 默认 editor 高度,跟用户期望对齐。*/
 .lc-editor-shell {
-    min-height: 420px;
-    height: 56vh;
-    max-height: 720px;
+    min-height: 620px;
+    height: 620px;
+    max-height: none;
 }
 @media (max-width: 1180px) {
     .lc-editor-shell {
-        height: 420px;
+        height: 620px;
+        min-height: 620px;
         max-height: none;
     }
 }
@@ -8354,6 +8550,51 @@ html.dark .lc-v4-bg-oat { display: none; }
 :root:not(.dark) .lc-v4-bg-aurora,
 html:not(.dark) .lc-v4-bg-aurora { display: none; }
 
+/* v1.3.4 PR 15 ★ admin 页装饰静止化 — 用户报"系统概览页从其他
+   页转过来 + 滚动鼠标时样式会变化 / 闪"。根因链:
+     (a) `.lc-v4-bg-aurora` 有 `animation: lc-aurora-drift 18s ...`,
+         infinite alternate → 持续 filter 变化,每帧重绘
+     (b) `.lc-v4-bg-oat / .lc-v4-bg-aurora` 的 background-position
+         跟 --lc-mouse-x/y 实时联动 + 300ms transition → 鼠标每移
+         动 → 整层 background 重绘
+     (c) `.lc-v4-deco` (4 角) 有 `transition: transform 200ms` →
+         translate 跟着鼠标反向偏移,scroll 时一直在重绘合成层
+     (d) `.lc-v4-spotlight` opacity 400ms transition → 鼠标移开时
+         整层透明度淡出,体感"闪一下"
+   修法:admin 5 页 `<body class="lc-cyber lc-page-admin">` 加一个
+   修饰类,这里把上述 4 个 transition / animation 全停掉,鼠标光圈
+   改瞬切,装饰层静态化。视觉差异几乎不可见,但 scroll perf 显著
+   提升 + 不再有"闪"。同时把 #lc-particles-canvas 在 admin 页
+   调低 opacity 到 0.4,避免粒子叠加在密集表格上方干扰阅读。 */
+body.lc-page-admin .lc-v4-bg-aurora,
+body.lc-page-admin .lc-v4-bg-oat {
+    transition: none !important;
+    background-position: center !important;
+}
+@media (prefers-reduced-motion: no-preference) {
+    body.lc-page-admin .lc-v4-bg-aurora {
+        animation: none !important;
+    }
+}
+body.lc-page-admin .lc-v4-deco {
+    transition: none !important;
+    transform: none !important;
+}
+body.lc-page-admin .lc-v4-spotlight {
+    transition: opacity 80ms linear !important;
+}
+body.lc-page-admin #lc-particles-canvas {
+    opacity: 0.4;
+}
+/* admin 页面 :root 强制 prefers-reduced-motion 的等价效果 —
+   即使用户 OS 没开 reduced-motion,admin 页也享受静止。 */
+body.lc-page-admin.lc-motion-off *,
+body.lc-page-admin.lc-motion-off *::before,
+body.lc-page-admin.lc-motion-off *::after {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+}
+
 /* =====================================================================
    v1.3.4 PR 11 ★ 侧边几何网格 + Canvas 粒子层 + 仪表盘卡片
 
@@ -8457,76 +8698,189 @@ html:not(.dark) .lc-particles-canvas-scoped {
    在伪元素之下,避免遮挡。 */
 
 /* ── KPI 仪表盘卡片(取代原来 .lc-v4-kpi-grid 里的"小盒子") ── */
+/*
+   v1.3.4 PR 19 ★ KPI Dashboard 紧凑风
+   ──────────────────────────────────────────────
+   用户报"竖排 + 排列丑"——上一版装饰 SVG 占 110×140 半张卡,
+   跟 label/value/sub 文字层视觉权重对冲,深色模式下数字被
+   装饰压住。新设计 = Stripe / Linear / Vercel 风格 KPI:
+     · label 12px uppercase muted(顶部,letter-spacing 1px)
+     · 大数字 36px mono tabular-nums weight 700(中部,主角)
+     · sub  12px muted(数字正下方一行)
+     · SVG 装饰缩到 ≤90×60 右上角,视觉权重 ≤12%
+     · ring 进度环彻底移除(数字本身就是进度)
+   4 类装饰改 mini 版(90×60):
+     · radial  → 6×28 mini-bars(简/中/难 3 色)
+     · sparkline → 1 条 7-点 stroke + 1 段 fill(0~1 高频变化)
+     · donut   → 1 条 56×56 mini 圆环 + 中心 0 文字(纯几何)
+     · pct-stack → 1 条 28px 高 横向 mini bar(简/中/难 比例)
+*/
 .lc-v4-kpi-card {
     position: relative;
     overflow: hidden;
-    padding: 24px;
-    border-radius: 18px;
+    padding: 18px 22px 16px;
+    border-radius: 14px;
     background: linear-gradient(135deg,
         var(--lc-color-surface) 0%,
         var(--lc-color-surface-2) 100%);
-    box-shadow: 0 8px 32px -16px rgba(13, 148, 210, 0.18),
+    box-shadow: 0 6px 24px -16px rgba(13, 148, 210, 0.18),
                 inset 0 1px 0 rgba(255, 255, 255, 0.4);
-    min-height: 168px;
-    display: flex;
-    align-items: center;
-    gap: 20px;
+    min-height: 124px;
+    display: block;
     transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1),
                 box-shadow 240ms ease;
 }
 .lc-v4-kpi-card:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 14px 36px -14px rgba(13, 148, 210, 0.28),
+    transform: translateY(-2px);
+    box-shadow: 0 10px 28px -14px rgba(13, 148, 210, 0.28),
                 inset 0 1px 0 rgba(255, 255, 255, 0.5);
 }
 html.dark .lc-v4-kpi-card {
     background: linear-gradient(135deg,
         rgba(15, 23, 42, 0.88) 0%,
         rgba(30, 41, 59, 0.88) 100%);
-    box-shadow: 0 8px 32px -12px rgba(34, 211, 238, 0.18),
+    box-shadow: 0 6px 24px -12px rgba(34, 211, 238, 0.18),
                 inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 html.dark .lc-v4-kpi-card:hover {
-    box-shadow: 0 14px 36px -10px rgba(34, 211, 238, 0.32),
+    box-shadow: 0 10px 28px -10px rgba(34, 211, 238, 0.32),
                 inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
-.lc-v4-kpi-card__body { flex: 1; min-width: 0; }
 .lc-v4-kpi-card__label {
-    font-size: var(--lc-font-size-sm);
+    font-size: 11px;
     color: var(--lc-color-text-2);
-    font-weight: 500;
-    letter-spacing: 0.5px;
+    font-weight: 600;
+    letter-spacing: 1.2px;
     text-transform: uppercase;
-    opacity: 0.85;
-    margin-bottom: 8px;
+    opacity: 0.78;
+    margin: 0 0 6px;
+    line-height: 1.2;
+    /* 关键:右边界避开右上 90×60 装饰区,防止重叠 */
+    padding-right: 108px;
 }
 html.dark .lc-v4-kpi-card__label { color: var(--lc-cyber-text-muted); }
 .lc-v4-kpi-card__value {
-    font-size: 32px;
+    font-size: 36px;
     font-weight: 700;
     color: var(--lc-color-text);
-    line-height: 1.1;
+    line-height: 1.05;
     font-feature-settings: 'tnum' 1;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.5px;
+    /* 关键:数字"5 / 82"宽度可能撞装饰,留 padding-right */
+    padding-right: 108px;
+    /* 长数字截断而非溢出撞装饰 */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 html.dark .lc-v4-kpi-card__value { color: var(--lc-cyber-text); }
+html.dark .lc-v4-kpi-card__value--accent {
+    text-shadow: 0 0 18px var(--lc-cyber-glow, rgba(34, 211, 238, 0.45));
+}
 .lc-v4-kpi-card__sub {
-    margin-top: 4px;
-    font-size: var(--lc-font-size-sm);
+    margin-top: 6px;
+    font-size: 12px;
     color: var(--lc-color-text-2);
-    opacity: 0.7;
+    opacity: 0.72;
+    line-height: 1.35;
+    font-weight: 400;
+    /* sub 行(可能多行)同样避开装饰 */
+    padding-right: 108px;
+    /* sub 行允许换行,但每行都是水平排版,无中文自动竖排 */
+    word-break: keep-all;
+    overflow-wrap: break-word;
 }
 html.dark .lc-v4-kpi-card__sub { color: var(--lc-cyber-text-muted); }
-.lc-v4-kpi-card__ring { width: 88px; height: 88px; flex-shrink: 0; }
-.lc-v4-kpi-card__ring svg { transform: rotate(-90deg); display: block; }
-.lc-v4-kpi-card__ring circle.bg { fill: none; stroke: rgba(125, 211, 252, 0.12); stroke-width: 6; }
-.lc-v4-kpi-card__ring circle.fg {
-    fill: none;
-    stroke: url(#kpi-grad-cyan);
-    stroke-width: 6;
-    stroke-linecap: round;
-    transition: stroke-dasharray 600ms cubic-bezier(0.16, 1, 0.3, 1);
+
+/* ── visual 装饰:右上角 90×60,角落定位,绝不抢戏 ── */
+.lc-v4-kpi-card__visual {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 90px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    pointer-events: none;
+    overflow: hidden;
 }
-.lc-v4-kpi-card__ring--green circle.fg { stroke: url(#kpi-grad-green); }
+.lc-v4-kpi-card__visual svg { width: 100%; height: 100%; display: block; overflow: visible; }
+
+/* ── (a) radial — 6×28 mini-bars(简/中/难 3 色) ── */
+.lc-v4-kpi-card__visual--radial .seg-bg { fill: rgba(125, 211, 252, 0.10); }
+.lc-v4-kpi-card__visual--radial .seg-fg-easy   { fill: var(--lc-color-judge-pass, #2F6F44); }
+.lc-v4-kpi-card__visual--radial .seg-fg-medium { fill: var(--lc-color-judge-warn, #8C5A1F); }
+.lc-v4-kpi-card__visual--radial .seg-fg-hard   { fill: var(--lc-color-judge-fail, #8C2F1F); }
+.lc-v4-kpi-card__visual--radial .seg-fg-other  { fill: var(--lc-color-judge-info, #3B5A6E); }
+.lc-v4-kpi-card__visual--radial .seg-fg-mle    { fill: var(--lc-color-judge-violet, #5E3A82); }
+/* ── (b) sparkline — 1 条 7-点 stroke + fill(紧凑折线) ── */
+.lc-v4-kpi-card__visual--sparkline .line {
+    fill: none;
+    stroke: url(#kpi-spark-peak);
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: stroke-width 240ms ease;
+}
+.lc-v4-kpi-card__visual--sparkline .fill {
+    fill: url(#kpi-spark-peak);
+    opacity: 0.18;
+}
+.lc-v4-kpi-card__visual--sparkline .dot.peak {
+    fill: var(--lc-color-judge-pass, #2F6F44);
+    filter: drop-shadow(0 0 4px var(--lc-color-judge-pass, #2F6F44));
+}
+/* ── (c) donut — mini 56×56 圆环(纯几何,无中心文字) ── */
+.lc-v4-kpi-card__visual--donut circle.track { fill: none; stroke: rgba(125, 211, 252, 0.10); stroke-width: 6; }
+.lc-v4-kpi-card__visual--donut circle.fg-pass { fill: none; stroke: var(--lc-color-judge-pass, #2F6F44); stroke-width: 6; }
+.lc-v4-kpi-card__visual--donut circle.fg-fail { fill: none; stroke: var(--lc-color-judge-fail, #8C2F1F); stroke-width: 6; }
+.lc-v4-kpi-card__visual--donut circle.fg-warn { fill: none; stroke: var(--lc-color-judge-warn, #8C5A1F); stroke-width: 6; }
+.lc-v4-kpi-card__visual--donut circle.fg-info { fill: none; stroke: var(--lc-color-judge-info, #3B5A6E); stroke-width: 6; }
+/* ── (d) pct-stack — 1 条 28px 高 横向 mini bar(3 段比例) ── */
+.lc-v4-kpi-card__visual--pct-stack rect.bg { fill: rgba(125, 211, 252, 0.10); }
+.lc-v4-kpi-card__visual--pct-stack rect.fg-easy   { fill: url(#kpi-stack-easy); }
+.lc-v4-kpi-card__visual--pct-stack rect.fg-medium { fill: url(#kpi-stack-medium); }
+.lc-v4-kpi-card__visual--pct-stack rect.fg-hard   { fill: url(#kpi-stack-hard); }
+
+/* ── 旧 ring 元素彻底不再用,但保留占位规则避免 break
+      dashboard.html 旧 KPI 卡(如还有) ── */
+.lc-v4-kpi-card__ring { display: none; }
+.lc-v4-kpi-card__body { display: contents; }
+.lc-v4-kpi-card--no-ring .lc-v4-kpi-card__body { display: contents; }
+
+/* 深色模式 — 半透明度上调,色彩更鲜明贴合 cyber 主题 */
+html.dark .lc-v4-kpi-card__visual--radial .seg-bg { fill: rgba(125, 211, 252, 0.10); }
+html.dark .lc-v4-kpi-card__visual--sparkline .line {
+    filter: drop-shadow(0 0 4px var(--lc-cyber-cyan));
+}
+html.dark .lc-v4-kpi-card__visual--sparkline .fill { opacity: 0.28; }
+html.dark .lc-v4-kpi-card__visual--sparkline .dot.peak {
+    filter: drop-shadow(0 0 6px var(--lc-cyber-cyan));
+}
+html.dark .lc-v4-kpi-card__visual--donut circle.track { stroke: rgba(125, 211, 252, 0.16); }
+html.dark .lc-v4-kpi-card__visual--donut circle.fg-pass,
+html.dark .lc-v4-kpi-card__visual--donut circle.fg-fail,
+html.dark .lc-v4-kpi-card__visual--donut circle.fg-warn,
+html.dark .lc-v4-kpi-card__visual--donut circle.fg-info {
+    filter: drop-shadow(0 0 3px currentColor);
+}
+html.dark .lc-v4-kpi-card__visual--pct-stack rect.bg { fill: rgba(125, 211, 252, 0.12); }
+html.dark .lc-v4-kpi-card__visual--pct-stack rect.fg-easy,
+html.dark .lc-v4-kpi-card__visual--pct-stack rect.fg-medium,
+html.dark .lc-v4-kpi-card__visual--pct-stack rect.fg-hard {
+    filter: drop-shadow(0 0 4px currentColor);
+}
+
+/* 移动端 fallback:visual 缩更小,文字 padding 也对应缩 */
+@media (max-width: 720px) {
+    .lc-v4-kpi-card { padding-top: 64px; }
+    .lc-v4-kpi-card__visual { top: 12px; right: 12px; width: 70px; height: 44px; }
+    .lc-v4-kpi-card__label,
+    .lc-v4-kpi-card__value,
+    .lc-v4-kpi-card__sub { padding-right: 86px; }
+}
 
 /* ── Rank 行 mini-bar(通过率可视化,贴行底) ── */
 .lc-rank-row { position: relative; }
@@ -8622,3 +8976,270 @@ html.dark .lc-cyber-podium__step--1 {
     box-shadow: 0 0 48px rgba(34, 211, 238, 0.40),
                 inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
+
+/* ════════════════════════════════════════════════════════════════
+   §23  v1.3.4 PR 13 ★ 鉴权页主题 + 快捷面板 + dashboard 趋势 chip
+   ──────────────────────────────────────────────────────────────── */
+
+/* 23.1 鉴权页(登录/注册)深色模式玻璃拟态 panel。
+       原 .lc-v4-auth__pane 是硬编码 #f8fafc,导致深色模式下白色
+       面板 + 浅色文字 = 1.02:1 对比度完全看不见。这里只覆盖深色
+       派生,浅色模式维持原 token。 */
+html.dark .lc-v4-auth__pane {
+    background: rgba(17, 24, 39, 0.78);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    backdrop-filter: blur(20px) saturate(140%);
+    border: 1px solid rgba(125, 211, 252, 0.18);
+    box-shadow: 0 24px 56px -24px rgba(0, 0, 0, 0.6),
+                inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+/* v1.3.4 PR 14 ★ — 用户反馈"深色模式字/输入框不显眼":原 rgba(0.55)
+   半透底在 cyber 装饰层背景上透明度仍不够 → 文本与玻璃背景对比
+   模糊。加固:(1) input bg 提到 0.92(几乎实色),(2) value 颜色直
+   写 #FFFFFF + weight 600(保证对比度 ≥ 7:1,WCAG AAA),(3) placeholder
+   提到 0.7 alpha 让 hint 更可读,(4) label/field-help 同步加亮。*/
+html.dark .lc-v4-auth__input {
+    background: rgba(11, 15, 26, 0.92);
+    color: #FFFFFF;
+    font-weight: 600;
+    border: 1px solid rgba(125, 211, 252, 0.32);
+    caret-color: var(--lc-cyber-cyan, #22d3ee);
+}
+html.dark .lc-v4-auth__input:focus {
+    border-color: var(--lc-cyber-cyan, #22d3ee);
+    background: rgba(8, 12, 22, 0.96);
+    box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.20);
+}
+html.dark .lc-v4-auth__input::placeholder {
+    color: rgba(226, 232, 240, 0.70);
+    font-weight: 400;
+}
+html.dark .lc-v4-auth__label { color: #E2E8F0; font-weight: 600; }
+html.dark .lc-v4-auth__form-sub,
+html.dark .lc-v4-auth__field-help,
+html.dark .lc-v4-auth__alt {
+    color: rgba(226, 232, 240, 0.86);
+}
+html.dark .lc-v4-auth__field-help { color: rgba(148, 197, 232, 0.78); }
+/* h1/标题文字直接用 #FFFFFF,免得浏览器自动用 color:inherit 被压暗 */
+html.dark .lc-v4-auth__form h1 { color: #FFFFFF; }
+
+/* 23.2 鉴权页右上角主题切换按钮(.lc-icon-btn 在浅/深模式都
+       已定义,这里只做绝对定位偏移 + 与 panel 边缘间距)。 */
+.lc-v4-auth__theme-toggle {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    z-index: 4;
+    pointer-events: auto;
+}
+
+/* 23.3 Dashboard 快捷操作 4 卡片 grid(填满主区域左右两侧空白,
+       用户反馈"左右两边不至于除了 Canvas 粒子就什么都没有")。*/
+.lc-v4-quick-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 18px;
+    margin: 32px 0 24px;
+}
+.lc-v4-quick-action {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 22px 22px 20px;
+    border-radius: var(--lc-radius-lg, 16px);
+    background: linear-gradient(135deg,
+        var(--lc-color-surface),
+        var(--lc-color-surface-2));
+    border: 1px solid var(--lc-color-border);
+    box-shadow: 0 4px 16px -10px rgba(13, 148, 210, 0.18);
+    text-decoration: none;
+    color: inherit;
+    transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1),
+                border-color 200ms ease,
+                box-shadow 200ms ease;
+}
+.lc-v4-quick-action:hover {
+    transform: translateY(-2px);
+    border-color: var(--lc-color-link);
+    box-shadow: 0 10px 28px -12px rgba(13, 148, 210, 0.28);
+}
+.lc-v4-quick-action__icon {
+    font-size: 28px;
+    line-height: 1;
+}
+.lc-v4-quick-action__title {
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--lc-v4-slate-900);
+    margin: 0;
+}
+.lc-v4-quick-action__hint {
+    font-size: 13px;
+    color: var(--lc-v4-slate-500);
+    line-height: 1.5;
+}
+html.dark .lc-v4-quick-action {
+    background: linear-gradient(135deg,
+        var(--lc-cyber-surface, #131a2e),
+        var(--lc-cyber-surface-2, #1a2240));
+    border-color: var(--lc-cyber-border, rgba(125, 211, 252, 0.18));
+}
+html.dark .lc-v4-quick-action__title {
+    color: var(--lc-cyber-text);
+}
+html.dark .lc-v4-quick-action__hint {
+    color: var(--lc-cyber-text-muted);
+}
+
+/* 23.4 Dashboard 顶部趋势 chip 行 — 视觉填实,数据 fallback 占位 */
+.lc-v4-trend-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin: 0 0 28px;
+}
+.lc-v4-trend-chip {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 20px;
+    border-radius: var(--lc-radius-md, 12px);
+    background: linear-gradient(180deg,
+        var(--lc-color-surface-1),
+        var(--lc-color-surface));
+    border: 1px solid var(--lc-color-border);
+    border-left: 3px solid var(--lc-cyber-cyan, #22d3ee);
+    box-shadow: 0 2px 8px -4px rgba(13, 148, 210, 0.10);
+}
+/* v1.3.4 PR 13 follow-up: 三个 chip 左侧 accent 颜色差异化
+   (QPS=cyan / 用户=emerald / 分布=violet),spark 图案同步呼应。 */
+.lc-v4-trend-row .lc-v4-trend-chip:nth-child(1) {
+    border-left-color: var(--lc-cyber-cyan, #22d3ee);
+}
+.lc-v4-trend-row .lc-v4-trend-chip:nth-child(2) {
+    border-left-color: var(--lc-cyber-emerald, #10E0A0);
+}
+.lc-v4-trend-row .lc-v4-trend-chip:nth-child(3) {
+    border-left-color: var(--lc-cyber-violet, #A78BFA);
+}
+.lc-v4-trend-chip__spark {
+    width: 56px;
+    height: 24px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+    border-radius: 4px;
+}
+/* Chip 1 (QPS) — 脉冲波纹:中心实心圆 + 2 道 ::before/::after 同心圆
+   从内向外扩散并淡出,反复循环(2.4s 一轮,延迟 1.2s 错峰)。 */
+.lc-v4-trend-row .lc-v4-trend-chip:nth-child(1) .lc-v4-trend-chip__spark {
+    background: var(--lc-cyber-cyan, #22d3ee);
+    border-radius: 50%;
+    width: 14px;
+    height: 14px;
+    box-shadow: 0 0 10px rgba(34, 211, 238, 0.55);
+}
+.lc-v4-trend-row .lc-v4-trend-chip:nth-child(1) .lc-v4-trend-chip__spark::before,
+.lc-v4-trend-row .lc-v4-trend-chip:nth-child(1) .lc-v4-trend-chip__spark::after {
+    content: "";
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--lc-cyber-cyan, #22d3ee);
+    border-radius: 50%;
+    animation: lc-trend-pulse 2.4s ease-out infinite;
+    pointer-events: none;
+}
+.lc-v4-trend-row .lc-v4-trend-chip:nth-child(1) .lc-v4-trend-chip__spark::after {
+    animation-delay: 1.2s;
+}
+@keyframes lc-trend-pulse {
+    0%   { transform: scale(0.6); opacity: 0.9; }
+    100% { transform: scale(2.4); opacity: 0; }
+}
+/* Chip 2 (用户) — 抽象人形点阵: 3 个等径 emerald 圆点纵向排成
+   "头 + 肩 + 身" 形态,静态,以暗示"群体与个体"。 */
+.lc-v4-trend-row .lc-v4-trend-chip:nth-child(2) .lc-v4-trend-chip__spark {
+    background-image:
+        radial-gradient(circle at 50% 4px,  var(--lc-cyber-emerald, #10E0A0) 0 2.5px, transparent 3px),
+        radial-gradient(circle at 50% 12px, var(--lc-cyber-emerald, #10E0A0) 0 2.5px, transparent 3px),
+        radial-gradient(circle at 50% 20px, var(--lc-cyber-emerald, #10E0A0) 0 2.5px, transparent 3px);
+    background-repeat: no-repeat;
+    width: 56px;
+    height: 24px;
+}
+/* Chip 3 (分布) — 三色堆叠柱:AC 绿 / WA 琥珀 / CE 砖红
+   (暗色下用 cyber emerald / amber / 硬编码红兜底,视觉始终 3 段清晰)。 */
+.lc-v4-trend-row .lc-v4-trend-chip:nth-child(3) .lc-v4-trend-chip__spark {
+    background:
+        linear-gradient(90deg,
+            var(--lc-cyber-emerald, #10b981) 0%,
+            var(--lc-cyber-emerald, #10b981) 33.33%,
+            var(--lc-cyber-amber,   #f59e0b) 33.33%,
+            var(--lc-cyber-amber,   #f59e0b) 66.66%,
+            #ef4444              66.66%,
+            #ef4444              100%);
+    height: 10px;
+    border-radius: 2px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08),
+                inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+.lc-v4-trend-chip__label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.lc-v4-trend-chip__hint {
+    font-size: 12px;
+    color: var(--lc-v4-slate-500);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.lc-v4-trend-chip__value {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--lc-v4-slate-900);
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+}
+html.dark .lc-v4-trend-chip {
+    background: linear-gradient(180deg,
+        var(--lc-cyber-surface, #131a2e),
+        rgba(26, 34, 64, 0.6));
+    border-color: var(--lc-cyber-border, rgba(125, 211, 252, 0.18));
+    border-left-color: var(--lc-cyber-cyan, #22d3ee);
+    box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.08);
+}
+html.dark .lc-v4-trend-row .lc-v4-trend-chip:nth-child(1) {
+    border-left-color: var(--lc-cyber-cyan, #22d3ee);
+}
+html.dark .lc-v4-trend-row .lc-v4-trend-chip:nth-child(2) {
+    border-left-color: var(--lc-cyber-emerald, #10E0A0);
+}
+html.dark .lc-v4-trend-row .lc-v4-trend-chip:nth-child(3) {
+    border-left-color: var(--lc-cyber-violet, #A78BFA);
+}
+html.dark .lc-v4-trend-chip__value {
+    color: var(--lc-cyber-text);
+}
+html.dark .lc-v4-trend-chip__hint {
+    color: var(--lc-cyber-text-muted);
+}
+
+/* v1.3.4 PR 13 follow-up: 脉冲动画在 reduced-motion 环境下自动停止,
+   人形点阵 / 堆叠柱本来就没动画,无需处理。 */
+@media (prefers-reduced-motion: reduce) {
+    .lc-v4-trend-row .lc-v4-trend-chip:nth-child(1) .lc-v4-trend-chip__spark::before,
+    .lc-v4-trend-row .lc-v4-trend-chip:nth-child(1) .lc-v4-trend-chip__spark::after {
+        animation: none;
+    }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   §23  END  v1.3.4 PR 13
+   ════════════════════════════════════════════════════════════════ */

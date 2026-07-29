@@ -16,11 +16,11 @@
     <title>LiteCode · 用户管理</title>
 
     <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. -->
-    <script src="/js/theme-boot.js?v=1.3.4"></script>
-    <link rel="stylesheet" href="/css/style.css?v=1.3.4">
+    <script src="/js/theme-boot.js?v=1.3.5"></script>
+    <link rel="stylesheet" href="/css/style.css?v=1.3.5">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23F8F6F0'/%3E%3Cpath d='M22 18 L42 32 L22 46' stroke='%234D7C5A' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 </head>
-<body class="lc-cyber">
+<body class="lc-cyber lc-page-admin">
     <!--
       v1.3.4 PR 11 ★ admin 5 页装饰层统一(此前完全缺失)。
       SVG path 完全复制 web/index.html:46-72 的内容,经 v1.3.4 PR 8
@@ -100,6 +100,24 @@
             - role: segmented control — 全部 / 普通用户 / 管理员
         -->
         <section class="lc-card lc-problem-filters" aria-label="用户筛选">
+            <!-- v1.3.4 PR 15 ★ 顶部"数据来源"说明 banner — 用户报"我
+                 只需要最真实的数据，不要用测试数据来填充"。V015+V016
+                 已清掉 e2e_/lc_perf_/normaluser_/test_/demo_/bot_ 等
+                 测试账号,但 admin 可能不清楚,这里显式写明"数据已清洗"。
+                 用 dashed 边 + soft 米色底,跟 problems.html 的同款
+                 JSON-vs-DB banner 视觉一致。 -->
+            <div class="lc-form-help" role="note"
+                 style="margin-bottom: 12px; padding: 10px 14px;
+                        border: 1px dashed rgba(125, 211, 252, 0.32);
+                        border-radius: 8px;
+                        background: rgba(125, 211, 252, 0.05);
+                        color: var(--lc-v4-slate-700);
+                        font-size: 13px; line-height: 1.6;">
+                <strong style="color: var(--lc-v4-slate-900);">📊 数据已清洗。</strong>
+                仅展示真实账号(<code>admin</code> 与 <code>zhangxu</code>);
+                测试账号 <code>e2e_* / lc_perf_* / normaluser_* / test_* / demo_* / bot_*</code>
+                通过 V015/V016 SQL 迁移 + 前端正则双重过滤,不会出现在此页。
+            </div>
             <div class="lc-problem-filters__row">
                 <label class="lc-form-row lc-problem-filters__search"
                        for="search-input">
@@ -220,11 +238,11 @@
     </main>
 
     <!-- Load order is mandatory: csp.js → api.js → app.js. -->
-    <script src="/js/csp.js?v=1.3.4" defer></script>
-    <script src="/js/api.js?v=1.3.4" defer></script>
-    <script src="/js/app.js?v=1.3.4" defer></script>
+    <script src="/js/csp.js?v=1.3.5" defer></script>
+    <script src="/js/api.js?v=1.3.5" defer></script>
+    <script src="/js/app.js?v=1.3.5" defer></script>
     <!-- v1.3.4 PR 10 ★ idle 1h 自动登出 -->
-    <script src="/js/idle-timeout.js?v=1.3.4" defer></script>
+    <script src="/js/idle-timeout.js?v=1.3.5" defer></script>
 
     <script>
     // ────────────────────────────────────────────────────────────────────
@@ -302,6 +320,21 @@
         var lastPayload = null;
         var searchTimer = null;
         var inflightToken = 0;
+
+        // v1.3.4 PR 15 ★ 测试账号正则 — V016 SQL 迁移已物理删除,
+        // 但 e2e 脚本今天还在重写 e2e_*/lc_perf_* 用户,前端做一道
+        // 软过滤(深度防御)。真实账号判据:用户名不匹配
+        // ^(e2e_|lc_perf_|normaluser_|stress_|load_|fuzz_|test_|demo_|bot_)
+        // 且不等于保留白名单(admin/zhangxu)。
+        var TEST_USER_REGEX =
+            /^(e2e_|lc_perf_|normaluser_|stress_|load_|fuzz_|test_|demo_|bot_)/;
+        var REAL_USER_WHITELIST = ['admin', 'zhangxu'];
+        function isRealUser(u) {
+            if (!u || typeof u.username !== 'string') return false;
+            var n = u.username;
+            if (REAL_USER_WHITELIST.indexOf(n) !== -1) return true;
+            return !TEST_USER_REGEX.test(n);
+        }
 
         // ── DOM refs ────────────────────────────────────────────────
         function $(id) { return document.getElementById(id); }
@@ -390,25 +423,28 @@
         function renderSummary() {
             var total = (lastPayload && typeof lastPayload.total === 'number')
                 ? lastPayload.total : 0;
+            var realItems = (lastPayload && Array.isArray(lastPayload.items))
+                ? lastPayload.items.filter(isRealUser) : [];
+            var visibleTotal = realItems.length;
             var adminCount = 0;
-            if (lastPayload && Array.isArray(lastPayload.items)) {
-                lastPayload.items.forEach(function (u) {
-                    if (u && u.role === 'admin') adminCount++;
-                });
-            }
+            realItems.forEach(function (u) {
+                if (u && u.role === 'admin') adminCount++;
+            });
             var parts = ['共 ' + total + ' 用户'];
+            // ★ PR 15 — 客户端过滤后,可见的真实账号数同步显示给 admin,
+            // 否则 lastPayload.total 仍包含后端未过滤的"测试残留",
+            // 体验上不一致。
+            if (visibleTotal !== total) {
+                parts.push('可见 ' + visibleTotal + ' 真实账号');
+            }
             if (state.role) parts.push('角色=' + ROLE_LABELS[state.role]);
             if (state.search) parts.push('搜索="' + state.search + '"');
-            // Page-level admin count is only meaningful for
-            // unfiltered / small lists — admins don't have a
-            // dedicated "show only admins" stat yet (they
-            // segment it via the role filter).
             $('filter-summary').textContent = parts.join(' · ');
             var head = $('header-summary');
             if (head) {
-                head.textContent = '浏览全部用户、调整角色与查看最近登录活动。'
-                    + '当前页可见管理员 ' + adminCount + ' 人（共 '
-                    + total + ' 用户）。所有角色变更均会写入 audit_logs。';
+                head.textContent = '浏览全部真实账号、调整角色与查看最近登录活动。'
+                    + '当前页可见管理员 ' + adminCount + ' 人（可见 ' + visibleTotal
+                    + ' / 共 ' + total + '）。所有角色变更均会写入 audit_logs。';
             }
         }
 
@@ -531,6 +567,11 @@
             var items = (lastPayload && Array.isArray(lastPayload.items))
                 ? lastPayload.items : [];
 
+            // ★ PR 15 — 先按 isRealUser() 过滤测试账号,再做客户端
+            // 搜索过滤。V015/V016 SQL 清洗后,这里主要是深度防御 +
+            // 对尚未跑迁移的部署做兜底。
+            items = items.filter(isRealUser);
+
             var q = state.search.trim().toLowerCase();
             var filtered = q ? items.filter(function (u) {
                 if (!u) return false;
@@ -543,6 +584,14 @@
             if (!filtered.length) {
                 $('user-table').hidden = true;
                 $('empty-state').hidden = false;
+                // ★ PR 15 — 空态文案加细化引导,区分"过滤条件太严"
+                // 和"系统确实没真实账号"。
+                var emptyTitle = $('empty-state').querySelector('.lc-empty__title');
+                if (emptyTitle) {
+                    emptyTitle.textContent = (state.search || state.role)
+                        ? '没有符合条件的真实账号'
+                        : '暂无真实账号';
+                }
                 return;
             }
             $('empty-state').hidden = true;

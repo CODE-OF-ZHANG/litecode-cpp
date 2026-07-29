@@ -5,11 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
-    <meta name="theme-color" content="#F8F6F0">
+    <meta name="theme-color" content="#0A0E1A">
     <title>LiteCode · 登录</title>
     <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. v1.3.4 默认 cyber dark。 -->
-    <script src="/js/theme-boot.js?v=1.3.4"></script>
-    <link rel="stylesheet" href="/css/style.css?v=1.3.4">
+    <script src="/js/theme-boot.js?v=1.3.5"></script>
+    <link rel="stylesheet" href="/css/style.css?v=1.3.5">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23F8F6F0'/%3E%3Cpath d='M22 18 L42 32 L22 46' stroke='%234D7C5A' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
     <!--
       v1.3.4 PR 10 ★ Idle timeout banner(暖琥珀色)?reason=timeout 时显示。
@@ -86,6 +86,18 @@
         </aside>
 
         <main class="lc-v4-auth__pane">
+            <!-- v1.3.4 PR 13 ★ scoped 粒子 canvas + 主题切换按钮。
+                 鉴权页没有 [data-nav],app.js renderNav() 直接 return
+                 → 没有主题按钮;这里放独立 theme-toggle,data-act 让
+                 syncThemeButton() 在 litecode:theme-changed 时同步图标。
+                 scoped canvas 在 pane 内部 z-index:0,鼠标粒子引擎会
+                 自动发现它并根据 isDark() 切换双套 config。 -->
+            <canvas class="lc-particles-canvas-scoped" aria-hidden="true"></canvas>
+            <button type="button"
+                    class="lc-icon-btn lc-v4-auth__theme-toggle"
+                    data-act="theme-toggle"
+                    aria-label="切换深色模式">🌗</button>
+
             <form class="lc-v4-auth__form" id="login-form" novalidate>
                 <span class="lc-cyber-ribbon">SECURE LOGIN</span>
                 <h1 style="margin-top: 12px;">欢迎回来</h1>
@@ -184,12 +196,12 @@
         </main>
     </div>
 
-    <script src="/js/csp.js?v=1.3.4" defer></script>
-    <script src="/js/api.js?v=1.3.4" defer></script>
-    <script src="/js/app.js?v=1.3.4" defer></script>
+    <script src="/js/csp.js?v=1.3.5" defer></script>
+    <script src="/js/api.js?v=1.3.5" defer></script>
+    <script src="/js/app.js?v=1.3.5" defer></script>
     <!-- v1.3.4 PR 10 ★ idle timeout:login 页本身 noop,但 ?reason=timeout
          时显示 banner(见 inline script 在下方);idle 检测由其他页面做。 -->
-    <script src="/js/idle-timeout.js?v=1.3.4" defer></script>
+    <script src="/js/idle-timeout.js?v=1.3.5" defer></script>
 
     <script>
     // v1.3.4 PR 10 ★ 解析 ?reason=timeout,显示"会话已过期"banner。
@@ -337,6 +349,23 @@
                     });
             });
         });
+
+        // v1.3.4 PR 13 ★ 鉴权页主题切换 — 鉴权页没有 [data-nav],
+        // app.js renderNav() 直接 return → 没有主题按钮。手动挂
+        // click → litecode.theme.toggle(),然后派一次伪事件让
+        // data-act="theme-toggle" 按钮上的 syncThemeButton() 把图标
+        // 同步成对应的 🌙 / 🌞。
+        document.querySelector('[data-act="theme-toggle"]')
+            ?.addEventListener('click', function () {
+                if (window.litecode && window.litecode.theme && window.litecode.theme.toggle) {
+                    window.litecode.theme.toggle();
+                }
+            });
+        // 初始同步:theme-boot.js 可能已经把 .dark 加上,但 syncThemeButton
+        // 只在 litecode:theme-changed 事件时跑。发一次伪事件让初始图标对。
+        try {
+            window.dispatchEvent(new Event('litecode:theme-changed'));
+        } catch (_) { /* IE 兼容 fallback,可忽略 */ }
     })();
     </script>
 

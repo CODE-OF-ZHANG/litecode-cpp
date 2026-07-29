@@ -16,11 +16,11 @@
     <title>LiteCode · 审计日志</title>
 
     <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. -->
-    <script src="/js/theme-boot.js?v=1.3.4"></script>
-    <link rel="stylesheet" href="/css/style.css?v=1.3.4">
+    <script src="/js/theme-boot.js?v=1.3.5"></script>
+    <link rel="stylesheet" href="/css/style.css?v=1.3.5">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23F8F6F0'/%3E%3Cpath d='M22 18 L42 32 L22 46' stroke='%234D7C5A' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 </head>
-<body class="lc-cyber">
+<body class="lc-cyber lc-page-admin">
     <!--
       v1.3.4 PR 11 ★ admin 5 页装饰层统一(此前完全缺失)。
       SVG path 完全复制 web/index.html:46-72 的内容,经 v1.3.4 PR 8
@@ -293,11 +293,11 @@
     </div>
 
     <!-- Load order is mandatory: csp.js → api.js → app.js. -->
-    <script src="/js/csp.js?v=1.3.4" defer></script>
-    <script src="/js/api.js?v=1.3.4" defer></script>
-    <script src="/js/app.js?v=1.3.4" defer></script>
+    <script src="/js/csp.js?v=1.3.5" defer></script>
+    <script src="/js/api.js?v=1.3.5" defer></script>
+    <script src="/js/app.js?v=1.3.5" defer></script>
     <!-- v1.3.4 PR 10 ★ idle 1h 自动登出 -->
-    <script src="/js/idle-timeout.js?v=1.3.4" defer></script>
+    <script src="/js/idle-timeout.js?v=1.3.5" defer></script>
 
     <script>
     // ────────────────────────────────────────────────────────────────────
@@ -810,17 +810,39 @@
             load();
         }
 
+        // ★ PR 15 — onDateChange 防抖 + 取消旧请求 + 日期规整。
+        // 旧版每次 input change 立即 load(),auto-refresh 30s 计时器
+        // 会再次切回 loading,叠加效果就是"一直显示加载"。修法:
+        //   (1) 防抖 200ms — 用户连续切日期不触发多次请求
+        //   (2) ++state.inflight 让旧请求的 response 被识别为 stale
+        //   (3) since 追加 "00:00:00"、until 追加 "23:59:59",确保
+        //       用户输入 "YYYY-MM-DD" 时,since 是当天 0 点、until
+        //       是当天 23:59:59,日期范围语义直观
+        //   (4) since>until 时自动 swap,避免后端返空集误导 admin
+        var dateDebounceTimer = null;
         function onDateChange() {
-            state.since = (els.sinceInput && els.sinceInput.value) || '';
-            state.until = (els.untilInput && els.untilInput.value) || '';
-            // Defense: HTML5 date inputs should reject malformed
-            // values, but the backend's audit_log_repo accepts a
-            // wider range (HH:MM:SS). If the admin types
-            // something invalid the request will surface as a 400
-            // error — show that to them, don't swallow.
-            state.page = 1;
-            writeUrl(true);
-            load();
+            if (dateDebounceTimer) clearTimeout(dateDebounceTimer);
+            dateDebounceTimer = setTimeout(function () {
+                var rawSince = (els.sinceInput && els.sinceInput.value) || '';
+                var rawUntil = (els.untilInput && els.untilInput.value) || '';
+                // 规整:YYYY-MM-DD → YYYY-MM-DD HH:MM:SS
+                state.since = rawSince ? (rawSince + ' 00:00:00') : '';
+                state.until = rawUntil ? (rawUntil + ' 23:59:59') : '';
+                // since > until 时自动 swap,语义直观
+                if (state.since && state.until && state.since > state.until) {
+                    var tmp = state.since;
+                    state.since = state.until;
+                    state.until = tmp;
+                    // 同步回 UI 让 admin 看到
+                    if (els.sinceInput) els.sinceInput.value = state.since.substring(0, 10);
+                    if (els.untilInput) els.untilInput.value = state.until.substring(0, 10);
+                }
+                // 取消上次未完成请求
+                ++state.inflight;
+                state.page = 1;
+                writeUrl(true);
+                load();
+            }, 200);
         }
 
         function goToPage(p) {
@@ -846,6 +868,12 @@
         }
 
         function resetFilters() {
+            // ★ PR 15 — 重置时清掉日期防抖 timer,避免 reset 后又
+            // 触发一次"过期"的日期请求覆盖当前 loading。
+            if (dateDebounceTimer) {
+                clearTimeout(dateDebounceTimer);
+                dateDebounceTimer = null;
+            }
             state.action      = '';
             state.target_type = '';
             state.page        = 1;
@@ -972,10 +1000,31 @@
         }
 
         // ── Load ───────────────────────────────────────────────────
-        function load() {
+        // ★ PR 15 — silent 参数:用户报"日期筛选后一直显示加载中"。
+        // 根因:auto-refresh 每 30s 调 load() → showState('loading')
+        // 把表格完全隐藏 + 显示 spinner。用户手动筛选后等待返回
+        // 期间,30s 计时器命中 → 又一次 showState('loading') → 看
+        // 起来一直 loading。实际上数据已经返回但被下一次 refresh
+        // 覆盖回 loading。
+        //
+        // 修法:
+        //   (1) silent=true 不触发 showState('loading'),只静默更新
+        //       数据 + 表头 status。首屏 / 用户筛选走 silent=false。
+        //   (2) 用户筛选时把 state.inflightToken++ 取消上一次未完成
+        //       请求,避免 stale 响应覆盖当前筛选。
+        //   (3) showHeaderStatus 区分刷新中 / 已暂停 / 实时,不要
+        //       把"刷新中…"挂在用户未操作的头上。
+        //   (4) 静默刷新失败不弹红色错误,只在头部 chip 提示;红色
+        //       banner 只在用户显式操作时显示。
+        function load(silent) {
+            silent = !!silent;
             var token = ++state.inflight;
-            showState('loading');
-            showHeaderStatus('polling', '刷新中…');
+            if (!silent) {
+                showState('loading');
+                showHeaderStatus('polling', '刷新中…');
+            } else {
+                showHeaderStatus('polling', '静默刷新…');
+            }
 
             var qs = '?limit='  + encodeURIComponent(state.limit)
                    + '&offset=' + encodeURIComponent((state.page - 1) * state.limit);
@@ -1002,12 +1051,14 @@
                 .catch(function (err) {
                     if (token !== state.inflight) return;
                     if (err && err.status === 404) {
-                        // Phase 6 endpoint may not be shipped yet —
-                        // show a softer "endpoint pending" hint
-                        // rather than the generic red banner.
                         showState('pending');
                         $('error-message').textContent = '';
                         showHeaderStatus('timeout', '已暂停');
+                        return;
+                    }
+                    if (silent) {
+                        // 静默刷新失败 — 只在 chip 上提示,不弹红 banner
+                        showHeaderStatus('timeout', '刷新失败');
                         return;
                     }
                     showState('error');
@@ -1027,7 +1078,9 @@
             stopAutoRefresh();
             state.refreshTimer = setInterval(function () {
                 if (state.paused) return;
-                load();
+                // ★ PR 15 — 静默刷新,不动 spinner(避免用户筛选后
+                // 看起来"一直加载")。
+                load(true);
             }, REFRESH_INTERVAL_MS);
         }
         function stopAutoRefresh() {
@@ -1043,9 +1096,9 @@
             } else {
                 state.paused = false;
                 showHeaderStatus('polling', '实时');
-                // Refresh immediately on resume so the page never
-                // shows stale data after a tab switch.
-                load();
+                // ★ PR 15 — 切回前台时也走静默刷新,避免从其他页切
+                // 回 admin/audit-logs 时突然闪一下 loading。
+                load(true);
             }
         }
 

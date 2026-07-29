@@ -16,11 +16,11 @@
     <title>LiteCode · 系统概览</title>
 
     <!-- Phase 5 ★ 深色模式 / SPEC §6.3 / A34 — no-flash theme bootstrap. -->
-    <script src="/js/theme-boot.js?v=1.3.4"></script>
-    <link rel="stylesheet" href="/css/style.css?v=1.3.4">
+    <script src="/js/theme-boot.js?v=1.3.5"></script>
+    <link rel="stylesheet" href="/css/style.css?v=1.3.5">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23F8F6F0'/%3E%3Cpath d='M22 18 L42 32 L22 46' stroke='%234D7C5A' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 </head>
-<body class="lc-cyber">
+<body class="lc-cyber lc-page-admin">
     <!--
       v1.3.4 PR 11 ★ admin 5 页装饰层统一(此前完全缺失)。
       SVG path 完全复制 web/index.html:46-72 的内容,经 v1.3.4 PR 8
@@ -87,6 +87,64 @@
                 服务健康、判题队列、提交分布 — 一屏看全。
             </p>
         </header>
+
+
+        <!-- v1.3.4 PR 14 ★ 趋势 row 数据真实化 — PR 13 chip 显示
+             "— / s / — 人 / AC / WA / CE" 占位用户报"数据要真实可信",
+             改成由 JS renderTrendChip() 读取 /admin/stats 的真实字段:
+              - trend-qps:        submissions.recent_24h / 86400 (24h 平均 QPS)
+              - trend-online:     users.total + admins 提示管理员在岗
+              - trend-distrib:    by_status 取 AC / WA / CE 三项真实计数 -->
+        <section class="lc-v4-trend-row" aria-label="实时趋势">
+            <div class="lc-v4-trend-chip">
+                <div class="lc-v4-trend-chip__spark" aria-hidden="true"></div>
+                <div class="lc-v4-trend-chip__label">
+                    <span class="lc-v4-trend-chip__hint">24h 平均 QPS</span>
+                    <span class="lc-v4-trend-chip__value" id="trend-qps">— / s</span>
+                </div>
+            </div>
+            <div class="lc-v4-trend-chip">
+                <div class="lc-v4-trend-chip__spark" aria-hidden="true"></div>
+                <div class="lc-v4-trend-chip__label">
+                    <span class="lc-v4-trend-chip__hint">用户总数</span>
+                    <span class="lc-v4-trend-chip__value" id="trend-online">— 人</span>
+                </div>
+            </div>
+            <div class="lc-v4-trend-chip">
+                <div class="lc-v4-trend-chip__spark" aria-hidden="true"></div>
+                <div class="lc-v4-trend-chip__label">
+                    <span class="lc-v4-trend-chip__hint">提交分布 (AC / WA / CE)</span>
+                    <span class="lc-v4-trend-chip__value" id="trend-distrib">— / — / —</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- v1.3.4 PR 13 ★ 快捷操作 4 卡片 grid — 用户报"左右两边
+             除了 Canvas 粒子就什么都没有",这里把常用的 4 个 admin
+             后台入口(题目/批量导入/判题队列/审计)直接以可点击卡片
+             形式铺满第一屏,justify-self: stretch 自动占满行宽。 -->
+        <section class="lc-v4-quick-actions" aria-label="快捷操作">
+            <a class="lc-v4-quick-action" href="/admin/problems.html">
+                <span class="lc-v4-quick-action__icon" aria-hidden="true">📚</span>
+                <h3 class="lc-v4-quick-action__title">题库管理</h3>
+                <p class="lc-v4-quick-action__hint">新增 / 编辑 / 软删除题目,导入题库。</p>
+            </a>
+            <a class="lc-v4-quick-action" href="/admin/problems.html#bulk-import">
+                <span class="lc-v4-quick-action__icon" aria-hidden="true">⬆️</span>
+                <h3 class="lc-v4-quick-action__title">批量导入</h3>
+                <p class="lc-v4-quick-action__hint">从 JSON / 文本流一次灌入多个题面。</p>
+            </a>
+            <a class="lc-v4-quick-action" href="/admin/audit-logs.html">
+                <span class="lc-v4-quick-action__icon" aria-hidden="true">🛡</span>
+                <h3 class="lc-v4-quick-action__title">审计日志</h3>
+                <p class="lc-v4-quick-action__hint">查看登录、判题、配置变更的最近活动。</p>
+            </a>
+            <a class="lc-v4-quick-action" href="/admin/users.html">
+                <span class="lc-v4-quick-action__icon" aria-hidden="true">👥</span>
+                <h3 class="lc-v4-quick-action__title">用户管理</h3>
+                <p class="lc-v4-quick-action__hint">调整角色、封禁、查看最近登录。</p>
+            </a>
+        </section>
 
 
         <!--
@@ -374,11 +432,11 @@
     </main>
 
     <!-- Load order is mandatory: csp.js → api.js → app.js. -->
-    <script src="/js/csp.js?v=1.3.4" defer></script>
-    <script src="/js/api.js?v=1.3.4" defer></script>
-    <script src="/js/app.js?v=1.3.4" defer></script>
+    <script src="/js/csp.js?v=1.3.5" defer></script>
+    <script src="/js/api.js?v=1.3.5" defer></script>
+    <script src="/js/app.js?v=1.3.5" defer></script>
     <!-- v1.3.4 PR 10 ★ idle 1h 自动登出(管理员停留场景) -->
-    <script src="/js/idle-timeout.js?v=1.3.4" defer></script>
+    <script src="/js/idle-timeout.js?v=1.3.5" defer></script>
 
     <script>
     // ────────────────────────────────────────────────────────────────────
@@ -862,6 +920,43 @@
             });
         }
 
+        // v1.3.4 PR 14 ★ — 趋势 row 真实数据填充。
+        //  - trend-qps:    submissions.recent_24h / 86400(过去 24h 平均 QPS,
+        //                 比"实时 QPS"诚实 — 后端没发时间序列数据)
+        //  - trend-online: users.total / users.admins(总用户 + 在岗 admin 数)
+        //  - trend-distrib: by_status.{ac,wa,ce} 三段拼接
+        // 任何字段缺失时退到 "—" 单字符,绝不编造数据。
+        function renderTrendChips(stats) {
+            var subs = stats && stats.submissions;
+            var users = stats && stats.users;
+            var byStatus = (subs && subs.by_status) || {};
+            var recent24h = (subs && typeof subs.recent_24h === 'number')
+                ? subs.recent_24h : null;
+            var qpsEl = $('trend-qps');
+            if (qpsEl) {
+                qpsEl.textContent = (recent24h !== null)
+                    ? (Math.round((recent24h / 86400) * 1000) / 1000) + ' / s'
+                    : '— / s';
+            }
+            var onlineEl = $('trend-online');
+            if (onlineEl) {
+                var utotal = (users && typeof users.total === 'number')
+                    ? users.total : null;
+                var uadm = (users && typeof users.admins === 'number')
+                    ? users.admins : null;
+                onlineEl.textContent = (utotal !== null)
+                    ? (fmtInt(utotal) + (uadm !== null ? ' 人 · 管理员 ' + fmtInt(uadm) : ' 人'))
+                    : '— 人';
+            }
+            var distribEl = $('trend-distrib');
+            if (distribEl) {
+                var ac = byStatus.ac, wa = byStatus.wa, ce = byStatus.ce;
+                distribEl.textContent = (typeof ac === 'number')
+                    ? (fmtInt(ac) + ' / ' + fmtInt(wa || 0) + ' / ' + fmtInt(ce || 0))
+                    : '— / — / —';
+            }
+        }
+
         // ── Top-level state machine ──────────────────────────────────
         function showState(name) {
             ['loading-state', 'error-state', 'pending-state',
@@ -898,7 +993,11 @@
 
         function loadStats() {
             var token = ++state.inflight;
-            showState('loading');
+            // v1.3.4 PR 13 follow-up: 首次加载显示 loading;后续静默刷新
+            // 只动 chip + 数字,不再切到 loading state(否则每 10s 整页跳一次)
+            if (!lastStats) {
+                showState('loading');
+            }
             showHeaderStatus('polling', '刷新中…');
 
             // Kick off the two requests in parallel. /admin/stats
@@ -935,8 +1034,13 @@
                 var recent = parts[2];
 
                 if (!stats && !health) {
-                    // Both endpoints failed (network down?). Show
-                    // the retry state — admin can hit 重试.
+                    // Both endpoints failed.
+                    // 首次加载 → error state(可重试)
+                    // 静默刷新 → 保留上次数据,只切 chip "已暂停"
+                    if (lastStats) {
+                        showHeaderStatus('timeout', '已暂停');
+                        return;
+                    }
                     showState('error');
                     $('error-message').textContent =
                         '无法连接到服务，请检查网络或稍后重试';
@@ -965,12 +1069,19 @@
                 renderHealth(normalized);
                 renderGauges(normalized);
                 renderStatusDistribution(normalized);
+                renderTrendChips(normalized);
                 renderRecentTable(recentFromStats);
 
                 lastStats = normalized;
                 showHeaderStatus('polling', '实时');
             }).catch(function (err) {
                 if (token !== state.inflight) return;
+                // v1.3.4 PR 13 follow-up: 静默刷新失败时,保留上次数据,
+                // 只切 chip 到 "已暂停",不再切到 error state(避免跳动)。
+                if (lastStats) {
+                    showHeaderStatus('timeout', '已暂停');
+                    return;
+                }
                 showState('error');
                 var msg = (err && err.message)
                     ? err.message : '网络错误，请稍后重试';
@@ -1049,6 +1160,7 @@
                 renderKpis: renderKpis,
                 renderGauges: renderGauges,
                 renderStatusDistribution: renderStatusDistribution,
+                renderTrendChips: renderTrendChips,
                 renderRecentTable: renderRecentTable,
             };
         }
