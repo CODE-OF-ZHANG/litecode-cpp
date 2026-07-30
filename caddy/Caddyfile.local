@@ -88,7 +88,7 @@
         #   - font-src 'self'      — 当前没有 web font，但显式声明便于审计
         # 不在 script-src 加 'unsafe-inline'：所有页面脚本均走外部文件 +
         # 加载顺序为 csp.js → api.js → app.js。
-        header_down Content-Security-Policy "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        header_down Content-Security-Policy "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 
         # Phase 5 ★：透传 Set-Cookie（默认就透传）。登录 / 注册 / 刷新
         # 三个端点会通过 Set-Cookie 下发 lc_refresh；登出端点会用同名

@@ -5964,7 +5964,7 @@ html.dark .lc-v4-auth__pw-toggle[aria-pressed="true"] {
 .lc-v4-page {
     max-width: var(--lc-container-max, 1180px);
     margin: 0 auto;
-    padding: 0 24px 80px;
+    padding: 0 8px 80px;
 }
 .lc-v4-page-header {
     margin: 40px 0 32px;
@@ -9054,7 +9054,7 @@ html.dark .lc-v4-auth__form h1 { color: #FFFFFF; }
        用户反馈"左右两边不至于除了 Canvas 粒子就什么都没有")。*/
 .lc-v4-quick-actions {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: 18px;
     margin: 32px 0 24px;
 }
@@ -9111,7 +9111,7 @@ html.dark .lc-v4-quick-action__hint {
 /* 23.4 Dashboard 顶部趋势 chip 行 — 视觉填实,数据 fallback 占位 */
 .lc-v4-trend-row {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 16px;
     margin: 0 0 28px;
 }

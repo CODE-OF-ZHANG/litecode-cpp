@@ -293,7 +293,7 @@ services:
         # （Caddy env 引用语法），此处用 sed 替换避免依赖 busybox
         # envsubst（不同镜像版本行为差异）。local 模式不引用此变量，
         # sed 替换是 no-op。
-        sed -i "s/\\$${LITECODE_DOMAIN:example.com}/$${LITECODE_DOMAIN:-example.com}/g" /etc/caddy/Caddyfile
+        sed -i 's/$${LITECODE_DOMAIN:example.com}/$${LITECODE_DOMAIN:-example.com}/g' /etc/caddy/Caddyfile
         echo "[caddy] rendered Caddyfile (first 40 lines):"
         sed -n '1,40p' /etc/caddy/Caddyfile
         # Caddy 自带 `caddy validate` 子命令，失败会非 0 退出
