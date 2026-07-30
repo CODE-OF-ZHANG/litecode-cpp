@@ -748,6 +748,16 @@ textarea.lc-input { min-height: 96px; resize: vertical; }
     font-weight: 700;
     text-transform: uppercase;
 }
+.lc-avatar--xs {
+    width: 20px;
+    height: 20px;
+    font-size: 10px;
+}
+.lc-avatar--sm {
+    width: 24px;
+    height: 24px;
+    font-size: 12px;
+}
 .lc-nav-username {
     font-size: var(--lc-font-size-base);
     font-weight: 500;
@@ -2684,6 +2694,9 @@ html.dark .lc-gauge--danger {
 
 .lc-tab-panel {
     margin-top: var(--lc-space-3);
+    /* Bug 3 fix: 约束宽度使其不超过左列区域，保持左对齐 */
+    max-width: calc(50% - var(--lc-space-5) / 2);
+    width: 100%;
 }
 
 /* History pane — sits below the two-column layout. */
@@ -7907,6 +7920,409 @@ html.dark .lc-result-panel__hero {
     width: 100%;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   Global discussion page — discuss.html (Phase 7 ★)
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Discussion card */
+.lc-discussion-card {
+    margin-bottom: var(--lc-space-3);
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+.lc-discussion-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+.lc-discussion-card__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--lc-space-2);
+}
+.lc-discussion-card__user {
+    display: flex;
+    align-items: center;
+    gap: var(--lc-space-2);
+    font-size: 0.875rem;
+    color: var(--lc-color-text-muted);
+}
+.lc-discussion-card__meta {
+    display: flex;
+    gap: var(--lc-space-3);
+}
+.lc-discussion-card__time {
+    font-size: 0.8125rem;
+    color: var(--lc-color-text-muted);
+}
+.lc-discussion-card__title {
+    font-size: 1.0625rem;
+    font-weight: 600;
+    margin: 0 0 var(--lc-space-2) 0;
+    line-height: 1.4;
+}
+.lc-discussion-card__title a {
+    color: var(--lc-color-link);
+    text-decoration: none;
+}
+.lc-discussion-card__title a:hover {
+    text-decoration: underline;
+}
+.lc-discussion-card__preview {
+    font-size: 0.9375rem;
+    color: var(--lc-color-text-secondary);
+    line-height: 1.6;
+    margin: 0 0 var(--lc-space-3) 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.lc-discussion-card__footer {
+    display: flex;
+    gap: var(--lc-space-4);
+    padding-top: var(--lc-space-2);
+    border-top: 1px solid var(--lc-color-border);
+}
+.lc-discussion-card__stat {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.8125rem;
+    color: var(--lc-color-text-muted);
+}
+
+/* Dark overrides for discussion card */
+html.dark .lc-discussion-card:hover {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+html.dark .lc-discussion-card__title a {
+    color: var(--lc-color-link);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Bug 4: LeetCode-style discussion input box
+   ───────────────────────────────────────────────────────────────────────── */
+.lc-discuss-input-box {
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-lg);
+    background: var(--lc-color-surface);
+    overflow: hidden;
+}
+.lc-discuss-input-box__header {
+    display: flex;
+    align-items: center;
+    gap: var(--lc-space-3);
+    padding: var(--lc-space-3) var(--lc-space-4);
+    border-bottom: 1px solid var(--lc-color-border);
+    background: var(--lc-color-bg);
+}
+.lc-discuss-username {
+    font-weight: 500;
+    color: var(--lc-color-text);
+}
+.lc-discuss-input-box__editor {
+    padding: var(--lc-space-3) var(--lc-space-4);
+}
+.lc-discuss-input-box__toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--lc-space-2);
+    padding: var(--lc-space-2) var(--lc-space-4);
+    border-top: 1px solid var(--lc-color-border);
+    background: var(--lc-color-bg);
+}
+.lc-discuss-submit {
+    margin-left: auto;
+    border-radius: 20px;
+    padding: 6px 16px;
+}
+
+/* Dark mode overrides */
+html.dark .lc-discuss-input-box {
+    border-color: var(--lc-color-border-2);
+    background: var(--lc-cyber-surface);
+}
+html.dark .lc-discuss-input-box__header,
+html.dark .lc-discuss-input-box__toolbar {
+    background: var(--lc-cyber-bg);
+    border-color: var(--lc-cyber-border);
+}
+html.dark .lc-discuss-username {
+    color: var(--lc-cyber-text);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Solution & Discussion items in problem.html tab panels (Phase 7 ★)
+   ───────────────────────────────────────────────────────────────────────── */
+
+.lc-solution-item,
+.lc-discussion-item {
+    padding: var(--lc-space-3) var(--lc-space-4);
+    border-bottom: 1px solid var(--lc-color-border);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.lc-solution-item:hover,
+.lc-discussion-item:hover {
+    background: var(--lc-color-bg-hover);
+}
+.lc-solution-item:last-child,
+.lc-discussion-item:last-child {
+    border-bottom: none;
+}
+/* LeetCode-style solution card */
+.lc-solution-item__body {
+    margin-bottom: var(--lc-space-2);
+}
+.lc-solution-item__problem {
+    font-size: 0.75rem;
+    color: var(--lc-color-text-muted);
+    margin-bottom: 2px;
+}
+.lc-solution-item__title {
+    font-weight: 600;
+    font-size: 1rem;
+    color: var(--lc-color-text);
+}
+.lc-solution-item__footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.lc-solution-item__user {
+    display: flex;
+    align-items: center;
+    gap: var(--lc-space-2);
+    font-size: 0.8125rem;
+    color: var(--lc-color-text-muted);
+}
+.lc-solution-item__meta {
+    display: flex;
+    gap: var(--lc-space-3);
+    font-size: 0.75rem;
+    color: var(--lc-color-text-muted);
+}
+.lc-discussion-item__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--lc-space-2);
+}
+.lc-discussion-item__author {
+    font-size: 0.8125rem;
+    color: var(--lc-color-text-muted);
+}
+.lc-discussion-item__time {
+    font-size: 0.8125rem;
+    color: var(--lc-color-text-muted);
+}
+.lc-solution-item__stats,
+.lc-discussion-item__stats {
+    display: flex;
+    gap: var(--lc-space-3);
+    font-size: 0.8125rem;
+    color: var(--lc-color-text-muted);
+    margin-top: var(--lc-space-2);
+}
+.lc-discussion-item__content {
+    font-size: 0.9375rem;
+    color: var(--lc-color-text-secondary);
+    line-height: 1.5;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+html.dark .lc-solution-item:hover,
+html.dark .lc-discussion-item:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Discussion detail page — discuss.html?id=X (Phase 7 ★)
+   ───────────────────────────────────────────────────────────────────────── */
+
+.lc-detail-back {
+    color: var(--lc-color-link);
+    text-decoration: none;
+    font-size: 0.875rem;
+}
+.lc-detail-back:hover { text-decoration: underline; }
+.lc-detail-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin: 16px 0 8px;
+    line-height: 1.4;
+}
+.lc-detail-meta {
+    display: flex;
+    gap: 16px;
+    font-size: 0.8125rem;
+    color: var(--lc-color-text-muted);
+    margin-bottom: 16px;
+}
+.lc-detail-problem {
+    margin-bottom: 16px;
+    padding: 8px 12px;
+    background: var(--lc-color-bg-hover);
+    border-radius: 6px;
+    font-size: 0.875rem;
+}
+.lc-detail-content {
+    font-size: 0.9375rem;
+    line-height: 1.7;
+    color: var(--lc-color-text);
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin-bottom: 20px;
+}
+.lc-detail-actions {
+    display: flex;
+    gap: 12px;
+    padding-top: 16px;
+    border-top: 1px solid var(--lc-color-border);
+}
+.lc-reply-item {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--lc-color-border);
+}
+.lc-reply-item:last-child { border-bottom: none; }
+.lc-reply-item__header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+.lc-reply-item__author {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--lc-color-text);
+}
+.lc-reply-item__time {
+    font-size: 0.8125rem;
+    color: var(--lc-color-text-muted);
+}
+.lc-reply-item__content {
+    font-size: 0.9375rem;
+    line-height: 1.6;
+    color: var(--lc-color-text-secondary);
+    white-space: pre-wrap;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Solution detail page — solution.html?id=X (Phase 7 ★)
+   ───────────────────────────────────────────────────────────────────────── */
+
+.lc-solution-content {
+    font-size: 0.9375rem;
+    line-height: 1.7;
+    color: var(--lc-color-text);
+    margin-bottom: 20px;
+}
+.lc-solution-content pre {
+    background: #282c34;
+    border-radius: 8px;
+    padding: 16px;
+    overflow-x: auto;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 0.875rem;
+    line-height: 1.6;
+    border: 1px solid var(--lc-color-border);
+    white-space: pre;
+    tab-size: 4;
+}
+.lc-solution-content code {
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    background: #f0f0f0;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.875em;
+}
+.lc-solution-content pre code {
+    background: transparent;
+    padding: 0;
+    color: #abb2bf;
+}
+.lc-solution-content pre::-webkit-scrollbar {
+    height: 8px;
+}
+.lc-solution-content pre::-webkit-scrollbar-track {
+    background: #1e1e1e;
+}
+.lc-solution-content pre::-webkit-scrollbar-thumb {
+    background: #4a4a4a;
+    border-radius: 4px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Notification bell + panel (Phase 7 ★)
+   ───────────────────────────────────────────────────────────────────────── */
+
+.lc-notif-panel {
+    position: fixed;
+    z-index: 1000;
+    width: 340px;
+    max-height: 480px;
+    background: var(--lc-color-bg);
+    border: 1px solid var(--lc-color-border);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.lc-notif-panel__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--lc-color-border);
+    font-weight: 600;
+    font-size: 0.9375rem;
+}
+.lc-notif-panel__body {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 120px;
+}
+.lc-notif-item {
+    display: flex;
+    gap: 10px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--lc-color-border);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.lc-notif-item:hover { background: var(--lc-color-bg-hover); }
+.lc-notif-item--unread { background: rgba(77, 124, 90, 0.06); }
+.lc-notif-item__icon {
+    font-size: 1.125rem;
+    flex-shrink: 0;
+    padding-top: 2px;
+}
+.lc-notif-item__body {
+    flex: 1;
+    min-width: 0;
+}
+.lc-notif-item__msg {
+    display: block;
+    font-size: 0.875rem;
+    color: var(--lc-color-text);
+    text-decoration: none;
+    line-height: 1.4;
+    margin-bottom: 4px;
+    word-break: break-word;
+}
+.lc-notif-item__msg:hover { color: var(--lc-color-link); }
+.lc-notif-item__time {
+    font-size: 0.75rem;
+    color: var(--lc-color-text-muted);
+}
+
+html.dark .lc-notif-panel { box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4); }
+html.dark .lc-notif-item--unread { background: rgba(77, 124, 90, 0.12); }
+
+
+
+
+
 /* Tag chips — allow wrapping with a comfortable gap. */
 .lc-tag-chips {
     display: flex;
@@ -9259,3 +9675,84 @@ html.dark .lc-v4-trend-chip__hint {
 /* ════════════════════════════════════════════════════════════════
    §23  END  v1.3.4 PR 13
    ════════════════════════════════════════════════════════════════ */
+
+/* ─────────────────────────────────────────────────────────────────
+   Phase 7 ★ 打卡热力图
+   GitHub 风格的打卡日历，纯 DOM 渲染，零依赖。
+   ───────────────────────────────────────────────────────────────── */
+
+/* 亮色主题打卡颜色 */
+:root {
+    --lc-checkin-none: #ebedf0;
+    --lc-checkin-l1: #9be9a8;
+    --lc-checkin-l2: #40c463;
+    --lc-checkin-l3: #216e32;
+}
+/* 深色主题 — 暗色系但仍保持绿升序语义 */
+html.dark {
+    --lc-checkin-none: #161b22;
+    --lc-checkin-l1: #0e4429;
+    --lc-checkin-l2: #006d32;
+    --lc-checkin-l3: #26a641;
+}
+
+.lc-checkin-calendar {
+    overflow-x: auto;
+}
+.lc-checkin-calendar__grid {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 800px;
+}
+.lc-checkin-calendar__week {
+    display: flex;
+    gap: 3px;
+    align-items: center;
+    flex-shrink: 0;
+}
+.lc-checkin-calendar__months {
+    display: flex;
+    align-items: center;
+    font-size: 11px;
+    color: var(--lc-color-text-muted);
+    margin-bottom: 4px;
+    padding-left: 19px;
+}
+.lc-checkin-calendar__month {
+    font-size: 11px;
+    flex-shrink: 0;
+}
+.lc-checkin-calendar__weekday {
+    font-size: 10px;
+    color: var(--lc-color-text-muted);
+    width: 16px;
+    text-align: center;
+    flex-shrink: 0;
+}
+.lc-checkin-calendar__day {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    cursor: default;
+    transition: opacity 0.15s;
+    flex-shrink: 0;
+}
+.lc-checkin-calendar__day:hover {
+    opacity: 0.8;
+}
+.lc-checkin-calendar__day--future {
+    background: transparent !important;
+}
+.lc-checkin-calendar__legend {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 8px;
+    justify-content: flex-end;
+}
+.lc-checkin-calendar__legend-label {
+    font-size: 11px;
+    color: var(--lc-color-text-muted);
+}
+

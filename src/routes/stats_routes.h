@@ -1108,12 +1108,11 @@ inline void get_user_profile_stats_handler(
         litecode::ConnectionPool&      pool,
         const litecode::JwtConfig&     jwt_cfg) {
 
-    // 1) Auth. Throws ApiException(401, UNAUTHORIZED) on failure;
-    //    server.h's per-request wrap turns it into the unified
-    //    envelope. Anti-enumeration: a missing / bad token gets the
-    //    same wall as a bad token — we don't leak "this username is
-    //    valid" by varying the 401 timing.
-    const Claims claims = require_authentication(req, jwt_cfg);
+    // 1) Optional auth — this endpoint is PUBLIC (Phase 7 ★).
+    //    Anyone can view any user's public stats. We accept an
+    //    optional token so the page can show "viewing as guest"
+    //    without breaking existing logged-in flows.
+    (void)jwt_cfg;   // not used — kept for signature compatibility
 
     // 2) Path → username. 400 on bad shape (empty / too short / too
     //    long / disallowed chars). The handler maps std::nullopt to

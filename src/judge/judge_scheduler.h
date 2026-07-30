@@ -161,6 +161,7 @@
 #include "../config.h"                  // JudgeConfig
 #include "../db/connection_pool.h"      // ConnectionPool
 #include "../db/submission_repo.h"      // mark_running / mark_finished
+#include "../db/checkin_repo.h"         // checkin_repo::try_checkin (Phase 7 ★ 打卡系统)
 #include "../logger.h"                  // LOG_* / RequestIdScope
 #include "../routes/metrics.h"          // MetricsService (Phase 9 ★ v1.2.68)
 #include "../routes/system_routes.h"    // HealthService::Probe / ProbeResult
@@ -924,6 +925,22 @@ private:
         // running pair).
         if (persisted) {
             record_task_metrics(task_started_at, result.status);
+
+            // Phase 7 ★ 打卡系统: AC 成功后尝试打卡
+            if (result.status == "ac") {
+                try {
+                    checkin_repo::try_checkin(
+                        *db_, task.user_id, task.problem_id, task.submission_id);
+                } catch (const std::exception& e) {
+                    // 打卡失败不影响判题结果，只记录日志
+                    try {
+                        LOG_WARN("checkin failed",
+                                 {{"user_id", std::to_string(task.user_id)},
+                                  {"submission_id", std::to_string(task.submission_id)},
+                                  {"error", e.what()}});
+                    } catch (...) {}
+                }
+            }
         }
 
         // 9b. Phase 4 ★ SSE — publish the result to the notifier.

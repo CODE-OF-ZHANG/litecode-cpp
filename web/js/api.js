@@ -1013,6 +1013,111 @@
         // Filled in after the auth object is defined so we can hoist.
         auth: null,
 
+        // ─────────────────────────────────────────────────────────────────
+        //  Checkin API (Phase 7 ★)
+        // ─────────────────────────────────────────────────────────────────
+        checkin: {
+            getToday: function () {
+                return ns.get('/checkin/today');
+            },
+            getCalendar: function () {
+                return ns.get('/checkin/calendar');
+            },
+            getStats: function () {
+                return ns.get('/checkin/stats');
+            },
+        },
+
+        // ─────────────────────────────────────────────────────────────────
+        //  Solution API (Phase 7 ★)
+        // ─────────────────────────────────────────────────────────────────
+        solutions: {
+            list: function (slug, params) {
+                var q = params ? '?' + Object.keys(params).map(function(k){return k+'='+encodeURIComponent(params[k]);}).join('&') : '';
+                return ns.get('/problems/' + encodeURIComponent(slug) + '/solutions' + q);
+            },
+            create: function (slug, title, content) {
+                return ns.post('/problems/' + encodeURIComponent(slug) + '/solutions',
+                    { title: title, content: content });
+            },
+            get: function (id) {
+                return ns.get('/solutions/' + encodeURIComponent(id));
+            },
+            like: function (id) {
+                return ns.post('/solutions/' + encodeURIComponent(id) + '/like');
+            },
+        },
+
+        // ─────────────────────────────────────────────────────────────────
+        //  Discussion API (Phase 7 ★)
+        // ─────────────────────────────────────────────────────────────────
+        discussions: {
+            // 题目下讨论列表
+            listForProblem: function (slug, params) {
+                var q = params ? '?' + Object.keys(params).map(function(k){return k+'='+encodeURIComponent(params[k]);}).join('&') : '';
+                return ns.get('/problems/' + encodeURIComponent(slug) + '/discussions' + q);
+            },
+            // 发布题目讨论
+            createForProblem: function (slug, content) {
+                return ns.post('/problems/' + encodeURIComponent(slug) + '/discussions',
+                    { content: content });
+            },
+            // 全局讨论列表
+            listGlobal: function (params) {
+                var q = params ? '?' + Object.keys(params).map(function(k){return k+'='+encodeURIComponent(params[k]);}).join('&') : '';
+                return ns.get('/discussions' + q);
+            },
+            // 创建全局讨论
+            createGlobal: function (title, content) {
+                return ns.post('/discussions', { title: title, content: content });
+            },
+            // 讨论详情（含回复）
+            get: function (id) {
+                return ns.get('/discussions/' + encodeURIComponent(id));
+            },
+            // 回复讨论
+            reply: function (id, content) {
+                return ns.post('/discussions/' + encodeURIComponent(id) + '/replies',
+                    { content: content });
+            },
+            // 点赞/取消点赞
+            like: function (id) {
+                return ns.post('/discussions/' + encodeURIComponent(id) + '/like');
+            },
+            // 题目讨论数
+            countForProblem: function (problemId) {
+                return ns.get('/discussions/count/' + encodeURIComponent(problemId));
+            },
+        },
+
+        // ─────────────────────────────────────────────────────────────────
+        //  Stats API (Phase 7 ★ — user profile for visitors)
+        // ─────────────────────────────────────────────────────────────────
+        stats: {
+            getProfile: function (username) {
+                return ns.get('/stats/profile/' + encodeURIComponent(username));
+            },
+        },
+
+        // ─────────────────────────────────────────────────────────────────
+        //  Notification API (Phase 7 ★)
+        // ─────────────────────────────────────────────────────────────────
+        notifications: {
+            list: function (params) {
+                var q = params ? '?' + Object.keys(params).map(function(k){return k+'='+encodeURIComponent(params[k]);}).join('&') : '';
+                return ns.get('/notifications' + q);
+            },
+            getUnreadCount: function () {
+                return ns.get('/notifications/unread-count');
+            },
+            markRead: function (id) {
+                return ns.post('/notifications/' + encodeURIComponent(id) + '/read');
+            },
+            markAllRead: function () {
+                return ns.post('/notifications/read-all');
+            },
+        },
+
         // Error wiring — register a global notifier (toast) without
         // forcing a hard dependency on app.js.
         onError: function (cb) {
@@ -1253,6 +1358,7 @@
     ns.auth = auth;
     root.litecode = root.litecode || {};
     root.litecode.api = ns;
+    root.litecode.auth = auth; // Phase 7 ★ 修复: auth 应该在 litecode.auth 上,而非只有 litecode.api.auth
 
     // ────────────────────────────────────────────────────────────────────
     //  Removed APIs (Phase 5 ★ migration notes):

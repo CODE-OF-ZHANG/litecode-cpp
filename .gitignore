@@ -47,3 +47,4 @@ docs/*
 .env.*
 !.env.example
 questions/
+/.vscode-ai-images/

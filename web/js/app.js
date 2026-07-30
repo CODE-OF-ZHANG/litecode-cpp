@@ -155,6 +155,7 @@
         { label: '首页',         href: '/index.html',         key: 'home'      },
         { label: '题库',         href: '/problems_list.html', key: 'problems'  },
         { label: '排行榜',       href: '/ranking.html',       key: 'ranking'   },
+        { label: '讨论区',       href: '/discuss.html',       key: 'discuss'   },
         { label: '个人主页',     href: '#',                   key: 'profile', authOnly: true,
           dynamicHref: function (u) { return '/profile.html?u=' + encodeURIComponent(u.username); } },
         { label: '管理后台',     href: '/admin/dashboard.html', key: 'admin', adminOnly: true },
@@ -273,6 +274,24 @@
             });
             themeBtn.addEventListener('click', toggleTheme);
             right.appendChild(themeBtn);
+
+            // Phase 7 ★ Notification bell
+            var notifBell = el('button', {
+                type: 'button',
+                class: 'lc-icon-btn',
+                id: 'nav-notif-bell',
+                'aria-label': '通知',
+                title: '通知',
+                dataset: { act: 'notif-bell' },
+                text: '🔔',
+            });
+            notifBell.addEventListener('click', function (e) {
+                e.stopPropagation();
+                toggleNotificationPanel(notifBell);
+            });
+            right.appendChild(notifBell);
+            // Load unread count badge
+            refreshNotifBadge();
 
             if (user) {
                 var username = String(user.username || '');
@@ -444,6 +463,179 @@
             document.addEventListener('click', onDocClick, true);
             document.addEventListener('keydown', onDocKey, true);
         }, 0);
+    }
+
+    // ── Phase 7 ★ Notification bell ─────────────────────────────────
+
+    var notifPanel = null;
+    var notifSSE = null;
+    var notifUnread = 0;
+
+    function refreshNotifBadge() {
+        if (!litecode.api.auth.isLoggedIn()) return;
+        litecode.api.notifications.getUnreadCount()
+            .then(function (resp) {
+                notifUnread = resp.data.count || 0;
+                var bell = document.getElementById('nav-notif-bell');
+                if (bell) {
+                    bell.textContent = notifUnread > 0 ? '🔔(' + notifUnread + ')' : '🔔';
+                    bell.title = notifUnread > 0 ? notifUnread + ' 条未读通知' : '通知';
+                }
+            })
+            .catch(function () {});
+    }
+
+    function toggleNotificationPanel(bell) {
+        if (notifPanel) {
+            closeNotifPanel();
+            return;
+        }
+        openNotifPanel(bell);
+    }
+
+    function openNotifPanel(bell) {
+        notifPanel = document.createElement('div');
+        notifPanel.id = 'lc-notif-panel';
+        notifPanel.className = 'lc-notif-panel';
+        document.body.appendChild(notifPanel);
+
+        notifPanel.innerHTML =
+            '<div class="lc-notif-panel__header">' +
+                '<span>通知</span>' +
+                '<button type="button" class="lc-btn lc-btn--ghost lc-btn--sm" id="notif-mark-all-read">全部已读</button>' +
+            '</div>' +
+            '<div class="lc-notif-panel__body" id="notif-list"><div class="lc-loading">加载中...</div></div>';
+
+        document.getElementById('notif-mark-all-read').addEventListener('click', function () {
+            litecode.api.notifications.markAllRead()
+                .then(function () {
+                    refreshNotifBadge();
+                    loadNotifList();
+                })
+                .catch(function () {});
+        });
+
+        // Position below bell
+        var rect = bell.getBoundingClientRect();
+        requestAnimationFrame(function () {
+            notifPanel.style.top = (rect.bottom + 6) + 'px';
+            notifPanel.style.right = (window.innerWidth - rect.right) + 'px';
+            notifPanel.style.left = 'auto';
+        });
+
+        loadNotifList();
+
+        // SSE subscription
+        if (litecode.auth.isLoggedIn()) {
+            startNotifSSE();
+        }
+
+        // Click-away
+        setTimeout(function () {
+            document.addEventListener('click', function onNotifAway(ev) {
+                if (notifPanel && !notifPanel.contains(ev.target) && !bell.contains(ev.target)) {
+                    closeNotifPanel();
+                    document.removeEventListener('click', onNotifAway);
+                }
+            });
+        }, 0);
+    }
+
+    function closeNotifPanel() {
+        if (notifPanel) {
+            notifPanel.remove();
+            notifPanel = null;
+        }
+        if (notifSSE) {
+            notifSSE.close();
+            notifSSE = null;
+        }
+    }
+
+    function loadNotifList() {
+        var list = document.getElementById('notif-list');
+        if (!list) return;
+        litecode.api.notifications.list({ limit: 20 })
+            .then(function (resp) {
+                var items = resp.data.items || [];
+                if (items.length === 0) {
+                    list.innerHTML = '<div class="lc-empty-state"><p>暂无通知</p></div>';
+                    return;
+                }
+                list.innerHTML = '';
+                items.forEach(function (n) {
+                    var item = document.createElement('div');
+                    item.className = 'lc-notif-item' + (n.is_read ? '' : ' lc-notif-item--unread');
+                    item.innerHTML =
+                        '<div class="lc-notif-item__icon">' + notifIcon(n.type) + '</div>' +
+                        '<div class="lc-notif-item__body">' +
+                            '<a class="lc-notif-item__msg" href="' + (n.link || '#') + '">' + escapeHtml(n.message) + '</a>' +
+                            '<span class="lc-notif-item__time">' + formatNotifTime(n.created_at) + '</span>' +
+                        '</div>';
+                    if (!n.is_read) {
+                        item.addEventListener('click', function () {
+                            litecode.api.notifications.markRead(n.id)
+                                .then(function () {
+                                    refreshNotifBadge();
+                                    item.classList.remove('lc-notif-item--unread');
+                                })
+                                .catch(function () {});
+                        });
+                    }
+                    list.appendChild(item);
+                });
+            })
+            .catch(function () {
+                list.innerHTML = '<div class="lc-empty-state"><p>加载失败</p></div>';
+            });
+    }
+
+    function notifIcon(type) {
+        if (type === 'discussion_reply') return '💬';
+        if (type === 'solution_like') return '❤️';
+        if (type === 'checkin_streak') return '🔥';
+        return '🔔';
+    }
+
+    function formatNotifTime(iso) {
+        if (!iso) return '';
+        var d = new Date(iso);
+        if (isNaN(d.getTime())) return iso;
+        var diff = Date.now() - d.getTime();
+        if (diff < 60000) return '刚刚';
+        if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前';
+        if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前';
+        return d.toLocaleDateString('zh-CN');
+    }
+
+    function startNotifSSE() {
+        if (notifSSE) notifSSE.close();
+        notifSSE = litecode.api.sse('/notifications/stream', {
+            onOpen: function () {},
+            onResult: function (data) {
+                // New notification received
+                notifUnread++;
+                var bell = document.getElementById('nav-notif-bell');
+                if (bell) {
+                    bell.textContent = notifUnread > 0 ? '🔔(' + notifUnread + ')' : '🔔';
+                }
+                // If panel is open, reload list
+                if (notifPanel) loadNotifList();
+            },
+            onError: function () {
+                // Silently stop
+                if (notifSSE) { notifSSE.close(); notifSSE = null; }
+            },
+            onClose: function () {
+                notifSSE = null;
+            },
+        });
+    }
+
+    function escapeHtml(str) {
+        var div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
     }
 
     function hydrateUser() {

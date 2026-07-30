@@ -83,6 +83,16 @@
             <button type="button" class="lc-tab" role="tab" id="tab-problem-btn"
                     data-target="problem-pane" aria-controls="problem-pane"
                     aria-selected="true" tabindex="0">题目</button>
+            <button type="button" class="lc-tab" role="tab" id="tab-solution-btn"
+                    data-target="solution-pane" aria-controls="solution-pane"
+                    aria-selected="false" tabindex="-1">
+                题解 <span class="lc-tab__count" id="solution-tab-count"></span>
+            </button>
+            <button type="button" class="lc-tab" role="tab" id="tab-discussion-btn"
+                    data-target="discussion-pane" aria-controls="discussion-pane"
+                    aria-selected="false" tabindex="-1">
+                讨论 <span class="lc-tab__count" id="discussion-tab-count"></span>
+            </button>
             <button type="button" class="lc-tab" role="tab" id="tab-history-btn"
                     data-target="history-pane" aria-controls="history-pane"
                     aria-selected="false" tabindex="-1">
@@ -103,6 +113,12 @@
         <div id="problem-pane" class="lc-problem-layout" hidden>
             <article class="lc-problem-pane" aria-label="题目描述">
                 <header class="lc-problem-pane__header">
+                    <!-- Phase 7 ★ 题目导航按钮 -->
+                    <div id="problem-nav" class="lc-row lc-problem-pane__nav-row" style="margin-bottom: 8px; gap: 8px;">
+                        <a href="/problems_list.html" class="lc-btn lc-btn--ghost lc-btn--sm">← 返回列表</a>
+                        <button type="button" id="prev-problem-btn" class="lc-btn lc-btn--ghost lc-btn--sm" disabled>← 上一题</button>
+                        <button type="button" id="next-problem-btn" class="lc-btn lc-btn--ghost lc-btn--sm" disabled>下一题 →</button>
+                    </div>
                     <div class="lc-row lc-problem-pane__title-row">
                         <h1 id="problem-title" class="lc-problem-pane__title">…</h1>
                         <span id="problem-difficulty" class="lc-pill">…</span>
@@ -370,6 +386,53 @@
                 </section>
             </aside>
         </div>
+
+        <!-- Phase 7 ★ 题解面板 -->
+        <section id="solution-pane" class="lc-tab-panel" hidden aria-label="题解" role="tabpanel" aria-labelledby="tab-solution-btn">
+            <div class="lc-solution-list" id="solution-list"></div>
+            <button type="button" class="lc-btn lc-btn--primary" id="add-solution-btn" style="margin-top:16px;">发布题解</button>
+            <form id="solution-form" class="lc-solution-form" hidden style="margin-top:16px;">
+                <!-- 标题自动关联题目，用户不可编辑 -->
+                <div id="solution-problem-link" style="margin-bottom:12px;font-weight:600;"></div>
+
+                <!-- 思路区 -->
+                <label class="lc-form-label" style="margin-bottom:4px;">思路</label>
+                <div id="solution思路-editor-wrap" class="lc-md-editor-shell" style="margin-bottom:12px;">
+                    <textarea id="solution-思路" class="lc-input" rows="4" placeholder="描述你的解题思路..."></textarea>
+                </div>
+
+                <!-- 解题过程区 -->
+                <label class="lc-form-label" style="margin-bottom:4px;">解题过程</label>
+                <div id="solution-steps"></div>
+                <button type="button" class="lc-btn lc-btn--ghost lc-btn--sm" id="add-step-btn" style="margin-top:8px;">+ 添加步骤</button>
+
+                <!-- 代码区 -->
+                <label class="lc-form-label" style="margin-bottom:4px;margin-top:12px;">代码</label>
+                <div class="lc-row" style="gap:8px;margin-bottom:8px;">
+                    <select id="solution-lang" class="lc-input" style="width:auto;">
+                        <option value="cpp">C++</option>
+                        <option value="c">C</option>
+                        <option value="java">Java</option>
+                        <option value="python">Python</option>
+                    </select>
+                </div>
+                <textarea id="solution-code" class="lc-input" rows="6" placeholder="粘贴你的代码..."></textarea>
+
+                <div class="lc-row lc-row--end" style="gap:8px;margin-top:12px;">
+                    <button type="button" class="lc-btn lc-btn--ghost" id="cancel-solution-btn">取消</button>
+                    <button type="submit" class="lc-btn lc-btn--primary">发布</button>
+                </div>
+            </form>
+        </section>
+
+        <!-- Phase 7 ★ 讨论面板 -->
+        <section id="discussion-pane" class="lc-tab-panel" hidden aria-label="讨论" role="tabpanel" aria-labelledby="tab-discussion-btn">
+            <div class="lc-discussion-list" id="discussion-list"></div>
+            <form id="discussion-form" class="lc-discussion-form" style="margin-top:16px;">
+                <textarea id="discussion-content" class="lc-input" rows="3" placeholder="写下你的问题或想法..."></textarea>
+                <button type="submit" class="lc-btn lc-btn--primary" style="margin-top:8px;">发布</button>
+            </form>
+        </section>
 
         <!--
           Phase 5 ★ 提交历史标签页 (v1.2.29)
@@ -696,6 +759,55 @@
                     list.appendChild(li);
                 });
             }
+        }
+
+        // Phase 7 ★ 加载题目导航（上一题/下一题）
+        function loadProblemNavigation(slug) {
+            var nav = $('problem-nav');
+            var prevBtn = $('prev-problem-btn');
+            var nextBtn = $('next-problem-btn');
+            if (!nav || !prevBtn || !nextBtn) return;
+
+            // 始终显示导航栏，按钮根据数据决定是否可用
+            nav.hidden = false;
+
+            litecode.api.get('/problems/' + encodeURIComponent(slug) + '/navigation')
+                .then(function (resp) {
+                    var data = (resp && resp.data) || {};
+                    if (data.prev) {
+                        prevBtn.onclick = function() { window.location.href = '/problem.html?slug=' + encodeURIComponent(data.prev.slug); };
+                        prevBtn.disabled = false;
+                        prevBtn.removeAttribute('disabled');
+                        prevBtn.classList.remove('lc-btn--disabled');
+                    } else {
+                        prevBtn.onclick = null;
+                        prevBtn.disabled = true;
+                        prevBtn.setAttribute('disabled', '');
+                        prevBtn.classList.add('lc-btn--disabled');
+                    }
+                    if (data.next) {
+                        nextBtn.onclick = function() { window.location.href = '/problem.html?slug=' + encodeURIComponent(data.next.slug); };
+                        nextBtn.disabled = false;
+                        nextBtn.removeAttribute('disabled');
+                        nextBtn.classList.remove('lc-btn--disabled');
+                    } else {
+                        nextBtn.onclick = null;
+                        nextBtn.disabled = true;
+                        nextBtn.setAttribute('disabled', '');
+                        nextBtn.classList.add('lc-btn--disabled');
+                    }
+                })
+                .catch(function () {
+                    // API 失败时两个按钮都禁用
+                    prevBtn.onclick = null;
+                    prevBtn.disabled = true;
+                    prevBtn.setAttribute('disabled', '');
+                    prevBtn.classList.add('lc-btn--disabled');
+                    nextBtn.onclick = null;
+                    nextBtn.disabled = true;
+                    nextBtn.setAttribute('disabled', '');
+                    nextBtn.classList.add('lc-btn--disabled');
+                });
         }
 
         // v1.3.2 — editor bootstrap moved to web/js/editor.js
@@ -1713,6 +1825,10 @@
                         return;
                     }
                     renderProblem(state.problem);
+                    // Phase 7 ★ 加载题目导航（上一题/下一题）
+                    loadProblemNavigation(state.slug);
+                    // Phase 7 ★ 加载讨论数 badge
+                    loadDiscussionCount(state.problem.id);
                     // Initialize editor with the DEFAULT template, NOT
                     // a saved draft. SPEC §11 "刷新提示恢复" requires an
                     // explicit user gesture (Restore / Discard) before
@@ -1870,6 +1986,136 @@
                 b.classList.toggle('lc-seg__btn--active', isActive);
                 b.setAttribute('aria-selected', isActive ? 'true' : 'false');
             }
+        }
+
+        // ── Phase 7 ★ Solution tab ──────────────────────────────────
+        var tabSolutionState = { loaded: false };
+
+        function loadSolutions() {
+            var slug = state.slug;
+            if (!slug) return;
+            tabSolutionState.loaded = true;
+            var container = $('solution-list');
+            container.innerHTML = '<div class="lc-loading"><span>加载中...</span></div>';
+
+            litecode.api.solutions.list(slug, { limit: 50 })
+                .then(function (resp) {
+                    var items = resp.data.items || [];
+                    if (items.length === 0) {
+                        container.innerHTML = '<div class="lc-empty-state"><p>暂无题解，成为第一个撰写者！</p></div>';
+                        return;
+                    }
+                    container.innerHTML = '';
+                    items.forEach(function (s) {
+                        container.appendChild(makeSolutionNode(s));
+                    });
+                })
+                .catch(function () {
+                    container.innerHTML = '<div class="lc-empty-state"><p>加载失败</p></div>';
+                });
+        }
+
+        function makeSolutionNode(s) {
+            var div = document.createElement('div');
+            div.className = 'lc-solution-item';
+            var author = s.user ? escapeHtml(s.user.username) : '匿名';
+            var avatar = s.user && s.user.avatar
+                ? '<img src="' + escapeHtml(s.user.avatar) + '" class="lc-avatar--xs" alt="">'
+                : '<span class="lc-avatar--xs">' + (author.charAt(0).toUpperCase()) + '</span>';
+            var time = formatRelativeTime(s.created_at);
+            var problemTitle = s.problem_title || state.problem ? (state.problem.title || '') : '';
+            var solutionTitle = s.title || '题解';
+            div.innerHTML =
+                '<div class="lc-solution-item__body">' +
+                    '<div class="lc-solution-item__problem">' + escapeHtml(problemTitle) + '</div>' +
+                    '<div class="lc-solution-item__title">' + escapeHtml(solutionTitle) + '</div>' +
+                '</div>' +
+                '<div class="lc-solution-item__footer">' +
+                    '<div class="lc-solution-item__user">' + avatar + '<span>' + author + '</span></div>' +
+                    '<div class="lc-solution-item__meta">' +
+                        '<span>❤️ ' + (s.like_count || 0) + '</span>' +
+                        '<span>' + time + '</span>' +
+                    '</div>' +
+                '</div>';
+            div.addEventListener('click', function () {
+                window.location.href = '/solution.html?id=' + s.id;
+            });
+            return div;
+        }
+
+        // ── Phase 7 ★ Discussion tab ────────────────────────────────
+        var tabDiscussionState = { loaded: false };
+
+        function loadDiscussionCount(problemId) {
+            if (!problemId) return;
+            litecode.api.discussions.countForProblem(problemId)
+                .then(function (resp) {
+                    var count = resp.data.count || 0;
+                    var el = $('discussion-tab-count');
+                    if (el) el.textContent = count > 0 ? ' (' + count + ')' : '';
+                })
+                .catch(function () {});
+        }
+
+        function loadDiscussions() {
+            var slug = state.slug;
+            if (!slug) return;
+            tabDiscussionState.loaded = true;
+            var container = $('discussion-list');
+            container.innerHTML = '<div class="lc-loading"><span>加载中...</span></div>';
+
+            litecode.api.discussions.listForProblem(slug, { limit: 50 })
+                .then(function (resp) {
+                    var items = resp.data.items || [];
+                    if (items.length === 0) {
+                        container.innerHTML = '<div class="lc-empty-state"><p>暂无讨论，来发表你的问题或想法吧！</p></div>';
+                        return;
+                    }
+                    container.innerHTML = '';
+                    items.forEach(function (d) {
+                        container.appendChild(makeDiscussionNode(d));
+                    });
+                })
+                .catch(function () {
+                    container.innerHTML = '<div class="lc-empty-state"><p>加载失败</p></div>';
+                });
+        }
+
+        function makeDiscussionNode(d) {
+            var div = document.createElement('div');
+            div.className = 'lc-discussion-item';
+            var author = d.user ? escapeHtml(d.user.username) : '匿名';
+            var time = formatRelativeTime(d.created_at);
+            var preview = escapeHtml(d.content || '').substring(0, 150);
+            div.innerHTML =
+                '<div class="lc-discussion-item__header">' +
+                    '<span class="lc-discussion-item__author">' + author + '</span>' +
+                    '<span class="lc-discussion-item__time">' + time + '</span>' +
+                '</div>' +
+                '<div class="lc-discussion-item__content">' + preview + '</div>' +
+                '<div class="lc-discussion-item__stats">' +
+                    '<span>💬 ' + (d.reply_count || 0) + '</span>' +
+                    '<span>❤️ ' + (d.like_count || 0) + '</span>' +
+                '</div>';
+            return div;
+        }
+
+        function formatRelativeTime(iso) {
+            if (!iso) return '';
+            var d = new Date(iso);
+            if (isNaN(d.getTime())) return iso;
+            var diff = Date.now() - d.getTime();
+            if (diff < 60000) return '刚刚';
+            if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前';
+            if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前';
+            if (diff < 604800000) return Math.floor(diff / 86400000) + ' 天前';
+            return d.toLocaleDateString('zh-CN');
+        }
+
+        function escapeHtml(str) {
+            var div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
         }
 
         // tabHistoryFormatTime — convert a server ISO-ish timestamp
@@ -2320,29 +2566,56 @@
         }
 
         // currentTab — single source of truth for which view is
-        // visible. 'problem' (default) or 'history'.
+        // visible. 'problem' (default), 'history', 'solution', or 'discussion'.
         var currentTab = 'problem';
         function tabShow(name) {
             currentTab = name;
-            var problemPane = $('problem-pane');
-            var historyPane = $('history-pane');
+            var problemPane   = $('problem-pane');
+            var historyPane   = $('history-pane');
+            var solutionPane  = $('solution-pane');
+            var discussionPane = $('discussion-pane');
+            var tabBtns = [
+                $('tab-problem-btn'),
+                $('tab-solution-btn'),
+                $('tab-discussion-btn'),
+                $('tab-history-btn'),
+            ];
+
+            // Hide all panes
+            problemPane.hidden    = true;
+            historyPane.hidden   = true;
+            solutionPane.hidden  = true;
+            discussionPane.hidden = true;
+
+            // Reset all tab states
+            tabBtns.forEach(function(b) {
+                if (!b) return;
+                b.setAttribute('aria-selected', 'false');
+                b.setAttribute('tabindex', '-1');
+            });
+
             if (name === 'history') {
-                problemPane.hidden = true;
                 historyPane.hidden = false;
-                $('tab-problem-btn').setAttribute('aria-selected', 'false');
-                $('tab-problem-btn').setAttribute('tabindex', '-1');
                 $('tab-history-btn').setAttribute('aria-selected', 'true');
                 $('tab-history-btn').setAttribute('tabindex', '0');
                 if (!tabHistoryState.loaded) tabHistoryLoad();
+                tabHistorySyncHash();
+            } else if (name === 'solution') {
+                solutionPane.hidden = false;
+                $('tab-solution-btn').setAttribute('aria-selected', 'true');
+                $('tab-solution-btn').setAttribute('tabindex', '0');
+                if (!tabSolutionState.loaded) loadSolutions();
+            } else if (name === 'discussion') {
+                discussionPane.hidden = false;
+                $('tab-discussion-btn').setAttribute('aria-selected', 'true');
+                $('tab-discussion-btn').setAttribute('tabindex', '0');
+                if (!tabDiscussionState.loaded) loadDiscussions();
             } else {
+                // 'problem'
                 problemPane.hidden = false;
-                historyPane.hidden = true;
                 $('tab-problem-btn').setAttribute('aria-selected', 'true');
                 $('tab-problem-btn').setAttribute('tabindex', '0');
-                $('tab-history-btn').setAttribute('aria-selected', 'false');
-                $('tab-history-btn').setAttribute('tabindex', '-1');
             }
-            tabHistorySyncHash();
         }
 
         // ── Event wiring ───────────────────────────────────────────
@@ -2459,6 +2732,124 @@
                 });
             });
 
+            // Phase 7 ★ Solution form
+            var solutionStepCount = 0;
+            function addSolutionStep() {
+                solutionStepCount++;
+                var stepsDiv = $('solution-steps');
+                var stepDiv = document.createElement('div');
+                stepDiv.className = 'lc-solution-step';
+                stepDiv.style.marginBottom = '12px';
+                stepDiv.style.padding = '12px';
+                stepDiv.style.border = '1px solid var(--lc-color-border)';
+                stepDiv.style.borderRadius = 'var(--lc-radius-md)';
+                stepDiv.innerHTML =
+                    '<div class="lc-row" style="gap:8px;margin-bottom:8px;">' +
+                        '<input type="text" class="lc-input step-title" placeholder="步骤名称，如：第一步" maxlength="50" style="flex:1;">' +
+                        '<button type="button" class="lc-btn lc-btn--ghost lc-btn--sm remove-step-btn">×</button>' +
+                    '</div>' +
+                    '<textarea class="lc-input step-content" rows="3" placeholder="描述这个步骤的做法..."></textarea>';
+                stepsDiv.appendChild(stepDiv);
+                stepDiv.querySelector('.remove-step-btn').addEventListener('click', function() {
+                    stepsDiv.removeChild(stepDiv);
+                });
+            }
+            $('add-step-btn').addEventListener('click', addSolutionStep);
+
+            $('add-solution-btn').addEventListener('click', function () {
+                if (!litecode.auth.isLoggedIn()) {
+                    alert('请先登录后再发布题解');
+                    return;
+                }
+                // 显示题解关联的题目
+                var problemTitle = state.problem ? state.problem.title : '';
+                $('solution-problem-link').textContent = '题目：' + problemTitle;
+                $('add-solution-btn').hidden = true;
+                $('solution-form').hidden = false;
+                // 初始化第一个步骤
+                if (solutionStepCount === 0) addSolutionStep();
+            });
+            $('cancel-solution-btn').addEventListener('click', function () {
+                $('solution-form').hidden = true;
+                $('add-solution-btn').hidden = false;
+            });
+            $('solution-form').addEventListener('submit', function (e) {
+                e.preventDefault();
+                // 标题自动关联题目
+                var title = state.problem ? state.problem.title + ' 题解' : '题解';
+                // 收集思路
+                var 思路 = $('solution-思路') ? $('solution-思路').value.trim() : '';
+                // 收集步骤
+                var stepsDiv = $('solution-steps');
+                var stepNodes = stepsDiv.querySelectorAll('.lc-solution-step');
+                var stepsMd = '';
+                stepNodes.forEach(function(step, idx) {
+                    var stepTitle = step.querySelector('.step-title').value.trim() || ('步骤 ' + (idx + 1));
+                    var stepContent = step.querySelector('.step-content').value.trim();
+                    if (stepContent) {
+                        stepsMd += '\n### ' + stepTitle + '\n\n' + stepContent;
+                    }
+                });
+                // 收集代码
+                var code = $('solution-code') ? $('solution-code').value.trim() : '';
+                var lang = $('solution-lang') ? $('solution-lang').value : 'cpp';
+                var codeMd = code ? '\n### 代码\n\n```' + lang + '\n' + code + '\n```' : '';
+                // 组合为 Markdown
+                var content = '';
+                if (思路) content += '## 思路\n\n' + 思路;
+                if (stepsMd) content += '\n\n## 解题过程' + stepsMd;
+                if (codeMd) content += '\n\n' + codeMd;
+                if (!content.trim()) {
+                    alert('请填写解题思路或过程');
+                    return;
+                }
+                var btn = $('solution-form').querySelector('[type=submit]');
+                btn.disabled = true;
+                btn.textContent = '发布中...';
+                litecode.api.solutions.create(state.slug, title, content)
+                    .then(function () {
+                        $('solution-form').hidden = true;
+                        $('add-solution-btn').hidden = false;
+                        btn.disabled = false;
+                        btn.textContent = '发布';
+                        // 重置表单
+                        solutionStepCount = 0;
+                        $('solution-steps').innerHTML = '';
+                        loadSolutions();
+                    })
+                    .catch(function (err) {
+                        btn.disabled = false;
+                        btn.textContent = '发布';
+                        alert(err.message || '发布失败');
+                    });
+            });
+
+            // Phase 7 ★ Discussion form
+            $('discussion-form').addEventListener('submit', function (e) {
+                e.preventDefault();
+                if (!litecode.auth.isLoggedIn()) {
+                    alert('请先登录后再发布讨论');
+                    return;
+                }
+                var content = $('discussion-content').value.trim();
+                if (!content) return;
+                var btn = $('discussion-form').querySelector('[type=submit]');
+                btn.disabled = true;
+                btn.textContent = '发布中...';
+                litecode.api.discussions.createForProblem(state.slug, content)
+                    .then(function () {
+                        $('discussion-content').value = '';
+                        btn.disabled = false;
+                        btn.textContent = '发布';
+                        loadDiscussions();
+                    })
+                    .catch(function (err) {
+                        btn.disabled = false;
+                        btn.textContent = '发布';
+                        alert(err.message || '发布失败');
+                    });
+            });
+
             // Keyboard shortcuts — v1.3.4 PR 4 swap:
             //   Ctrl/Cmd + Enter         → 运行样例 (faster iteration)
             //   Ctrl/Cmd + Shift + Enter → 提交
@@ -2506,13 +2897,18 @@
             // navigation between tabs, per ARIA tabs pattern.
             var tabBtns = [
                 $('tab-problem-btn'),
+                $('tab-solution-btn'),
+                $('tab-discussion-btn'),
                 $('tab-history-btn'),
             ];
             tabBtns.forEach(function (btn) {
                 if (!btn) return;
                 btn.addEventListener('click', function () {
                     var target = btn.getAttribute('data-target') || 'problem-pane';
-                    tabShow(target === 'history-pane' ? 'history' : 'problem');
+                    if (target === 'history-pane') tabShow('history');
+                    else if (target === 'solution-pane') tabShow('solution');
+                    else if (target === 'discussion-pane') tabShow('discussion');
+                    else tabShow('problem');
                 });
                 btn.addEventListener('keydown', function (e) {
                     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;

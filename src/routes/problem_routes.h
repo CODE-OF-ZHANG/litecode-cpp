@@ -770,6 +770,95 @@ inline void get_problem_detail_handler(httplib::Response&         res,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+//  GET /api/v1/problems/:slug/navigation — Phase 7 ★
+//  返回当前题目的上一题和下一题（按 created_at DESC, id DESC 排序）
+// ────────────────────────────────────────────────────────────────────────────
+
+inline void handle_problem_navigation(
+    httplib::Response&        res,
+    const httplib::Request&   req,
+    ConnectionPool&           pool,
+    RateLimiter&              limiter,
+    const RateLimitConfig&    rate_cfg) {
+
+    consume_rate_limit(res, req, limiter, problems_public_quota(rate_cfg));
+
+    // 获取 slug（直接从路径提取，因为 navigation 路由的 regex 已经是 /api/v1/problems/:slug/navigation）
+    std::string slug;
+    {
+        const auto& path = req.path;
+        const std::string prefix = "/api/v1/problems/";
+        const std::string suffix = "/navigation";
+        if (path.size() <= prefix.size() + suffix.size()) {
+            send_error(res, 400, ErrorCode::INVALID_INPUT, "invalid path");
+            return;
+        }
+        slug = path.substr(prefix.size());
+        if (slug.size() >= suffix.size() && slug.compare(slug.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            slug = slug.substr(0, slug.size() - suffix.size());
+        }
+    }
+    if (slug.empty()) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT, "invalid slug");
+        return;
+    }
+
+    // 查找当前题目
+    auto current = litecode::problem_repo::find_by_slug(pool, slug, false);
+    if (!current) {
+        send_error(res, 404, ErrorCode::NOT_FOUND, "problem not found");
+        return;
+    }
+
+    // 上一题：created_at < current.created_at OR (created_at == current.created_at AND id < current.id)
+    // 先获取当前题目的排序位置
+    // 用 created_at DESC, id DESC 来找 prev 和 next
+    auto allPrev = litecode::problem_repo::list(pool, litecode::ProblemListFilter{
+        .limit = 1000,
+        .offset = 0,
+    });
+
+    // 找当前题目在列表中的位置
+    int currentIdx = -1;
+    for (int i = 0; i < (int)allPrev.items.size(); i++) {
+        if (allPrev.items[i].id == current->id) {
+            currentIdx = i;
+            break;
+        }
+    }
+
+    std::optional<litecode::ProblemRow> prevProblem;
+    std::optional<litecode::ProblemRow> nextProblem;
+
+    if (currentIdx > 0) {
+        prevProblem = allPrev.items[currentIdx - 1];
+    }
+    if (currentIdx >= 0 && currentIdx < (int)allPrev.items.size() - 1) {
+        nextProblem = allPrev.items[currentIdx + 1];
+    }
+
+    nlohmann::json j;
+    if (prevProblem) {
+        j["prev"] = nlohmann::json{
+            {"slug",  prevProblem->slug},
+            {"title", prevProblem->title},
+        };
+    } else {
+        j["prev"] = nullptr;
+    }
+    if (nextProblem) {
+        j["next"] = nlohmann::json{
+            {"slug",  nextProblem->slug},
+            {"title", nextProblem->title},
+        };
+    } else {
+        j["next"] = nullptr;
+    }
+
+    send_success(res, std::move(j));
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 //  Route registration
 //
 //  Returns HttpServer& so callers can chain. Phase 3 * ships the
@@ -818,6 +907,27 @@ inline HttpServer& register_problem_routes(HttpServer&              server,
                 LOG_ERROR("problem_list: handler threw",
                           {{"type",   typeid(e).name()},
                            {"reason", e.what()}});
+                if (res.body.empty()) {
+                    send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                               std::string("internal error: ") + e.what());
+                } else {
+                    throw;
+                }
+            }
+        });
+
+    // GET /api/v1/problems/:slug/navigation - Phase 7 ★
+    // 必须在 /problems/:slug 路由之前注册，否则 /problems/xxx/navigation 会被 slug 路由捕获
+    server.get(R"(/api/v1/problems/([^/]+)/navigation)",
+        [&pool, &limiter, rate_cfg]
+        (const httplib::Request& req, httplib::Response& res) {
+            try {
+                handle_problem_navigation(res, req, pool, limiter, rate_cfg);
+            } catch (const ApiException&) {
+                throw;
+            } catch (const std::exception& e) {
+                LOG_ERROR("problem_navigation: handler threw",
+                          {{"type", typeid(e).name()}, {"reason", e.what()}});
                 if (res.body.empty()) {
                     send_error(res, 500, ErrorCode::INTERNAL_ERROR,
                                std::string("internal error: ") + e.what());

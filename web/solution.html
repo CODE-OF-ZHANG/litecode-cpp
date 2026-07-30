@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
+    <meta name="description" content="LiteCode · 题解详情">
+    <title>题解 · LiteCode</title>
+    <script src="/js/theme-boot.js?v=1.3.5"></script>
+    <link rel="preload" href="/css/style.css?v=1.3.5" as="style">
+    <link rel="stylesheet" href="/css/style.css?v=1.3.5">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23F8F6F0'/%3E%3Cpath d='M22 18 L42 32 L22 46' stroke='%234D7C5A' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body class="lc-cyber">
+    <div class="lc-cyber-grid-strip" aria-hidden="true"></div>
+    <div class="lc-v4-bg-oat"   aria-hidden="true"></div>
+    <div class="lc-v4-bg-aurora" aria-hidden="true"></div>
+    <div class="lc-v4-spotlight"  aria-hidden="true"></div>
+    <div class="lc-v4-deco lc-v4-deco--tl" aria-hidden="true">
+        <svg viewBox="0 0 60 60" fill="none"><path d="M4 50 L4 14 L40 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="lc-v4-deco lc-v4-deco--tr" aria-hidden="true">
+        <svg viewBox="0 0 60 60" fill="none"><path d="M10 30 L48 30 M30 12 L30 48 M38 22 L48 30 L38 38" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="lc-v4-deco lc-v4-deco--bl" aria-hidden="true">
+        <svg viewBox="0 0 60 60" fill="none"><path d="M4 30 L40 30 M22 14 L4 30 L22 46" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="lc-v4-deco lc-v4-deco--br" aria-hidden="true">
+        <svg viewBox="0 0 60 60" fill="none"><path d="M56 10 L56 46 L20 56" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="lc-v4-watermark lc-v4-watermark--br" aria-hidden="true">
+        <svg viewBox="0 0 64 64"><path d="M22 18 L42 32 L22 46" stroke='%234D7C5A' stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+
+    <div data-nav></div>
+
+    <main class="lc-v4-page">
+        <!-- 题解详情 -->
+        <section id="solution-detail" class="lc-card" hidden>
+            <div class="lc-card__body">
+                <div style="margin-bottom: 16px;">
+                    <a href="/index.html" class="lc-detail-back" id="back-link">← 返回题库</a>
+                </div>
+                <h2 class="lc-detail-title" id="solution-title"></h2>
+                <div class="lc-detail-meta" id="solution-meta"></div>
+                <div class="lc-detail-problem" id="solution-problem" hidden></div>
+                <div class="lc-solution-content" id="solution-content"></div>
+                <div class="lc-detail-actions">
+                    <button type="button" class="lc-btn lc-btn--ghost" id="solution-like-btn">
+                        <span id="solution-like-icon">❤️</span>
+                        <span id="solution-like-count">0</span> 赞
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- 加载状态 -->
+        <div id="loading-state" class="lc-loading" style="margin-top:40px;">
+            <span>加载中...</span>
+        </div>
+
+        <!-- 错误状态 -->
+        <div id="error-state" class="lc-empty-state" hidden style="margin-top:40px;">
+            <p id="error-message">加载失败</p>
+            <a href="/index.html" class="lc-btn lc-btn--ghost" style="margin-top:16px;">返回题库</a>
+        </div>
+    </main>
+
+    <script src="/js/csp.js?v=1.3.5" defer></script>
+    <script src="/js/markdown.js?v=1.3.5" defer></script>
+    <script src="/js/api.js?v=1.3.5" defer></script>
+    <script src="/js/app.js?v=1.3.5" defer></script>
+    <!-- marked.js for Markdown parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
+    <script>
+    (function () {
+        'use strict';
+
+        var solutionId = null;
+        var isLoggedIn = false;
+
+        function init() {
+            solutionId = getSolutionIdFromUrl();
+            if (!solutionId) {
+                showError('缺少题解 ID');
+                return;
+            }
+            // 等待 API 加载
+            function waitForApi() {
+                if (window.litecode && window.litecode.api) {
+                    loadSolution(solutionId);
+                } else {
+                    setTimeout(waitForApi, 50);
+                }
+            }
+            waitForApi();
+        }
+
+        function getSolutionIdFromUrl() {
+            var params = new URLSearchParams(window.location.search);
+            var id = params.get('id');
+            return id ? parseInt(id, 10) : null;
+        }
+
+        function loadSolution(id) {
+            document.getElementById('loading-state').hidden = false;
+            document.getElementById('solution-detail').hidden = true;
+            document.getElementById('error-state').hidden = true;
+
+            console.log('Loading solution:', id);
+            if (!window.litecode || !window.litecode.api) {
+                console.error('API not loaded');
+                showError('API 未加载，请刷新页面');
+                return;
+            }
+            litecode.api.solutions.get(id)
+                .then(function (resp) {
+                    console.log('Solution loaded:', resp);
+                    document.getElementById('loading-state').hidden = true;
+                    renderSolution(resp.data);
+                })
+                .catch(function (err) {
+                    console.error('Load error:', err);
+                    document.getElementById('loading-state').hidden = true;
+                    showError((err && err.message) || '加载失败');
+                });
+        }
+
+        function renderSolution(solution) {
+            var detail = document.getElementById('solution-detail');
+            detail.hidden = false;
+
+            var title = escapeHtml(solution.title || '无标题');
+            var content = solution.content || '';
+            var username = solution.user ? escapeHtml(solution.user.username) : '匿名';
+            var time = formatTime(solution.created_at);
+            var likeCount = solution.like_count || 0;
+            var problemSlug = solution.problem_slug;
+            var problemTitle = solution.problem_title;
+
+            document.getElementById('solution-title').textContent = title;
+            var avatar = solution.user && solution.user.avatar
+                ? '<img src="' + escapeHtml(solution.user.avatar) + '" class="lc-avatar--sm" alt="">'
+                : '<span class="lc-avatar--sm">' + (username.charAt(0).toUpperCase()) + '</span>';
+            document.getElementById('solution-meta').innerHTML =
+                avatar + '<span>' + username + '</span><span>' + time + '</span>';
+
+            if (problemSlug && problemTitle) {
+                var probEl = document.getElementById('solution-problem');
+                probEl.hidden = false;
+                probEl.innerHTML =
+                    '<a href="/problem.html?slug=' + encodeURIComponent(problemSlug) + '">📋 题目：' + escapeHtml(problemTitle) + '</a>';
+            }
+
+            // Render content as Markdown
+            var contentEl = document.getElementById('solution-content');
+            if (window.marked) {
+                marked.setOptions({ gfm: true, breaks: true });
+                var html = marked.parse(content);
+                contentEl.innerHTML = html;
+            } else if (window.litecode && litecode.markdown) {
+                contentEl.innerHTML = litecode.markdown.renderSafe(content);
+            } else {
+                // markdown.js 未加载，显示纯文本
+                contentEl.innerHTML = '<pre style="white-space:pre-wrap;word-break:break-word;">' + escapeHtml(content) + '</pre>';
+            }
+
+            var likeBtn = document.getElementById('solution-like-btn');
+            likeBtn.dataset.id = solution.id;
+            document.getElementById('solution-like-count').textContent = likeCount;
+            likeBtn.addEventListener('click', handleLike);
+
+            document.title = title + ' · LiteCode · 题解';
+
+            // Set back link based on problem
+            if (problemSlug) {
+                document.getElementById('back-link').href =
+                    '/problem.html?slug=' + encodeURIComponent(problemSlug) + '#solution';
+            }
+        }
+
+        function handleLike() {
+            if (!window.litecode || !litecode.auth || !litecode.auth.currentUser) {
+                alert('请先登录后再点赞');
+                window.location.href = '/login.html?redirect=' + encodeURIComponent(window.location.href);
+                return;
+            }
+            var btn = document.getElementById('solution-like-btn');
+            var id = parseInt(btn.dataset.id, 10);
+            btn.disabled = true;
+            litecode.api.solutions.like(id)
+                .then(function (resp) {
+                    document.getElementById('solution-like-count').textContent = resp.data.like_count || 0;
+                    document.getElementById('solution-like-icon').textContent = resp.data.liked ? '❤️' : '🤍';
+                    btn.disabled = false;
+                })
+                .catch(function (err) {
+                    btn.disabled = false;
+                    if (err && err.status === 401) {
+                        alert('请先登录后再点赞');
+                        window.location.href = '/login.html?redirect=' + encodeURIComponent(window.location.href);
+                    } else {
+                        alert(err.message || '点赞失败');
+                    }
+                });
+        }
+
+        function showError(msg) {
+            document.getElementById('loading-state').hidden = true;
+            document.getElementById('solution-detail').hidden = true;
+            document.getElementById('error-state').hidden = false;
+            document.getElementById('error-message').textContent = msg;
+        }
+
+        function escapeHtml(str) {
+            var div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        function formatTime(iso) {
+            if (!iso) return '';
+            var d = new Date(iso);
+            if (isNaN(d.getTime())) return iso;
+            var diff = Date.now() - d.getTime();
+            if (diff < 60000) return '刚刚';
+            if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前';
+            if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前';
+            if (diff < 604800000) return Math.floor(diff / 86400000) + ' 天前';
+            return d.toLocaleDateString('zh-CN');
+        }
+
+        init();
+    })();
+    </script>
+</body>
+</html>

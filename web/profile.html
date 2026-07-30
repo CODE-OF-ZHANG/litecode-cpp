@@ -240,6 +240,15 @@
                 </div>
             </section>
 
+            <section class="lc-v4-card lc-fade-in" style="padding: 28px; margin-bottom: 20px;">
+                <div class="lc-row lc-row--between" style="margin-bottom: 12px;">
+                    <h3 style="margin:0; font-size: 18px; font-weight: 700;">打卡记录</h3>
+                    <span id="checkin-stats" class="lc-form-help"></span>
+                </div>
+                <div id="checkin-calendar" class="lc-checkin-calendar"></div>
+                <p class="lc-form-help" id="checkin-empty" hidden>还没有打卡记录，做出一道 AC 题目即可自动打卡。</p>
+            </section>
+
             <section class="lc-card">
                 <div class="lc-row lc-row--between">
                     <h3 class="lc-section-title" style="margin:0;">最近提交</h3>
@@ -1111,6 +1120,143 @@
             }
         }
 
+        function renderCheckinCalendar(records) {
+            var container = document.getElementById('checkin-calendar');
+            if (!container) return;
+            var dateSet = {};
+            (records || []).forEach(function (r) { if (r.date) dateSet[r.date] = r; });
+
+            var today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            // 52 周前，从周日开始
+            var startDate = new Date(today);
+            startDate.setDate(startDate.getDate() - 364 - startDate.getDay());
+
+            // 生成 53 周 x 7 天
+            var allDays = [];
+            var d = new Date(startDate);
+            for (var w = 0; w < 53; w++) {
+                var week = [];
+                for (var i = 0; i < 7; i++) {
+                    week.push(new Date(d));
+                    d.setDate(d.getDate() + 1);
+                }
+                allDays.push(week);
+            }
+
+            container.innerHTML = '';
+
+            var monthNames = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+
+            // 顶部月份行（单独一行，绝对定位在网格上方）
+            var monthsBar = document.createElement('div');
+            monthsBar.style.cssText = 'position:relative;font-size:11px;color:#888;margin-bottom:4px;padding-left:18px;height:16px;';
+            container.appendChild(monthsBar);
+
+            // 记录每月第一周的位置
+            var monthPositions = [];
+            var lastM = -1;
+            for (var wi = 0; wi < allDays.length; wi++) {
+                var m = allDays[wi][0].getMonth();
+                if (m !== lastM && allDays[wi][0].getDate() <= 7) {
+                    monthPositions.push({ month: m, col: wi });
+                    lastM = m;
+                }
+            }
+
+            // 主网格
+            var grid = document.createElement('div');
+            grid.style.cssText = 'display:flex;gap:3px;';
+            container.appendChild(grid);
+
+            // 左侧：星期标签列
+            var weekdayCol = document.createElement('div');
+            weekdayCol.style.cssText = 'display:flex;flex-direction:column;gap:3px;margin-right:4px;flex-shrink:0;';
+            var weekDayLabels = ['日','一','二','三','四','五','六'];
+            for (var di = 0; di < 7; di++) {
+                var wd = document.createElement('span');
+                wd.style.cssText = 'font-size:10px;color:#888;width:14px;height:12px;display:flex;align-items:center;';
+                wd.textContent = weekDayLabels[di];
+                weekdayCol.appendChild(wd);
+            }
+            grid.appendChild(weekdayCol);
+
+            // 53 周的格子
+            for (var wi = 0; wi < allDays.length; wi++) {
+                var week = allDays[wi];
+                var weekCol = document.createElement('div');
+                weekCol.style.cssText = 'display:flex;flex-direction:column;gap:3px;flex-shrink:0;';
+
+                for (var di = 0; di < 7; di++) {
+                    var day = week[di];
+                    var dot = document.createElement('div');
+                    dot.style.cssText = 'width:12px;height:12px;border-radius:2px;background:#2d333b;flex-shrink:0;';
+
+                    var dateStr = day.toISOString().slice(0, 10);
+                    if (day <= today) {
+                        if (dateSet[dateStr]) {
+                            dot.style.background = '#196c2e';
+                            dot.title = dateStr + ' 打卡';
+                        }
+                    } else {
+                        dot.style.background = 'transparent';
+                    }
+
+                    weekCol.appendChild(dot);
+                }
+
+                grid.appendChild(weekCol);
+            }
+
+            // 月份标签渲染（根据列位置计算 left）
+            var colWidth = 12 + 3; // dot width + gap
+            monthPositions.forEach(function (mp, i) {
+                var sp = document.createElement('span');
+                sp.style.cssText = 'position:absolute;left:' + (18 + 14 + 4 + mp.col * colWidth) + 'px;';
+                sp.textContent = monthNames[mp.month];
+                monthsBar.appendChild(sp);
+            });
+
+            // 图例
+            var legend = document.createElement('div');
+            legend.style.cssText = 'display:flex;align-items:center;gap:4px;margin-top:12px;justify-content:flex-end;';
+            legend.innerHTML =
+                '<span style="font-size:11px;color:#888;">少</span>' +
+                '<div style="width:12px;height:12px;border-radius:2px;background:#ebedf0;"></div>' +
+                '<div style="width:12px;height:12px;border-radius:2px;background:#9be9a8;"></div>' +
+                '<div style="width:12px;height:12px;border-radius:2px;background:#40c463;"></div>' +
+                '<div style="width:12px;height:12px;border-radius:2px;background:#216e32;"></div>' +
+                '<span style="font-size:11px;color:#888;">多</span>';
+            container.appendChild(legend);
+        }
+
+        function loadCheckinCalendar() {
+            var container = document.getElementById('checkin-calendar');
+            if (!container) return Promise.resolve();
+            return litecode.api.checkin.getCalendar()
+                .then(function (resp) {
+                    var records = resp.data && resp.data.records ? resp.data.records : [];
+                    var emptyMsg = document.getElementById('checkin-empty');
+                    if (records.length === 0) {
+                        if (emptyMsg) emptyMsg.hidden = false;
+                        container.innerHTML = '<p class="lc-form-help" style="color:var(--lc-color-text-muted);">还没有打卡记录，做出一道 AC 题目即可自动打卡。</p>';
+                        return;
+                    }
+                    if (emptyMsg) emptyMsg.hidden = true;
+                    renderCheckinCalendar(records);
+                    var statsEl = document.getElementById('checkin-stats');
+                    if (statsEl) {
+                        var today = new Date().toISOString().slice(0, 10);
+                        var todayChecked = records.some(function (r) { return r.date === today; });
+                        statsEl.textContent = todayChecked ? '🔥 今日已打卡' : '⭕ 今日未打卡';
+                    }
+                })
+                .catch(function () {
+                    // 静默失败
+                });
+        }
+
         // ── Orchestration ──────────────────────────────────────────
         var currentUser = null;
         var target = null;
@@ -1201,6 +1347,7 @@
                 $('page-subtitle').textContent = currentUser.username
                     ? '@' + currentUser.username + ' 的做题统计' : '';
                 showState('content');
+                loadCheckinCalendar();
 
                 // v1.3.4 PR 16 ★ — profile.html 的 #profile-content
                 // 是 hidden=true 起手,DOMContentLoaded 时 mouse-particles.js

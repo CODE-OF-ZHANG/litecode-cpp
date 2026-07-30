@@ -40,6 +40,10 @@
 #include "judge/sample_runner.h"        // v1.3.4 PR 3 — needed for AppContext's unique_ptr<SampleRunner> destructor
 #include "logger.h"
 #include "routes/route_registry.h"
+#include "routes/checkin_routes.h"      // Phase 7 ★ 打卡系统
+#include "routes/solution_routes.h"    // Phase 7 ★ 题解系统
+#include "routes/discussion_routes.h"   // Phase 7 ★ 讨论系统
+#include "routes/notification_routes.h" // Phase 7 ★ 通知系统
 #include "server.h"
 
 namespace {
@@ -185,6 +189,18 @@ int main() {
         // `namespace litecode` directly (the inner `stats_routes`
         // and `detail` blocks both close before the function).
         litecode::register_stats_routes(server, *ctx.db_pool,
+            *ctx.limiter, cfg.rate_limit, cfg.jwt);
+        // Phase 7 ★ 打卡系统
+        litecode::register_checkin_routes(server, *ctx.db_pool,
+            *ctx.limiter, cfg.rate_limit, cfg.jwt);
+        // Phase 7 ★ 题解系统
+        litecode::register_solution_routes(server, *ctx.db_pool,
+            *ctx.limiter, cfg.rate_limit, cfg.jwt);
+        // Phase 7 ★ 讨论系统
+        litecode::register_discussion_routes(server, *ctx.db_pool,
+            *ctx.limiter, cfg.rate_limit, cfg.jwt);
+        // Phase 7 ★ 通知系统
+        litecode::register_notification_routes(server, *ctx.db_pool,
             *ctx.limiter, cfg.rate_limit, cfg.jwt);
         // submission_routes.h: same — defined in `namespace
         // litecode` (both `detail` blocks close first).
