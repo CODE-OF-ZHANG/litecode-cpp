@@ -2693,7 +2693,7 @@ html.dark .lc-gauge--danger {
 }
 
 .lc-tab-panel {
-    margin-top: var(--lc-space-3);
+    margin-top: var(--lc-space-4);
     /* Bug 3 fix: 约束宽度使其不超过左列区域，保持左对齐 */
     max-width: calc(50% - var(--lc-space-5) / 2);
     width: 100%;

@@ -259,5 +259,13 @@ inline bool has_user_liked(ConnectionPool& pool, int solution_id, int user_id) {
     return row.has_value();
 }
 
+// soft_delete — 软删除题解（将 is_deleted 设为 true）
+inline void soft_delete(ConnectionPool& pool, int solution_id) {
+    auto conn = pool.acquire();
+    conn.execute(
+        "UPDATE solutions SET is_deleted = TRUE WHERE id = ?",
+        solution_id);
+}
+
 } // namespace solution_repo
 } // namespace litecode

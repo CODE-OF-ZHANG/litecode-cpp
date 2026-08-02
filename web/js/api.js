@@ -1046,6 +1046,9 @@
             like: function (id) {
                 return ns.post('/solutions/' + encodeURIComponent(id) + '/like');
             },
+            remove: function (id) {
+                return ns.delete('/solutions/' + encodeURIComponent(id));
+            },
         },
 
         // ─────────────────────────────────────────────────────────────────
@@ -1083,6 +1086,10 @@
             // 点赞/取消点赞
             like: function (id) {
                 return ns.post('/discussions/' + encodeURIComponent(id) + '/like');
+            },
+            // 删除讨论
+            remove: function (id) {
+                return ns.delete('/discussions/' + encodeURIComponent(id));
             },
             // 题目讨论数
             countForProblem: function (problemId) {

@@ -46,7 +46,7 @@
                 <div class="lc-detail-meta" id="solution-meta"></div>
                 <div class="lc-detail-problem" id="solution-problem" hidden></div>
                 <div class="lc-solution-content" id="solution-content"></div>
-                <div class="lc-detail-actions">
+                <div class="lc-detail-actions" id="solution-actions">
                     <button type="button" class="lc-btn lc-btn--ghost" id="solution-like-btn">
                         <span id="solution-like-icon">❤️</span>
                         <span id="solution-like-count">0</span> 赞
@@ -89,12 +89,19 @@
             // 等待 API 加载
             function waitForApi() {
                 if (window.litecode && window.litecode.api) {
+                    isLoggedIn = litecode.auth.isLoggedIn();
                     loadSolution(solutionId);
                 } else {
                     setTimeout(waitForApi, 50);
                 }
             }
             waitForApi();
+
+            litecode.auth.onAuthChanged(function () {
+                isLoggedIn = litecode.auth.isLoggedIn();
+                // 重新加载以更新权限状态
+                if (solutionId) loadSolution(solutionId);
+            });
         }
 
         function getSolutionIdFromUrl() {
@@ -171,6 +178,20 @@
             document.getElementById('solution-like-count').textContent = likeCount;
             likeBtn.addEventListener('click', handleLike);
 
+            // 添加删除按钮（如果有权限）
+            var currentUser = window.litecode && litecode.auth && litecode.auth.currentUser;
+            if (currentUser && (currentUser.role === 'admin' || solution.user_id === currentUser.id)) {
+                var actionsEl = document.getElementById('solution-actions');
+                var deleteBtn = document.createElement('button');
+                deleteBtn.type = 'button';
+                deleteBtn.className = 'lc-btn lc-btn--danger';
+                deleteBtn.id = 'solution-delete-btn';
+                deleteBtn.dataset.id = solution.id;
+                deleteBtn.textContent = '🗑️ 删除';
+                deleteBtn.addEventListener('click', handleDelete);
+                actionsEl.appendChild(deleteBtn);
+            }
+
             document.title = title + ' · LiteCode · 题解';
 
             // Set back link based on problem
@@ -203,6 +224,34 @@
                     } else {
                         alert(err.message || '点赞失败');
                     }
+                });
+        }
+
+        function handleDelete() {
+            if (!window.litecode || !litecode.auth || !litecode.auth.currentUser) {
+                alert('请先登录');
+                return;
+            }
+            var btn = document.getElementById('solution-delete-btn');
+            var id = parseInt(btn.dataset.id, 10);
+            if (!confirm('确定要删除这条题解吗？')) return;
+            btn.disabled = true;
+            btn.textContent = '删除中...';
+            litecode.api.solutions.remove(id)
+                .then(function () {
+                    alert('删除成功');
+                    // 返回上一页或题库首页
+                    var problemSlug = new URLSearchParams(window.location.search).get('slug');
+                    if (problemSlug) {
+                        window.location.href = '/problem.html?slug=' + encodeURIComponent(problemSlug) + '#solution';
+                    } else {
+                        window.location.href = '/index.html';
+                    }
+                })
+                .catch(function (err) {
+                    btn.disabled = false;
+                    btn.textContent = '🗑️ 删除';
+                    alert(err.message || '删除失败');
                 });
         }
 

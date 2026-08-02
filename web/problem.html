@@ -1875,8 +1875,9 @@
                     // the history tab now that data is ready.
                     if (initialHash && initialHash.open) {
                         tabShow('history');
+                    } else {
+                        showState('problem-pane');
                     }
-                    showState('problem-pane');
                 })
                 .catch(function (err) {
                     if (err && err.status === 404) {

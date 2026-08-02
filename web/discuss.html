@@ -18,8 +18,8 @@
         border-radius: var(--lc-radius-md);
         background: var(--lc-color-surface);
         overflow: hidden;
-        min-height: 300px;
-        height: 300px;
+        min-height: 200px;
+        height: 200px;
     }
     #md-editor-wrap textarea {
         width: 100%;
@@ -37,8 +37,10 @@
         outline: none;
     }
     /* Ace 编辑器覆盖层 */
-    #md-editor-wrap.ace_editor {
+    #md-editor-wrap.ace_editor,
+    #md-editor-wrap.lc-editor-shell {
         height: 100% !important;
+        min-height: 200px;
     }
     </style>
 </head>
@@ -188,30 +190,30 @@
         var currentPage = 0;
         var totalItems = 0;
         var isLoggedIn = false;
+        var currentUser = null;
 
         function init() {
-            litecode.boot.shell().then(function () {
+            function doLoad() {
                 isLoggedIn = litecode.auth.isLoggedIn();
+                currentUser = litecode.auth.currentUser;
                 renderAuthState();
-                // 检查是否是详情页模式
                 var discussionId = getDiscussionIdFromUrl();
                 if (discussionId) {
                     loadDiscussionDetail(discussionId);
                 } else {
                     loadDiscussions(0);
                 }
+            }
+
+            litecode.boot.shell().then(function () {
+                doLoad();
             }).catch(function () {
-                renderAuthState();
-                var discussionId = getDiscussionIdFromUrl();
-                if (discussionId) {
-                    loadDiscussionDetail(discussionId);
-                } else {
-                    loadDiscussions(0);
-                }
+                doLoad();
             });
 
             litecode.auth.onAuthChanged(function () {
                 isLoggedIn = litecode.auth.isLoggedIn();
+                currentUser = litecode.auth.currentUser;
                 renderAuthState();
             });
 
@@ -287,35 +289,26 @@
         // ── Markdown 富文本编辑器（Ace）────────────────────────────────
         var mdAceEditor = null;
         function initMarkdownEditor() {
-            var wrap = document.getElementById('md-editor-wrap');
+            // 讨论区暂时使用 textarea 模式，避免 Ace markdown mode 文件缺失问题
+            // 如果将来需要更高级的编辑器功能，可以下载 mode-markdown.js 并更新 SRI
             var textarea = document.getElementById('discussion-content');
-            if (!wrap || !textarea) return;
-
-            // 如果 Ace 已加载，直接初始化
-            if (window.ace) {
-                mountMdEditor();
-                return;
-            }
-            // 否则懒加载 Ace
-            var script = document.createElement('script');
-            script.src = '/vendor/ace/ace.min.js';
-            script.crossOrigin = 'anonymous';
-            script.onload = mountMdEditor;
-            script.onerror = function () {
-                // Ace 加载失败，回退到普通 textarea
-                textarea.style.display = '';
-            };
-            document.head.appendChild(script);
+            if (textarea) textarea.style.display = '';
+            return;
         }
 
         function mountMdEditor() {
-            var textarea = document.getElementById('discussion-content');
             var wrap = document.getElementById('md-editor-wrap');
-            if (!textarea || !window.ace) return;
+            var textarea = document.getElementById('discussion-content');
+            if (!wrap || !textarea || !window.ace) return;
 
             wrap.classList.add('lc-editor-shell--loading');
             try {
-                mdAceEditor = window.ace.edit(textarea);
+                // Ace.edit() 需要一个 div 容器，而不是 textarea
+                // 将 textarea 隐藏，用 wrap 作为 Ace 的容器
+                textarea.style.display = 'none';
+                mdAceEditor = window.ace.edit(wrap);
+                mdAceEditor.renderer.setOption('maxLines', 30);
+                mdAceEditor.renderer.setOption('minLines', 8);
                 mdAceEditor.setTheme('ace/theme/tomorrow');
                 mdAceEditor.session.setMode('ace/mode/markdown');
                 mdAceEditor.setOption('wrap', 80);
@@ -326,7 +319,8 @@
                     textarea.value = mdAceEditor.getValue();
                 });
                 wrap.classList.remove('lc-editor-shell--loading');
-                wrap.classList.add('lc-editor-shell');
+                wrap.classList.add('lc-editor-shell', 'lc-md-editor-shell');
+                wrap.classList.add('ace_editor');
                 // 设置初始值
                 if (textarea.value) {
                     mdAceEditor.setValue(textarea.value, -1);
@@ -334,6 +328,7 @@
             } catch (e) {
                 wrap.classList.remove('lc-editor-shell--loading');
                 console.warn('Ace editor init failed, fallback to textarea:', e);
+                textarea.style.display = '';
             }
         }
 
@@ -341,7 +336,8 @@
             if (mdAceEditor) {
                 return mdAceEditor.getValue();
             }
-            return document.getElementById('discussion-content').value;
+            var textarea = document.getElementById('discussion-content');
+            return textarea ? textarea.value : '';
         }
 
         function loadDiscussions(page) {
@@ -395,6 +391,15 @@
             var replyCount = item.reply_count || 0;
             var likeCount = item.like_count || 0;
 
+            // 检查是否有权限删除
+            var canDelete = isLoggedIn && currentUser && (
+                currentUser.role === 'admin' ||
+                item.user_id === currentUser.id
+            );
+            var deleteBtn = canDelete
+                ? '<button type="button" class="lc-btn lc-btn--danger lc-btn--sm" data-action="delete" data-id="' + item.id + '" style="padding:2px 8px;font-size:12px;">🗑️ 删除</button>'
+                : '';
+
             card.innerHTML =
                 '<div class="lc-card__body">' +
                     '<div class="lc-discussion-card__header">' +
@@ -414,8 +419,19 @@
                             '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14z"/><path d="M7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3"/></svg>' +
                             likeCount + ' 赞' +
                         '</span>' +
+                        '<span class="lc-discussion-card__actions">' + deleteBtn + '</span>' +
                     '</div>' +
                 '</div>';
+
+            // 绑定删除按钮事件
+            var delBtn = card.querySelector('[data-action="delete"]');
+            if (delBtn) {
+                delBtn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleListDelete(item.id, delBtn);
+                });
+            }
 
             return card;
         }
@@ -499,6 +515,24 @@
                     '</div>';
             }
 
+            // 检查当前用户是否有权限删除（currentUser 来自 init 闭包）
+            var canDelete = isLoggedIn && currentUser && (
+                currentUser.role === 'admin' ||
+                discussion.user_id === currentUser.id
+            );
+
+            var actionsHtml =
+                '<button type="button" class="lc-btn lc-btn--ghost" id="detail-like-btn" data-id="' + discussion.id + '">' +
+                    '<span id="detail-like-icon">❤️</span> ' +
+                    '<span id="detail-like-count">' + likeCount + '</span> 赞' +
+                '</button>' +
+                '<button type="button" class="lc-btn lc-btn--ghost" id="detail-reply-btn">' +
+                    '💬 <span id="detail-reply-count">' + replyCount + '</span> 回复' +
+                '</button>';
+            if (canDelete) {
+                actionsHtml += '<button type="button" class="lc-btn lc-btn--danger" id="detail-delete-btn" data-id="' + discussion.id + '">🗑️ 删除</button>';
+            }
+
             body.innerHTML =
                 '<div class="lc-detail-header" id="detail-breadcrumb">' +
                     '<a href="/discuss.html" class="lc-detail-back">← 返回讨论区</a>' +
@@ -510,18 +544,16 @@
                 '</div>' +
                 problemHtml +
                 '<div class="lc-detail-content" id="detail-content">' + escapeHtml(content) + '</div>' +
-                '<div class="lc-detail-actions">' +
-                    '<button type="button" class="lc-btn lc-btn--ghost" id="detail-like-btn" data-id="' + discussion.id + '">' +
-                        '<span id="detail-like-icon">❤️</span> ' +
-                        '<span id="detail-like-count">' + likeCount + '</span> 赞' +
-                    '</button>' +
-                    '<button type="button" class="lc-btn lc-btn--ghost" id="detail-reply-btn">' +
-                        '💬 <span id="detail-reply-count">' + replyCount + '</span> 回复' +
-                    '</button>' +
-                '</div>';
+                '<div class="lc-detail-actions" id="detail-actions">' + actionsHtml + '</div>';
 
             // Re-attach like button listener
             document.getElementById('detail-like-btn').addEventListener('click', handleDetailLike);
+
+            // 添加删除按钮监听
+            var deleteBtn = document.getElementById('detail-delete-btn');
+            if (deleteBtn) {
+                deleteBtn.addEventListener('click', handleDetailDelete);
+            }
 
             // Render replies
             var replies = discussion.replies || [];
@@ -581,6 +613,45 @@
                 });
         }
 
+        function handleDetailDelete() {
+            if (!isLoggedIn) {
+                alert('请先登录');
+                return;
+            }
+            var btn = document.getElementById('detail-delete-btn');
+            var id = parseInt(btn.dataset.id, 10);
+            if (!confirm('确定要删除这条讨论吗？')) return;
+            btn.disabled = true;
+            btn.textContent = '删除中...';
+            litecode.api.discussions.remove(id)
+                .then(function () {
+                    alert('删除成功');
+                    window.location.href = '/discuss.html';
+                })
+                .catch(function (err) {
+                    btn.disabled = false;
+                    btn.textContent = '🗑️ 删除';
+                    alert(err.message || '删除失败');
+                });
+        }
+
+        function handleListDelete(id, btn) {
+            if (!isLoggedIn) { alert('请先登录'); return; }
+            if (!confirm('确定要删除这条讨论吗？')) return;
+            btn.disabled = true;
+            btn.textContent = '删除中...';
+            litecode.api.discussions.remove(id)
+                .then(function () {
+                    alert('删除成功');
+                    loadDiscussions(currentPage);
+                })
+                .catch(function (err) {
+                    btn.disabled = false;
+                    btn.textContent = '🗑️ 删除';
+                    alert(err.message || '删除失败');
+                });
+        }
+
         function handleReply(e) {
             e.preventDefault();
             if (!isLoggedIn) {
@@ -613,26 +684,38 @@
             var contentInput = document.getElementById('discussion-content');
             var btn = document.getElementById('submit-discussion-btn');
 
+            if (!titleInput || !btn) {
+                console.error('Discussion form elements not found');
+                return;
+            }
+
             var title = titleInput.value.trim();
-            var content = getMdEditorValue().trim();
+            var content = '';
+            if (contentInput) {
+                content = getMdEditorValue().trim();
+            }
             if (!title || !content) return;
 
             btn.disabled = true;
             btn.textContent = '发布中...';
 
             litecode.api.discussions.createGlobal(title, content)
-                .then(function () {
+                .then(function (resp) {
+                    console.log('Discussion created successfully:', resp);
+                    alert('发表成功！');
                     titleInput.value = '';
                     if (mdAceEditor) {
                         mdAceEditor.setValue('', -1);
+                    } else if (contentInput) {
+                        contentInput.value = '';
                     }
-                    contentInput.value = '';
                     btn.disabled = false;
                     btn.textContent = '发布讨论';
                     loadDiscussions(0);
                 })
                 .catch(function (err) {
                     btn.disabled = false;
+                    console.error('Failed to create discussion:', err);
                     btn.textContent = '发布讨论';
                     alert(err.message || '发布失败，请重试');
                 });

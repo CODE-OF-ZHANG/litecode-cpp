@@ -31,6 +31,7 @@ namespace litecode {
 inline nlohmann::json serialize_discussion(const DiscussionListRow& r) {
     nlohmann::json j;
     j["id"]           = r.discussion.id;
+    j["user_id"]      = r.discussion.user_id;
     j["content"]       = r.discussion.content;
     j["like_count"]   = r.discussion.like_count;
     j["reply_count"]  = r.discussion.reply_count;
@@ -421,6 +422,46 @@ inline void handle_like_discussion(
     });
 }
 
+// DELETE /api/v1/discussions/:id
+inline void handle_delete_discussion(
+    httplib::Response& res, const httplib::Request& req,
+    ConnectionPool& pool, const JwtConfig& jwt_cfg) {
+
+    auto claims = require_authentication(req, jwt_cfg);
+
+    int discussion_id = 0;
+    {
+        const auto& path = req.path;
+        auto last_slash = path.rfind('/');
+        if (last_slash != std::string::npos) {
+            try { discussion_id = std::stoi(path.substr(last_slash + 1)); } catch (...) {}
+        }
+    }
+    if (discussion_id == 0) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT, "invalid discussion id");
+        return;
+    }
+
+    auto disc_opt = discussion_repo::find_by_id(pool, discussion_id);
+    if (!disc_opt) {
+        send_error(res, 404, ErrorCode::NOT_FOUND, "discussion not found");
+        return;
+    }
+
+    int user_id = std::stoi(claims.user_id);
+    int author_id = disc_opt->user_id;
+    bool is_admin = (claims.role == "admin");
+
+    // 只有作者或管理员可以删除
+    if (user_id != author_id && !is_admin) {
+        send_error(res, 403, ErrorCode::FORBIDDEN, "not authorized to delete this discussion");
+        return;
+    }
+
+    discussion_repo::soft_delete(pool, discussion_id);
+    send_success(res, nlohmann::json{{"deleted", true}});
+}
+
 // GET /api/v1/discussions/count/:problem_id — 获取题目讨论数
 inline void handle_count_problem_discussions(
     httplib::Response& res, const httplib::Request& req, ConnectionPool& pool) {
@@ -533,6 +574,18 @@ inline HttpServer& register_discussion_routes(
             } catch (const ApiException&) { throw; }
             catch (const std::exception& e) {
                 LOG_ERROR("like_discussion: threw", {{"reason", e.what()}});
+                send_error(res, 500, ErrorCode::INTERNAL_ERROR, "internal error");
+            }
+        });
+
+    // 删除讨论
+    server.del(R"(/api/v1/discussions/(\d+))",
+        [&pool, &jwt_cfg](const httplib::Request& req, httplib::Response& res) {
+            try {
+                handle_delete_discussion(res, req, pool, jwt_cfg);
+            } catch (const ApiException&) { throw; }
+            catch (const std::exception& e) {
+                LOG_ERROR("delete_discussion: threw", {{"reason", e.what()}});
                 send_error(res, 500, ErrorCode::INTERNAL_ERROR, "internal error");
             }
         });

@@ -16,6 +16,7 @@
 
 #include "../config.h"
 #include "../db/connection_pool.h"
+#include "../db/solution_repo.h"
 #include "../middleware/auth_middleware.h"
 #include "../routes/error_handler.h"
 #include "../routes/notification_routes.h"
@@ -23,82 +24,7 @@
 
 namespace litecode {
 
-// ────────────────────────────────────────────────────────────────────────────
-//  Types
-// ────────────────────────────────────────────────────────────────────────────
-
-struct SolutionRow {
-    int         id         = 0;
-    int         user_id     = 0;
-    int         problem_id  = 0;
-    std::string title;
-    std::string content;
-    int         like_count = 0;
-    std::string created_at;
-    std::string updated_at;
-    bool        is_deleted = false;
-};
-
-struct SolutionUserInfo {
-    int                          id       = 0;
-    std::string                  username;
-    std::optional<std::string>   avatar;
-};
-
-struct SolutionListRow {
-    SolutionRow      solution;
-    SolutionUserInfo user;
-};
-
-// ────────────────────────────────────────────────────────────────────────────
-//  Row materialization
-// ────────────────────────────────────────────────────────────────────────────
-
-namespace solution_detail {
-
-inline std::string req_string(const mysqlx::Row& row, std::size_t idx, const char* field) {
-    try { return row[idx].get<std::string>(); }
-    catch (const std::exception& e) {
-        throw std::runtime_error(std::string("solution_repo: required field '") + field + "' is not a string: " + e.what());
-    }
-}
-
-inline int req_int(const mysqlx::Row& row, std::size_t idx, const char* field) {
-    try { return static_cast<int>(row[idx].get<std::int64_t>()); }
-    catch (const std::exception& e) {
-        throw std::runtime_error(std::string("solution_repo: required field '") + field + "' is not an int: " + e.what());
-    }
-}
-
-inline std::optional<std::string> opt_string(const mysqlx::Row& row, std::size_t idx) {
-    const auto& v = row[idx];
-    if (v.isNull()) return std::nullopt;
-    try { return v.get<std::string>(); }
-    catch (const std::exception&) { return std::nullopt; }
-}
-
-inline std::optional<int> opt_int(const mysqlx::Row& row, std::size_t idx) {
-    const auto& v = row[idx];
-    if (v.isNull()) return std::nullopt;
-    try { return static_cast<int>(v.get<std::int64_t>()); }
-    catch (const std::exception&) { return std::nullopt; }
-}
-
-inline SolutionRow row_to_solution(const mysqlx::Row& row) {
-    SolutionRow s;
-    s.id         = req_int(row, 0, "id");
-    s.user_id     = req_int(row, 1, "user_id");
-    s.problem_id  = req_int(row, 2, "problem_id");
-    s.title       = req_string(row, 3, "title");
-    s.content     = req_string(row, 4, "content");
-    s.like_count  = req_int(row, 5, "like_count");
-    s.created_at  = req_string(row, 6, "created_at");
-    s.updated_at  = req_string(row, 7, "updated_at");
-    s.is_deleted  = row[8].get<bool>();
-    return s;
-}
-
-} // namespace solution_detail
+// Types are defined in solution_repo.h (included above)
 
 // ────────────────────────────────────────────────────────────────────────────
 //  Repo helpers (inline SQL)
@@ -121,19 +47,6 @@ inline int create_solution(ConnectionPool& pool, int user_id, int problem_id,
         "INSERT INTO solutions (user_id, problem_id, title, content) VALUES (?, ?, ?, ?)",
         user_id, problem_id, title, content);
     return static_cast<int>(rs.getAutoIncrementValue());
-}
-
-inline std::optional<SolutionRow> find_solution_by_id(ConnectionPool& pool, int id) {
-    auto conn = pool.acquire();
-    auto row = conn.fetch_one(
-        "SELECT id, user_id, problem_id, title, content, like_count, "
-        "       DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s'), "
-        "       DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s'), "
-        "       is_deleted "
-        "FROM solutions WHERE id = ? AND is_deleted = FALSE LIMIT 1",
-        id);
-    if (!row) return std::nullopt;
-    return solution_detail::row_to_solution(*row);
 }
 
 struct SolutionListResult {
@@ -336,7 +249,7 @@ inline void handle_get_solution(httplib::Response& res, const httplib::Request& 
         return;
     }
 
-    auto solution_opt = find_solution_by_id(pool, solution_id);
+    auto solution_opt = solution_repo::find_by_id(pool, solution_id);
     if (!solution_opt) {
         send_error(res, 404, ErrorCode::NOT_FOUND, "solution not found");
         return;
@@ -368,7 +281,7 @@ inline void handle_like_solution(httplib::Response& res, const httplib::Request&
         return;
     }
 
-    auto solution_opt = find_solution_by_id(pool, solution_id);
+    auto solution_opt = solution_repo::find_by_id(pool, solution_id);
     if (!solution_opt) {
         send_error(res, 404, ErrorCode::NOT_FOUND, "solution not found");
         return;
@@ -377,7 +290,7 @@ inline void handle_like_solution(httplib::Response& res, const httplib::Request&
     int user_id = std::stoi(claims.user_id);
     bool liked = toggle_solution_like(pool, solution_id, user_id);
 
-    auto updated = find_solution_by_id(pool, solution_id);
+    auto updated = solution_repo::find_by_id(pool, solution_id);
 
     // Phase 7 ★ 通知题解作者（仅在新点赞时）
     if (liked && solution_opt->user_id != user_id) {
@@ -396,6 +309,46 @@ inline void handle_like_solution(httplib::Response& res, const httplib::Request&
         {"liked",      liked},
         {"like_count", updated ? updated->like_count : 0},
     });
+}
+
+// DELETE /api/v1/solutions/:id
+inline void handle_delete_solution(
+    httplib::Response& res, const httplib::Request& req,
+    ConnectionPool& pool, const JwtConfig& jwt_cfg) {
+
+    auto claims = require_authentication(req, jwt_cfg);
+
+    int solution_id = 0;
+    {
+        const auto& path = req.path;
+        auto last_slash = path.rfind('/');
+        if (last_slash != std::string::npos) {
+            try { solution_id = std::stoi(path.substr(last_slash + 1)); } catch (...) {}
+        }
+    }
+    if (solution_id == 0) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT, "invalid solution id");
+        return;
+    }
+
+    auto sol_opt = solution_repo::find_by_id(pool, solution_id);
+    if (!sol_opt) {
+        send_error(res, 404, ErrorCode::NOT_FOUND, "solution not found");
+        return;
+    }
+
+    int user_id = std::stoi(claims.user_id);
+    int author_id = sol_opt->user_id;
+    bool is_admin = (claims.role == "admin");
+
+    // 只有作者或管理员可以删除
+    if (user_id != author_id && !is_admin) {
+        send_error(res, 403, ErrorCode::FORBIDDEN, "not authorized to delete this solution");
+        return;
+    }
+
+    solution_repo::soft_delete(pool, solution_id);
+    send_success(res, nlohmann::json{{"deleted", true}});
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -449,6 +402,18 @@ inline HttpServer& register_solution_routes(
             } catch (const ApiException&) { throw; }
             catch (const std::exception& e) {
                 LOG_ERROR("like_solution: threw", {{"reason", e.what()}});
+                send_error(res, 500, ErrorCode::INTERNAL_ERROR, "internal error");
+            }
+        });
+
+    // 删除题解
+    server.del(R"(/api/v1/solutions/(\d+))",
+        [&pool, &jwt_cfg](const httplib::Request& req, httplib::Response& res) {
+            try {
+                handle_delete_solution(res, req, pool, jwt_cfg);
+            } catch (const ApiException&) { throw; }
+            catch (const std::exception& e) {
+                LOG_ERROR("delete_solution: threw", {{"reason", e.what()}});
                 send_error(res, 500, ErrorCode::INTERNAL_ERROR, "internal error");
             }
         });

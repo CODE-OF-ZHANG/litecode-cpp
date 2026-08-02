@@ -183,14 +183,18 @@ inline DiscussionListResult list_discussions(ConnectionPool& pool,
     } else {
         count_sql += " AND problem_id IS NULL";
     }
-    if (filter.user_id.has_value()) {
-        count_sql += " AND user_id = ?";
-    }
+    if (filter.user_id.has_value()) count_sql += " AND user_id = ?";
 
-    mysqlx::SqlStatement count_stmt = conn.session().sql(count_sql);
-    if (filter.problem_id.has_value()) count_stmt.bind(*filter.problem_id);
-    if (filter.user_id.has_value()) count_stmt.bind(*filter.user_id);
-    auto count_rs = count_stmt.execute();
+    mysqlx::SqlResult count_rs;
+    if (filter.problem_id.has_value() && filter.user_id.has_value()) {
+        count_rs = conn.execute(count_sql, *filter.problem_id, *filter.user_id);
+    } else if (filter.problem_id.has_value()) {
+        count_rs = conn.execute(count_sql, *filter.problem_id);
+    } else if (filter.user_id.has_value()) {
+        count_rs = conn.execute(count_sql, *filter.user_id);
+    } else {
+        count_rs = conn.execute(count_sql);
+    }
     for (auto row : count_rs) {
         result.total = static_cast<int>(row[0].get<std::int64_t>());
     }
@@ -207,25 +211,33 @@ inline DiscussionListResult list_discussions(ConnectionPool& pool,
         "FROM discussions d "
         "JOIN users u ON u.id = d.user_id "
         "LEFT JOIN problems p ON p.id = d.problem_id AND p.is_deleted = FALSE "
-        "WHERE d.is_deleted = FALSE AND d.parent_id IS NULL ";
+        "WHERE d.is_deleted = FALSE AND d.parent_id IS NULL";
     if (filter.problem_id.has_value()) {
-        sql += "AND d.problem_id = ? ";
+        sql += " AND d.problem_id = ?";
     } else {
-        sql += "AND d.problem_id IS NULL ";
+        sql += " AND d.problem_id IS NULL";
     }
-    if (filter.user_id.has_value()) {
-        sql += "AND d.user_id = ? ";
+    if (filter.user_id.has_value()) sql += " AND d.user_id = ?";
+    sql += " ORDER BY d.created_at DESC LIMIT ? OFFSET ?";
+
+    mysqlx::SqlResult rs;
+    if (filter.problem_id.has_value() && filter.user_id.has_value()) {
+        rs = conn.execute(sql, *filter.problem_id, *filter.user_id,
+            static_cast<std::int64_t>(filter.limit),
+            static_cast<std::int64_t>(filter.offset));
+    } else if (filter.problem_id.has_value()) {
+        rs = conn.execute(sql, *filter.problem_id,
+            static_cast<std::int64_t>(filter.limit),
+            static_cast<std::int64_t>(filter.offset));
+    } else if (filter.user_id.has_value()) {
+        rs = conn.execute(sql, *filter.user_id,
+            static_cast<std::int64_t>(filter.limit),
+            static_cast<std::int64_t>(filter.offset));
+    } else {
+        rs = conn.execute(sql,
+            static_cast<std::int64_t>(filter.limit),
+            static_cast<std::int64_t>(filter.offset));
     }
-    sql += "ORDER BY d.created_at DESC LIMIT ? OFFSET ?";
-
-    mysqlx::SqlStatement stmt = conn.session().sql(sql);
-    std::size_t bind_idx = 0;
-    if (filter.problem_id.has_value()) stmt.bind(bind_idx++, *filter.problem_id);
-    if (filter.user_id.has_value()) stmt.bind(bind_idx++, *filter.user_id);
-    stmt.bind(bind_idx++, static_cast<std::int64_t>(filter.limit));
-    stmt.bind(bind_idx++, static_cast<std::int64_t>(filter.offset));
-
-    auto rs = stmt.execute();
     for (auto row : rs) {
         try {
             DiscussionListRow item;
@@ -339,6 +351,14 @@ inline std::optional<int> find_problem_id_by_slug(ConnectionPool& pool, const st
         "SELECT id FROM problems WHERE slug = ? AND is_deleted = FALSE LIMIT 1",
         slug);
     return row;
+}
+
+// soft_delete — 软删除讨论（将 is_deleted 设为 true）
+inline void soft_delete(ConnectionPool& pool, int discussion_id) {
+    auto conn = pool.acquire();
+    conn.execute(
+        "UPDATE discussions SET is_deleted = TRUE WHERE id = ?",
+        discussion_id);
 }
 
 } // namespace discussion_repo
