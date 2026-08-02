@@ -2693,16 +2693,26 @@ html.dark .lc-gauge--danger {
 }
 
 .lc-tab-panel {
+    /* tab 切换时 .lc-tab-panel 顶替 problem-pane 占据主区域同一位置 —
+       与 .lc-problem-pane 共用同一 surface token,保证视觉切换不"跳"。
+       margin-top: var(--lc-space-4) 与 .lc-problem-layout 一致,保证
+       tab-panel 顶部 y 坐标与 problem-pane 完全相同。 */
     margin-top: var(--lc-space-4);
-    /* Bug 3 fix: 约束宽度使其不超过左列区域，保持左对齐 */
-    max-width: calc(50% - var(--lc-space-5) / 2);
+    background: var(--lc-color-surface);
+    border: 1px solid var(--lc-color-border);
+    border-radius: var(--lc-radius-lg);
+    padding: var(--lc-space-5);
+    box-shadow: var(--lc-shadow-rest);
+    /* 全宽,不再 50% 约束 */
+    max-width: none;
     width: 100%;
 }
 
-/* History pane — sits below the two-column layout. */
+/* History pane — 现在与 .lc-tab-panel 共用 surface token + 全宽布局,
+   不再需要单独的 border-top 分割线(由 .lc-tab-panel 自带 border 替代)。 */
 .lc-history-pane {
-    border-top: 1px solid var(--lc-color-border);
-    padding-top: var(--lc-space-4);
+    /* 与 .lc-tab-panel 协同:padding 由 .lc-tab-panel 提供,这里不加 */
+    min-height: 320px;
 }
 .lc-history-pane__header {
     display: flex;
@@ -7584,6 +7594,7 @@ html.dark *:focus-visible {
    二次缩窄。padding-left 保留 32px 给题目描述留白。 */
 .lc-problem-page {
     max-width: none !important;
+    width: 100%;       /* 防止 problem-pane 隐藏 + tab-panel 内容少时 main 收缩跟随内容 */
     padding: 0 0 96px 32px;
 }
 @media (max-width: 1180px) {

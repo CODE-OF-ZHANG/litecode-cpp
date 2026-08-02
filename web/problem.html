@@ -45,7 +45,12 @@
     <div data-nav></div>
 
     <main class="lc-v4-page lc-problem-page" style="max-width: 1480px;">
-        <div id="loading-state" class="lc-loading" aria-live="polite">
+        <!--
+          Phase 7 ★ 加 hidden 默认(其他面板默认都 hidden,这个不一致
+          会导致刷新/直接访问 problem.html 时 spinner 短暂露出)。
+          showState('loading-state') 会重新解除 hidden。
+        -->
+        <div id="loading-state" class="lc-loading" hidden aria-live="polite">
             <span class="lc-spinner" aria-hidden="true"></span>
             <span>加载题目中…</span>
         </div>
@@ -388,7 +393,7 @@
         </div>
 
         <!-- Phase 7 ★ 题解面板 -->
-        <section id="solution-pane" class="lc-tab-panel" hidden aria-label="题解" role="tabpanel" aria-labelledby="tab-solution-btn">
+        <section id="solution-pane" class="lc-tab-panel lc-tab-panel--in-pane" hidden aria-label="题解" role="tabpanel" aria-labelledby="tab-solution-btn">
             <div class="lc-solution-list" id="solution-list"></div>
             <button type="button" class="lc-btn lc-btn--primary" id="add-solution-btn" style="margin-top:16px;">发布题解</button>
             <form id="solution-form" class="lc-solution-form" hidden style="margin-top:16px;">
@@ -2582,11 +2587,26 @@
                 $('tab-history-btn'),
             ];
 
-            // Hide all panes
+            // 四个 tab 共享同一片内容区:
+            //   - 题目 tab  → problem-pane 显示(article + editor 两栏)
+            //   - 题解/讨论/提交历史 tab → problem-pane 隐藏,对应 tab-panel
+            //     全宽显示在与 problem-pane 相同的位置 (CSS §15 已配套
+            //     .lc-tab-panel { max-width:100% } 调整)
+            // 题目视图的"位置/样式"在 tab 切换前后由 problem-pane 的
+            // bounding box 决定 — problem-pane 始终在主区域顶端,用户从
+            // 顶部看下去看到的内容区域 y 坐标不变。
             problemPane.hidden    = true;
             historyPane.hidden   = true;
             solutionPane.hidden  = true;
             discussionPane.hidden = true;
+
+            // 同步收起 loading/not-found/error 三种状态 — 防止用户带
+            // #history hash 刷新页面后,showState('loading-state') 把 spinner
+            // 露出来,然后 tabShow('history') 又不碰 loading-state 导致
+            // spinner 永远挂着。
+            $('loading-state').hidden     = true;
+            $('not-found-state').hidden   = true;
+            $('error-state').hidden       = true;
 
             // Reset all tab states
             tabBtns.forEach(function(b) {
@@ -2616,6 +2636,10 @@
                 problemPane.hidden = false;
                 $('tab-problem-btn').setAttribute('aria-selected', 'true');
                 $('tab-problem-btn').setAttribute('tabindex', '0');
+                // 切回题目 tab 时清掉 URL 里的 #history hash — 否则下次
+                // 刷新浏览器会带着 hash 直接跳到提交历史 tab,而不是用户
+                // 上次实际停留的题目视图。
+                tabHistorySyncHash();
             }
         }
 
