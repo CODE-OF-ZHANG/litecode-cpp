@@ -165,6 +165,7 @@
 | 2026-07-10 | 前端美化推迟到 v1.2.45（Phase 6/7 稳定后） |
 | 2026-07-10 | Phase 6 收尾按 Tier 1 顺序（audit-logs → queue → 失败锁定） |
 | 2026-07-10 | Phase 7 分两批：最小骨架（Tier 2）优先于完整骨架（Tier 4） |
+| 2026-08-06 | v1.3.5 ★ repo 层 bug 修复纪律：列 index / schema 漂移后必须加 NULL avatar / NULL display_name 等「空值样本」的 gtest regression,`try { ... } catch (const std::exception&) {}` 静默吞异常一律升级为 `LOG_WARN({reason})`,否则「total=N items=[]」这种诡异不一致只能靠人肉翻接口 + repo 才能定位 |
 
 ---
 
@@ -397,8 +398,8 @@ POST /api/v1/submissions
 | description | MEDIUMTEXT NOT NULL | 题目描述（Markdown，存储前在管理端预净化） |
 | time_limit | INT NOT NULL DEFAULT 1000 | 时间限制（ms） |
 | memory_limit | INT NOT NULL DEFAULT 256 | 内存限制（MB） |
-| accepted_count | INT NOT NULL DEFAULT 0 | 通过人数（**仅参考，不用于排行榜**，排行榜另算） |
-| submission_count | INT NOT NULL DEFAULT 0 | 总提交数（仅参考） |
+| accepted_count | INT NOT NULL DEFAULT 0 | 通过人数（**实时从 submissions 聚合**，v1.3.5 起 problem_repo 改为相关子查询,V005 索引覆盖；不用于排行榜,排行榜另算） |
+| submission_count | INT NOT NULL DEFAULT 0 | 总提交数（**实时从 submissions 聚合**，v1.3.5 起；仅计非 pending/running 的判完提交） |
 | is_deleted | BOOLEAN NOT NULL DEFAULT FALSE | 软删除标记（v1.2 新增） |
 | created_at | DATETIME NOT NULL | 创建时间 |
 | updated_at | DATETIME NOT NULL | 更新时间 |
@@ -1251,6 +1252,11 @@ litecode-cpp/
 |------|------|
 | v1.3 | Special Judge（**v1.3.1 P0 闭环**）、Markdown 预净化强制、problem_revisions 编辑历史、比赛/Contest 模块 |
 | v1.4 | 讨论区、题解、收藏、错题本 |
+| v1.X.Y | 题解内联点赞 + 180 字摘要 + 扁平评论抽屉（前端 escapeHtml + 服务端 1-2000 字长度限制） —— V021 |
+| v1.3.5 | 题解评论点赞 + 嵌套回复（扁平 + 引用提示）。V022：solution_comment_likes + parent_id + 反范式 like_count；仅触发被回复者通知 —— V022 |
+| v1.3.5 | 讨论卡片对齐题解效果：头像 + 点赞 + 评论抽屉 + 嵌套回复。V023：前端 makeDiscussionNode 重写 + 抽屉 + 复用 .lc-solution-comment__* 组件类；后端 parent_id/root_id 已就位 |
+| v1.3.5 | 讨论区发布增强：emoji 浮动面板 8×4 + @mention 候选（已加载作者去重）+ 真实图片上传到 `/uploads/discussion_images/{uuid}.{ext}` + markdown 渲染（marked + DOMPurify + @username 高亮）+ reply_count 嵌套一致性（root_id 递增/递减）。V023 PR 13：后端 `POST /api/v1/discussions/upload-image`（JWT + 2MB + magic bytes 校验）；前端 `litecode.api.discussions.uploadImage` 走 fetchWithAutoRefresh |
+| v1.3.5 | **bugfix** user_repo.h::list_users 列索引错位：`row[9]` (u.avatar) 被误当成 submission_count 去 `get<int64>()`,avatar 列要么 NULL 要么 VARCHAR 都会抛异常,被 try/catch **静默吞掉**,导致 `/admin/users` 总报 `total=2 items=[]`(`admin`/`zhangxu` 不可见)。修正为 `row[14]`(submission_count subquery column offset);catch 升级为 `LOG_WARN({reason})`;tests/unit/test_user_repo.cpp 新增 2 个 regression:`ListUsersSurvivesNullAvatarRow`(NULL avatar 用户能 list)+ `ListUsersCountMatchesFilteredTotal`(items.size 与 filtered total 一致)。修复后 curl `/api/v1/admin/users?limit=20&offset=0` 返回 `items: [admin, zhangxu]`,`submission_count: 3 / 40` |
 | v1.5 | 多语言支持（Python/Java/Go）、管理员操作审计日志增强、系统监控面板（已 v1.2 部分落地） |
 | v2.0 | 多实例 + Redis session 共享、判题微服务拆分 |
 
@@ -1281,6 +1287,9 @@ litecode-cpp/
 - CSP `default-src 'self'`，CDN 加 SRI
 - 题目描述 Markdown 经 DOMPurify 净化
 - 用户输入（昵称、评论）双向 XSS 防护
+- 题解评论双向 XSS 防护（前端 escapeHtml + 服务端 1-2000 字长度限制） —— V021
+- 题解评论点赞 + 嵌套回复（V022）：parent_id 自引用 + 反范式 like_count；通知分流——仅顶层评论通知题解作者，回复仅通知被回复者，避免通知刷屏
+- 讨论卡片对齐题解效果（V023）：头像 + 点赞 + 评论抽屉 + 嵌套回复；前端 makeDiscussionNode 重写 + 复用 .lc-solution-comment__* 组件类；后端 parent_id/root_id 已有
 - access token 存内存（防 XSS 盗取），refresh 走 cookie
 - 提交前前端基础校验（长度、字符集）
 

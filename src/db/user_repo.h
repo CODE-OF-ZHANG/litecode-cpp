@@ -760,12 +760,29 @@ inline std::vector<UserListRow> list_users(ConnectionPool& pool,
             try {
                 UserListRow r;
                 r.user            = detail::row_to_user(row);
+                // SELECT 列顺序(以 0 起点):
+                //   u.id, u.username, u.display_name, u.password_hash,
+                //   u.role, u.token_version, u.email, u.school, u.bio,
+                //   u.avatar, created_at, last_login, last_login_ip,
+                //   username_changed_at, submission_count (subquery)
+                // submission_count 是第 14 列;之前的 v1.3.4 PR 9 commit
+                // 错写成 row[9] (u.avatar)。avatar 列要么是 NULL 要么是
+                // VARCHAR 路径,get<int64>() 在这两种值上抛异常,被下面的
+                // catch 静默吞掉 → 实际 users 有数据但 list 返回空,
+                // /admin/users.html 显示「没有符合条件的用户」。
+                // v1.3.5 ★ 修。subquery 输出永远是非负整数,且别名
+                // AS submission_count 走 column label offset 14。
                 r.submission_count = static_cast<int>(
-                    row[9].get<std::int64_t>());
+                    row[14].get<std::int64_t>());
                 out.push_back(std::move(r));
-            } catch (const std::exception&) {
-                // Skip malformed rows so one bad row doesn't
-                // tank the whole page.
+            } catch (const std::exception& e) {
+                // v1.3.5 ★ 不再静默 — WARN 一行,后续再出问题能从日志
+                // 直接看到根因(此前因"total=2 但 items=[]"这种诡异
+                // 不一致来回翻接口 + repo 才定位到这一处)。仍保留
+                // skip 行为(不抛到 handler),免得一条坏行把整页
+                // admin 列表打死。
+                LOG_WARN("user_repo::list_users: skip malformed row",
+                         {{"reason", e.what()}});
             }
         }
         return out;

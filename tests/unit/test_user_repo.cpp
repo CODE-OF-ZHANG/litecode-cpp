@@ -449,3 +449,77 @@ TEST_F(DbFixture, UpdateLastLoginStampsIpAndTimestamp) {
     ASSERT_TRUE(cleared.has_value());
     EXPECT_FALSE(cleared->last_login_ip.has_value());
 }
+
+// v1.3.5 ★ regression — 用户表里有 avatar IS NULL 的 row(未经前端
+// 上传头像的账号基本都是),之前 list_users 错把 row[9] (u.avatar)
+// 当成 submission_count 去 get<int64>():avatar 是 NULL/VARCHAR 会抛
+// 异常,被 try/catch 静默吞掉,导致 total != items.size(),前端看到
+// 「共 2 用户 · 没有符合条件的用户」。本测试:插一个 avatar=NULL 的
+// 用户,直接调 list_users,断言 items 至少 1 行,且 submission_count
+// 是有效 int。
+TEST_F(DbFixture, ListUsersSurvivesNullAvatarRow) {
+    UsernameTracker tracker(pool.get());
+
+    litecode::UserRow row;
+    row.username      = fresh_username("list_null_avatar");
+    tracker.add(row.username);
+    row.password_hash = litecode::hash_password("hunter22");
+    row.role          = "user";
+    row.email         = std::nullopt;
+    row.avatar        = std::nullopt;     // ← 关键:NULL avatar
+    const int id = litecode::user_repo::create_user(*pool, row);
+    ASSERT_GT(id, 0);
+
+    // count_users 是独立 SELECT COUNT(*),不受 row index bug 影响。
+    litecode::user_repo::UserListFilter f;
+    f.q = row.username;   // 用精确 username 子串搜到自己,避免被测试
+                          // 全量里的几十个历史账号干扰
+    const int total = litecode::user_repo::count_users(*pool, f);
+    EXPECT_GE(total, 1) << "count_users 没找到自己刚插的行";
+
+    // list_users 应该返回至少 1 行(就是刚插的)。之前的 bug 会让它
+    // 返回空,因为 catch 静默吞了 row[9].get<int64>() 的异常。
+    const auto items = litecode::user_repo::list_users(*pool, f);
+    ASSERT_FALSE(items.empty())
+        << "list_users 返回空,但 count_users >= 1 —— "
+           "row index bug 复活了?";
+    bool found_self = false;
+    for (const auto& it : items) {
+        EXPECT_GE(it.submission_count, 0)
+            << "submission_count 不是合法 int";
+        if (it.user.username == row.username) {
+            found_self = true;
+            EXPECT_EQ(it.user.id, id);
+            EXPECT_FALSE(it.user.avatar.has_value());
+            EXPECT_EQ(it.user.role, "user");
+        }
+    }
+    EXPECT_TRUE(found_self)
+        << "自己的行没出现在 list_users 结果里";
+}
+
+// 守卫上限:即使 list 路径上出现别的 row 抛异常,也只 WARN + skip,
+// 不影响返回 vector 的后续条目。
+TEST_F(DbFixture, ListUsersCountMatchesFilteredTotal) {
+    UsernameTracker tracker(pool.get());
+
+    // 插一个提交过的 + 一个没提交的,确保 subquery 返回正确数字。
+    litecode::UserRow a;
+    a.username      = fresh_username("list_count_a");
+    tracker.add(a.username);
+    a.password_hash = litecode::hash_password("hunter22");
+    a.role          = "user";
+    a.email         = std::nullopt;
+    a.avatar        = std::nullopt;
+    const int id_a = litecode::user_repo::create_user(*pool, a);
+    ASSERT_GT(id_a, 0);
+
+    litecode::user_repo::UserListFilter f;
+    f.q = a.username;
+    const auto items = litecode::user_repo::list_users(*pool, f);
+    EXPECT_EQ(items.size(), 1u);
+    if (!items.empty()) {
+        EXPECT_EQ(items[0].user.id, id_a);
+        EXPECT_EQ(items[0].submission_count, 0);
+    }
+}
