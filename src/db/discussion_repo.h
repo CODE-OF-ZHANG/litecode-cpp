@@ -361,5 +361,16 @@ inline void soft_delete(ConnectionPool& pool, int discussion_id) {
         discussion_id);
 }
 
+// decrement_reply_count — 回复数 -1（不低于 0）
+// v1.3.5 PR 13: 嵌套回复/删除回复时需要回滚根讨论的 reply_count。
+// 永远不要让 reply_count 出现负值（即使软删除与并发恢复导致重复回滚）。
+inline void decrement_reply_count(ConnectionPool& pool, int discussion_id) {
+    auto conn = pool.acquire();
+    conn.execute(
+        "UPDATE discussions SET reply_count = GREATEST(reply_count - 1, 0) "
+        "WHERE id = ?",
+        discussion_id);
+}
+
 } // namespace discussion_repo
 } // namespace litecode

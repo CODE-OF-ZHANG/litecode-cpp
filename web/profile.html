@@ -465,6 +465,19 @@
         function pct(n, d) { return d > 0 ? (n / d) : 0; }
         function formatPercent(rate) { return (rate * 100).toFixed(1) + '%'; }
 
+        // localDateStr — 返回本地时区的 'YYYY-MM-DD',跟用户感知的"今天"一致。
+        //  千万别用 d.toISOString().slice(0, 10) — 那是 UTC 日期,跟后端
+        //  CURDATE() (用服务器时区) 比对时会差一天,导致:
+        //    · "今日已打卡"标志(用 new Date().toISOString())显示已打卡
+        //    · 但日历格子(用 day.toISOString())不变色
+        //  用户报告"今天 AC 后格子没颜色变化"就是这个根因。
+        function localDateStr(d) {
+            var y = d.getFullYear();
+            var m = String(d.getMonth() + 1).padStart(2, '0');
+            var day = String(d.getDate()).padStart(2, '0');
+            return y + '-' + m + '-' + day;
+        }
+
         // Relative/absolute timestamp — same vocabulary as
         // problem.html's tabHistoryFormatTime (v1.2.26).
         function formatProfileTime(s) {
@@ -1151,7 +1164,7 @@
 
             // 顶部月份行（单独一行，绝对定位在网格上方）
             var monthsBar = document.createElement('div');
-            monthsBar.style.cssText = 'position:relative;font-size:11px;color:#888;margin-bottom:4px;padding-left:18px;height:16px;';
+            monthsBar.style.cssText = 'position:relative;font-size:11px;color:var(--lc-color-text-muted);margin-bottom:4px;padding-left:18px;height:16px;';
             container.appendChild(monthsBar);
 
             // 记录每月第一周的位置
@@ -1176,7 +1189,7 @@
             var weekDayLabels = ['日','一','二','三','四','五','六'];
             for (var di = 0; di < 7; di++) {
                 var wd = document.createElement('span');
-                wd.style.cssText = 'font-size:10px;color:#888;width:14px;height:12px;display:flex;align-items:center;';
+                wd.style.cssText = 'font-size:10px;color:var(--lc-color-text-muted);width:14px;height:12px;display:flex;align-items:center;';
                 wd.textContent = weekDayLabels[di];
                 weekdayCol.appendChild(wd);
             }
@@ -1190,17 +1203,22 @@
 
                 for (var di = 0; di < 7; di++) {
                     var day = week[di];
+                    // 用 CSS class 而非 inline style,
+                    // 让浅色/深色模式自动切换
+                    // (--lc-checkin-none / --lc-checkin-l2 token)
                     var dot = document.createElement('div');
-                    dot.style.cssText = 'width:12px;height:12px;border-radius:2px;background:#2d333b;flex-shrink:0;';
+                    dot.className = 'lc-checkin-calendar__day';
 
-                    var dateStr = day.toISOString().slice(0, 10);
+                    var dateStr = localDateStr(day);
                     if (day <= today) {
                         if (dateSet[dateStr]) {
-                            dot.style.background = '#196c2e';
+                            dot.classList.add('lc-checkin-calendar__day--checked');
                             dot.title = dateStr + ' 打卡';
+                        } else {
+                            dot.title = dateStr;
                         }
                     } else {
-                        dot.style.background = 'transparent';
+                        dot.classList.add('lc-checkin-calendar__day--future');
                     }
 
                     weekCol.appendChild(dot);
@@ -1218,22 +1236,26 @@
                 monthsBar.appendChild(sp);
             });
 
-            // 图例
+            // 图例 — 用 CSS class 跟格子共享色,浅深模式自适应
             var legend = document.createElement('div');
-            legend.style.cssText = 'display:flex;align-items:center;gap:4px;margin-top:12px;justify-content:flex-end;';
+            legend.className = 'lc-checkin-calendar__legend';
             legend.innerHTML =
-                '<span style="font-size:11px;color:#888;">少</span>' +
-                '<div style="width:12px;height:12px;border-radius:2px;background:#ebedf0;"></div>' +
-                '<div style="width:12px;height:12px;border-radius:2px;background:#9be9a8;"></div>' +
-                '<div style="width:12px;height:12px;border-radius:2px;background:#40c463;"></div>' +
-                '<div style="width:12px;height:12px;border-radius:2px;background:#216e32;"></div>' +
-                '<span style="font-size:11px;color:#888;">多</span>';
+                '<span class="lc-checkin-calendar__legend-label">少</span>' +
+                '<div class="lc-checkin-calendar__day"></div>' +
+                '<div class="lc-checkin-calendar__day lc-checkin-calendar__day--l1"></div>' +
+                '<div class="lc-checkin-calendar__day lc-checkin-calendar__day--l2"></div>' +
+                '<div class="lc-checkin-calendar__day lc-checkin-calendar__day--l3"></div>' +
+                '<span class="lc-checkin-calendar__legend-label">多</span>';
             container.appendChild(legend);
         }
 
         function loadCheckinCalendar() {
             var container = document.getElementById('checkin-calendar');
             if (!container) return Promise.resolve();
+            // 任何路径(loadStats init / visibilitychange 切 tab)调用
+            // 都更新时间戳;visibilitychange 监听器据此做 5s 去抖,
+            // 防止 init 期间或页面刚加载就立刻触发额外请求
+            _lastCheckinRefresh = Date.now();
             return litecode.api.checkin.getCalendar()
                 .then(function (resp) {
                     var records = resp.data && resp.data.records ? resp.data.records : [];
@@ -1247,7 +1269,8 @@
                     renderCheckinCalendar(records);
                     var statsEl = document.getElementById('checkin-stats');
                     if (statsEl) {
-                        var today = new Date().toISOString().slice(0, 10);
+                        // 用本地"今天"去比对,跨时区不会漏掉
+                        var today = localDateStr(new Date());
                         var todayChecked = records.some(function (r) { return r.date === today; });
                         statsEl.textContent = todayChecked ? '🔥 今日已打卡' : '⭕ 今日未打卡';
                     }
@@ -1265,6 +1288,11 @@
         // subs 引用,kpiCard 调用时即使 stats 已经聚合完也能拿回原始
         // 行算"近 7 天 AC 节奏"。
         var _lastSubs = [];
+
+        // 切回 tab 时刷新打卡日历 — AC 一题后切回 profile 自动看到
+        // 新格子(无需手动刷新)。visibilitychange 在 init 期间可能
+        // 立即 fire,加 5s 去抖,实际只在用户主动切 tab 时刷新。
+        var _lastCheckinRefresh = 0;
 
         // sparkLast7Days(subs) → [{date, total, ac}] 长度 7。
         // 按 created_at(YYYY-MM-DD HH:MM:SS)分桶,key=date(YYYY-MM-DD),
@@ -1420,6 +1448,15 @@
                 if (window._profileRowMgr) {
                     window._profileRowMgr.destroy();
                 }
+            });
+
+            // 切回 tab 时刷新打卡日历(用户在其他 tab AC 一题后
+            // 切回 profile 即看到新格子染色)。5s 去抖避免 init
+            // 期间 visibilitychange 立刻 fire 导致的额外请求。
+            document.addEventListener('visibilitychange', function () {
+                if (document.visibilityState !== 'visible') return;
+                if (Date.now() - _lastCheckinRefresh < 5000) return;
+                loadCheckinCalendar();
             });
 
             // ════════════════════════════════════════════════════════

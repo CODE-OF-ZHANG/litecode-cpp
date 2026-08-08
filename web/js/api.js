@@ -1049,6 +1049,25 @@
             remove: function (id) {
                 return ns.delete('/solutions/' + encodeURIComponent(id));
             },
+            // ── V021 ── 题解评论（V022 扩：parent_id + 点赞）
+            commentList: function (solutionId, params) {
+                var q = params ? '?' + Object.keys(params).map(function(k){
+                    return k+'='+encodeURIComponent(params[k]);}).join('&') : '';
+                return ns.get('/solutions/' + encodeURIComponent(solutionId) + '/comments' + q);
+            },
+            // V022: parent_id 可选;传入则视为回复某条评论
+            commentCreate: function (solutionId, content, parentId) {
+                var body = { content: content };
+                if (parentId) body.parent_id = parentId;
+                return ns.post('/solutions/' + encodeURIComponent(solutionId) + '/comments', body);
+            },
+            commentDelete: function (commentId) {
+                return ns.delete('/solution-comments/' + encodeURIComponent(commentId));
+            },
+            // V022: 点赞 / 取消点赞评论(toggle)
+            commentLike: function (commentId) {
+                return ns.post('/solution-comments/' + encodeURIComponent(commentId) + '/like', {});
+            },
         },
 
         // ─────────────────────────────────────────────────────────────────
@@ -1094,6 +1113,21 @@
             // 题目讨论数
             countForProblem: function (problemId) {
                 return ns.get('/discussions/count/' + encodeURIComponent(problemId));
+            },
+            // v1.3.5 PR 13: 上传讨论图片。
+            // 走 fetchWithAutoRefresh(而非 rawFetch),保证 401 自动 refresh + 重放,
+            // 与现存的讨论 API 行为一致。FormData 由浏览器自动设 Content-Type
+            // boundary,init 里不要显式写 Content-Type,否则会被覆盖。
+            uploadImage: function (file) {
+                var form = new FormData();
+                form.append('image', file, file.name || 'image');
+                return fetchWithAutoRefresh(
+                    '/discussions/upload-image',
+                    { method: 'POST', body: form },
+                    {}
+                ).then(function (resp) {
+                    return resp && resp.data;
+                });
             },
         },
 

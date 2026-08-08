@@ -420,14 +420,27 @@ inline std::optional<std::string> opt_string(const mysqlx::Row& row,
 //   5  template          ← v1.3.2: per-problem code template (NULL allowed MEDIUMTEXT)
 //   6  time_limit        ← was 5 before v1.3.2 (shifted by +1 after template)
 //   7  memory_limit      ← was 6
-//   8  accepted_count    ← was 7
-//   9  submission_count  ← was 8
+//   8  accepted_count    ← was 7   ← v1.3.5: 从 problems 表的冗余列
+//                                       改为相关子查询实时从 submissions
+//                                       聚合,消除"judge 流程未维护
+//                                       problems.accepted_count 导致
+//                                       problems_list.html 永远 0/0"的
+//                                       根因(详见 commit log)。
+//                                       V005 idx_submissions_problem_status
+//                                       索引覆盖,O(log N) per row。
+//   9  submission_count  ← was 8   ← 同上,实时聚合
 //  10  is_deleted        ← was 9
 //  11  created_at        (DATE_FORMAT'd → text)
 //  12  updated_at        (DATE_FORMAT'd → text)
 inline constexpr const char* kProblemSelectColumns =
     "id, slug, title, difficulty, description, template, time_limit, memory_limit, "
-    "accepted_count, submission_count, is_deleted, "
+    // v1.3.5: 实时聚合,COALESCE 保证 NULL→0(LEFT JOIN / subquery 边界)
+    "(SELECT COUNT(*) FROM submissions s "
+    " WHERE s.problem_id = problems.id AND s.status = 'ac') AS accepted_count, "
+    "(SELECT COUNT(*) FROM submissions s "
+    " WHERE s.problem_id = problems.id "
+    "   AND s.status NOT IN ('pending','running')) AS submission_count, "
+    "is_deleted, "
     "DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at, "
     "DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') AS updated_at";
 

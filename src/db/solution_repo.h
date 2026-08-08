@@ -30,6 +30,7 @@ struct SolutionRow {
     std::string title;
     std::string content;
     int         like_count = 0;
+    int         comment_count = 0;     // V021 — 题解评论数（反范式，避免 N+1）
     std::string created_at;
     std::string updated_at;
     bool        is_deleted = false;
@@ -93,15 +94,16 @@ inline std::optional<int> opt_int(const mysqlx::Row& row, std::size_t idx) {
 
 inline SolutionRow row_to_solution(const mysqlx::Row& row) {
     SolutionRow s;
-    s.id         = req_int(row, 0, "id");
-    s.user_id     = req_int(row, 1, "user_id");
-    s.problem_id  = req_int(row, 2, "problem_id");
-    s.title       = req_string(row, 3, "title");
-    s.content     = req_string(row, 4, "content");
-    s.like_count  = req_int(row, 5, "like_count");
-    s.created_at  = req_string(row, 6, "created_at");
-    s.updated_at  = req_string(row, 7, "updated_at");
-    s.is_deleted  = row[8].get<bool>();
+    s.id            = req_int(row, 0, "id");
+    s.user_id        = req_int(row, 1, "user_id");
+    s.problem_id     = req_int(row, 2, "problem_id");
+    s.title          = req_string(row, 3, "title");
+    s.content        = req_string(row, 4, "content");
+    s.like_count     = req_int(row, 5, "like_count");
+    s.comment_count  = req_int(row, 6, "comment_count");     // V021
+    s.created_at     = req_string(row, 7, "created_at");
+    s.updated_at     = req_string(row, 8, "updated_at");
+    s.is_deleted     = row[9].get<bool>();
     return s;
 }
 
@@ -131,7 +133,7 @@ inline int create(ConnectionPool& pool, const SolutionRow& s) {
 inline std::optional<SolutionRow> find_by_id(ConnectionPool& pool, int id) {
     auto conn = pool.acquire();
     const auto row = conn.fetch_one(
-        "SELECT id, user_id, problem_id, title, content, like_count, "
+        "SELECT id, user_id, problem_id, title, content, like_count, comment_count, "
         "       DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s'), "
         "       DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s'), "
         "       is_deleted "
@@ -176,7 +178,7 @@ inline SolutionListResult list_for_problem(ConnectionPool& pool,
 
     // SELECT with JOIN
     std::string sql =
-        "SELECT s.id, s.user_id, s.problem_id, s.title, s.content, s.like_count, "
+        "SELECT s.id, s.user_id, s.problem_id, s.title, s.content, s.like_count, s.comment_count, "
         "       DATE_FORMAT(s.created_at, '%Y-%m-%d %H:%i:%s'), "
         "       DATE_FORMAT(s.updated_at, '%Y-%m-%d %H:%i:%s'), "
         "       s.is_deleted, "
@@ -202,10 +204,10 @@ inline SolutionListResult list_for_problem(ConnectionPool& pool,
         try {
             SolutionListRow item;
             item.solution = solution_detail::row_to_solution(row);
-            // user 字段从偏移 9 开始
-            item.user.id       = static_cast<int>(row[9].get<std::int64_t>());
-            item.user.username  = (row[10]).get<std::string>();
-            item.user.avatar    = solution_detail::opt_string(row, 11);
+            // user 字段从偏移 10 开始（comment_count 在 idx 6 之后插入）
+            item.user.id       = static_cast<int>(row[10].get<std::int64_t>());
+            item.user.username  = (row[11]).get<std::string>();
+            item.user.avatar    = solution_detail::opt_string(row, 12);
             result.items.push_back(std::move(item));
         } catch (const std::exception&) {
             // skip malformed

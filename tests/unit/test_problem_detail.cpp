@@ -610,6 +610,38 @@ protected:
             problem_id, input, output, judge_type, order_num);
         return static_cast<int>(rs.getAutoIncrementValue());
     }
+
+    // v1.3.5: helper for MaintenanceCountersIncluded — seed N ac +
+    // M wa + K pending submissions against a single problem so
+    // problem_repo 实时子查询能读到预期 accepted_count / submission_count
+    // (pending/running 不计入 submission_count)。
+    void seedSubmissionCounters(int problem_id, int ac_count,
+                                int wa_count, int pending_count) {
+        auto conn = pool->acquire();
+        const auto uname = "counters_seed_user_" + std::to_string(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+        auto rs = conn.execute(
+            "INSERT INTO users (username, password_hash, role) "
+            "VALUES (?, '$2b$12$placeholderhashplaceholderhashplaceholder', 'user')",
+            uname);
+        const int user_id = static_cast<int>(rs.getAutoIncrementValue());
+        for (int i = 0; i < ac_count; ++i) {
+            conn.execute(
+                "INSERT INTO submissions (user_id, problem_id, language, code, status) "
+                "VALUES (?, ?, 'cpp', '', 'ac')", user_id, problem_id);
+        }
+        for (int i = 0; i < wa_count; ++i) {
+            conn.execute(
+                "INSERT INTO submissions (user_id, problem_id, language, code, status) "
+                "VALUES (?, ?, 'cpp', '', 'wa')", user_id, problem_id);
+        }
+        for (int i = 0; i < pending_count; ++i) {
+            conn.execute(
+                "INSERT INTO submissions (user_id, problem_id, language, code, status) "
+                "VALUES (?, ?, 'cpp', '', 'pending')", user_id, problem_id);
+        }
+    }
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -736,14 +768,10 @@ TEST_F(ProblemDetailLiveFixture, MaintenanceCountersIncluded) {
     const int pid = seed_problem(slug, "easy", "Counter Problem");
     ASSERT_GT(pid, 0);
 
-    // Bump the counters via raw SQL (the judge flow will write to
-    // these in Phase 4; here we just exercise the read path).
-    {
-        auto conn = pool->acquire();
-        conn.execute(
-            "UPDATE problems SET accepted_count = 12, submission_count = 47 "
-            "WHERE id = ?", pid);
-    }
+    // v1.3.5: counters 改为实时从 submissions 聚合。seed 12 ac +
+    // 35 wa + 5 pending,验证 detail 接口读到的 accepted_count=12
+    // submission_count=47(pending/running 不算 submission)。
+    seedSubmissionCounters(pid, /*ac=*/12, /*wa=*/35, /*pending=*/5);
 
     const auto r = do_get(handle, "/api/v1/problems/" + slug);
     ASSERT_TRUE(r.ok);

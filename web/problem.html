@@ -1834,6 +1834,8 @@
                     loadProblemNavigation(state.slug);
                     // Phase 7 ★ 加载讨论数 badge
                     loadDiscussionCount(state.problem.id);
+                    // V021 ★ 加载题解数 badge
+                    loadSolutionCount(state.problem.id);
                     // Initialize editor with the DEFAULT template, NOT
                     // a saved draft. SPEC §11 "刷新提示恢复" requires an
                     // explicit user gesture (Restore / Discard) before
@@ -1997,6 +1999,18 @@
         // ── Phase 7 ★ Solution tab ──────────────────────────────────
         var tabSolutionState = { loaded: false };
 
+        // V021 — 题解 tab 计数（仅显示题解数，不合并互动数）
+        function loadSolutionCount(problemId) {
+            if (!problemId) return;
+            litecode.api.solutions.list(state.slug, { limit: 1 })
+                .then(function (resp) {
+                    var count = (resp && resp.data && resp.data.total) || 0;
+                    var el = $('solution-tab-count');
+                    if (el) el.textContent = count > 0 ? ' (' + count + ')' : '';
+                })
+                .catch(function () {});
+        }
+
         function loadSolutions() {
             var slug = state.slug;
             if (!slug) return;
@@ -2024,28 +2038,303 @@
         function makeSolutionNode(s) {
             var div = document.createElement('div');
             div.className = 'lc-solution-item';
+            div.setAttribute('data-solution-id', String(s.id));
+
             var author = s.user ? escapeHtml(s.user.username) : '匿名';
             var avatar = s.user && s.user.avatar
                 ? '<img src="' + escapeHtml(s.user.avatar) + '" class="lc-avatar--xs" alt="">'
-                : '<span class="lc-avatar--xs">' + (author.charAt(0).toUpperCase()) + '</span>';
+                : '<span class="lc-avatar--xs">' + author.charAt(0).toUpperCase() + '</span>';
             var time = formatRelativeTime(s.created_at);
-            var problemTitle = s.problem_title || state.problem ? (state.problem.title || '') : '';
             var solutionTitle = s.title || '题解';
+            // V021：后端生成的 180 字纯文本摘要；缺省兜底空串
+            var excerpt = escapeHtml(s.excerpt || '');
+
             div.innerHTML =
-                '<div class="lc-solution-item__body">' +
-                    '<div class="lc-solution-item__problem">' + escapeHtml(problemTitle) + '</div>' +
-                    '<div class="lc-solution-item__title">' + escapeHtml(solutionTitle) + '</div>' +
+                // 头部：点击跳详情（"查看完整内容"入口）
+                '<div class="lc-solution-item__head">' +
+                    '<div class="lc-solution-item__title">' + solutionTitle + '</div>' +
+                    '<div class="lc-solution-item__excerpt">' + excerpt + '</div>' +
                 '</div>' +
+                // 底部：作者 + 点赞/评论按钮 + 时间
                 '<div class="lc-solution-item__footer">' +
                     '<div class="lc-solution-item__user">' + avatar + '<span>' + author + '</span></div>' +
                     '<div class="lc-solution-item__meta">' +
-                        '<span>❤️ ' + (s.like_count || 0) + '</span>' +
-                        '<span>' + time + '</span>' +
+                        '<button type="button" class="lc-solution-item__like" data-id="' + s.id + '" title="点赞">' +
+                            '<span class="lc-solution-item__heart">♡</span>' +
+                            '<span class="lc-solution-item__like-label">点赞</span>' +
+                            '<span class="lc-solution-item__like-count">' + (s.like_count || 0) + '</span>' +
+                        '</button>' +
+                        '<button type="button" class="lc-solution-item__comment-toggle" data-id="' + s.id + '" title="查看评论">' +
+                            '<span class="lc-solution-item__comment-icon">💬</span>' +
+                            '<span class="lc-solution-item__comment-label">评论</span>' +
+                            '<span class="lc-solution-item__comment-count">' + (s.comment_count || 0) + '</span>' +
+                        '</button>' +
+                        '<span class="lc-solution-item__time">' + time + '</span>' +
                     '</div>' +
+                '</div>' +
+                // 评论抽屉（折叠状态，data-loaded 标记是否已加载）
+                '<div class="lc-solution-comments" data-id="' + s.id + '" hidden data-loaded="false">' +
+                    '<div class="lc-solution-comments__list"></div>' +
+                    '<div class="lc-solution-comments__form-wrap"></div>' +
                 '</div>';
-            div.addEventListener('click', function () {
-                window.location.href = '/solution.html?id=' + s.id;
+
+            // 头部点击 → solution.html（详情）
+            div.querySelector('.lc-solution-item__head').addEventListener('click', function () {
+                window.location.href = '/solution.html?id=' + s.id + '&from=problem';
             });
+
+            // ❤️ 点赞（独立 click；stopPropagation 防止冒泡到卡片）
+            var likeBtn = div.querySelector('.lc-solution-item__like');
+            likeBtn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                if (likeBtn.disabled) return;
+                if (!litecode.auth || !litecode.auth.isLoggedIn || !litecode.auth.isLoggedIn()) {
+                    if (window.litecode && litecode.toast) {
+                        litecode.toast.show('请先登录后再点赞', 'warn');
+                    } else {
+                        alert('请先登录后再点赞');
+                    }
+                    return;
+                }
+                likeBtn.disabled = true;
+                litecode.api.solutions.like(s.id)
+                    .then(function (resp) {
+                        var data = resp.data || {};
+                        likeBtn.classList.toggle('lc-solution-item__like--active', !!data.liked);
+                        likeBtn.querySelector('.lc-solution-item__heart').textContent = data.liked ? '♥' : '♡';
+                        likeBtn.querySelector('.lc-solution-item__like-count').textContent = data.like_count || 0;
+                    })
+                    .catch(function () { /* toast 由 api.js 自动 */ })
+                    .then(function () { likeBtn.disabled = false; });
+            });
+
+            // 💬 评论抽屉 toggle（独立 click）
+            var drawer = div.querySelector('.lc-solution-comments');
+            var toggleBtn = div.querySelector('.lc-solution-item__comment-toggle');
+            toggleBtn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                var opened = !drawer.hidden;
+                drawer.hidden = opened;
+                toggleBtn.classList.toggle('lc-solution-item__comment-toggle--active', !opened);
+                if (!opened && drawer.getAttribute('data-loaded') === 'false') {
+                    loadSolutionComments(s.id, drawer);
+                }
+            });
+
+            return div;
+        }
+
+        // V022 — 题解评论抽屉 lazy load + 嵌套回复扁平展示
+        function loadSolutionComments(solutionId, drawer) {
+            var listEl = drawer.querySelector('.lc-solution-comments__list');
+            var formEl = drawer.querySelector('.lc-solution-comments__form-wrap');
+            listEl.innerHTML = '<div class="lc-loading lc-loading--xs"><span>加载评论…</span></div>';
+
+            litecode.api.solutions.commentList(solutionId, { limit: 50 })
+                .then(function (resp) {
+                    drawer.setAttribute('data-loaded', 'true');
+                    var items = (resp && resp.data && resp.data.items) || [];
+                    listEl.innerHTML = '';
+                    if (items.length === 0) {
+                        listEl.innerHTML =
+                            '<div class="lc-empty-state lc-empty-state--xs">还没有评论</div>';
+                    } else {
+                        // 扁平按 created_at ASC 渲染;前端根据 parent_id 显示引用提示
+                        items.forEach(function (c) {
+                            listEl.appendChild(makeSolutionCommentNode(c, solutionId, drawer));
+                        });
+                    }
+                    renderSolutionCommentForm(solutionId, formEl, drawer, null);
+                })
+                .catch(function () {
+                    listEl.innerHTML =
+                        '<div class="lc-empty-state lc-empty-state--xs">加载失败</div>';
+                });
+        }
+
+        // V022 — 评论表单
+        //   顶层态:  textarea + "发布评论"
+        //   回复态:  textarea + "回复 @username" + 取消回复
+        //   未登录:  仅登录提示
+        function renderSolutionCommentForm(solutionId, formEl, drawer, parent) {
+            var isLogged = !!(litecode.auth && litecode.auth.isLoggedIn && litecode.auth.isLoggedIn());
+            if (!isLogged) {
+                formEl.innerHTML =
+                    '<div class="lc-solution-comment__login-hint">' +
+                        '<a href="/login.html?redirect=' +
+                            encodeURIComponent(window.location.pathname + window.location.search) +
+                        '">登录</a> 后评论' +
+                    '</div>';
+                return;
+            }
+            var banner = parent
+                ? '<div class="lc-solution-comment__reply-banner">' +
+                    '回复 @' + escapeHtml(parent.user ? parent.user.username : '匿名') +
+                    '<button type="button" class="lc-solution-comment__reply-cancel">取消回复</button>' +
+                  '</div>'
+                : '';
+            var submitLabel = parent ? '发布回复' : '发布评论';
+            formEl.innerHTML =
+                '<form class="lc-solution-comment__form" data-solution-id="' + solutionId + '">' +
+                    banner +
+                    '<textarea class="lc-solution-comment__textarea" rows="2" ' +
+                        'placeholder="说点什么吧 (1-2000 字)" maxlength="2000" required></textarea>' +
+                    '<button type="submit" class="lc-btn lc-btn--primary lc-btn--sm">' + submitLabel + '</button>' +
+                '</form>';
+            var form = formEl.querySelector('form');
+            var cancelBtn = form.querySelector('.lc-solution-comment__reply-cancel');
+            if (cancelBtn) {
+                cancelBtn.addEventListener('click', function () {
+                    renderSolutionCommentForm(solutionId, formEl, drawer, null);
+                });
+            }
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+                var ta = form.querySelector('textarea');
+                var content = (ta.value || '').trim();
+                if (!content) return;
+                var btn = form.querySelector('button[type=submit]');
+                btn.disabled = true;
+                litecode.api.solutions.commentCreate(solutionId, content, parent ? parent.id : null)
+                    .then(function () {
+                        ta.value = '';
+                        // 重新加载评论列表
+                        drawer.setAttribute('data-loaded', 'false');
+                        loadSolutionComments(solutionId, drawer);
+                        // 💬 计数 +1
+                        var cnt = document.querySelector(
+                            '.lc-solution-item__comment-toggle[data-id="' + solutionId + '"] .lc-solution-item__comment-count');
+                        if (cnt) cnt.textContent = (parseInt(cnt.textContent, 10) || 0) + 1;
+                    })
+                    .catch(function () { /* toast 由 api.js 自动 */ })
+                    .then(function () { btn.disabled = false; });
+            });
+        }
+
+        // V022 — 单条评论 DOM 节点
+        //   - 头像 + 用户名 + 时间
+        //   - 引用条(仅当 parent_id 存在): 显示 "回复 @parent_author"
+        //   - 内容
+        //   - 底部操作: ❤️ 点赞 + 💬 回复 + 删除
+        function makeSolutionCommentNode(c, solutionId, drawer) {
+            var div = document.createElement('div');
+            div.className = 'lc-solution-comment__item';
+            div.id = 'comment-' + c.id;
+            div.setAttribute('data-parent-id', c.parent_id ? String(c.parent_id) : '');
+            var author = c.user ? escapeHtml(c.user.username) : '匿名';
+            var avatar = c.user && c.user.avatar
+                ? '<img src="' + escapeHtml(c.user.avatar) + '" class="lc-avatar--xs" alt="">'
+                : '<span class="lc-avatar--xs">' + author.charAt(0).toUpperCase() + '</span>';
+            var time = formatRelativeTime(c.created_at);
+            var isLogged = !!(litecode.auth && litecode.auth.isLoggedIn && litecode.auth.isLoggedIn());
+
+            // 引用条(V022 扁平 + 引用提示)
+            var replyTo = '';
+            if (c.parent_id) {
+                var parent = document.getElementById('comment-' + c.parent_id);
+                var parentAuthor = parent
+                    ? parent.querySelector('.lc-solution-comment__author').textContent
+                    : '已删除评论';
+                replyTo =
+                    '<div class="lc-solution-comment__reply-to">' +
+                        '回复 @' + escapeHtml(parentAuthor) +
+                    '</div>';
+            }
+
+            // 操作按钮(登录态才显示)
+            var actions = isLogged
+                ? '<div class="lc-solution-comment__actions">' +
+                    '<button type="button" class="lc-solution-comment__like" data-id="' + c.id + '" title="点赞">' +
+                        '<span class="lc-solution-comment__like-heart">♡</span>' +
+                        '<span class="lc-solution-comment__like-count">' + (c.like_count || 0) + '</span>' +
+                    '</button>' +
+                    '<button type="button" class="lc-solution-comment__reply" data-id="' + c.id + '">回复</button>' +
+                    '<button type="button" class="lc-solution-comment__delete" data-id="' + c.id + '">删除</button>' +
+                  '</div>'
+                : '';
+
+            div.innerHTML =
+                '<div class="lc-solution-comment__avatar">' + avatar + '</div>' +
+                '<div class="lc-solution-comment__body">' +
+                    '<div class="lc-solution-comment__head">' +
+                        '<span class="lc-solution-comment__author">' + author + '</span>' +
+                        '<span class="lc-solution-comment__time">' + time + '</span>' +
+                    '</div>' +
+                    replyTo +
+                    '<div class="lc-solution-comment__content">' + escapeHtml(c.content || '') + '</div>' +
+                    actions +
+                '</div>';
+
+            // ❤️ 点赞(toggle)
+            var likeEl = div.querySelector('.lc-solution-comment__like');
+            if (likeEl) {
+                likeEl.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    if (likeEl.disabled) return;
+                    if (!litecode.auth || !litecode.auth.isLoggedIn || !litecode.auth.isLoggedIn()) {
+                        if (window.litecode && litecode.toast) {
+                            litecode.toast.show('请先登录后再点赞', 'warn');
+                        } else { alert('请先登录后再点赞'); }
+                        return;
+                    }
+                    likeEl.disabled = true;
+                    var heart = likeEl.querySelector('.lc-solution-comment__like-heart');
+                    var cnt = likeEl.querySelector('.lc-solution-comment__like-count');
+                    // 乐观更新
+                    var prevActive = likeEl.classList.contains('lc-solution-comment__like--active');
+                    likeEl.classList.toggle('lc-solution-comment__like--active');
+                    heart.textContent = prevActive ? '♡' : '♥';
+                    cnt.textContent = (parseInt(cnt.textContent, 10) || 0) + (prevActive ? -1 : 1);
+
+                    litecode.api.solutions.commentLike(c.id)
+                        .then(function (resp) {
+                            var d = resp.data || {};
+                            likeEl.classList.toggle('lc-solution-comment__like--active', !!d.liked);
+                            heart.textContent = d.liked ? '♥' : '♡';
+                            cnt.textContent = d.like_count || 0;
+                        })
+                        .catch(function () {
+                            // 失败回滚
+                            likeEl.classList.toggle('lc-solution-comment__like--active', prevActive);
+                            heart.textContent = prevActive ? '♥' : '♡';
+                            cnt.textContent = (parseInt(cnt.textContent, 10) || 0) + (prevActive ? 1 : -1);
+                        })
+                        .then(function () { likeEl.disabled = false; });
+                });
+            }
+
+            // 💬 回复(切到表单的回复态)
+            var replyEl = div.querySelector('.lc-solution-comment__reply');
+            if (replyEl) {
+                replyEl.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    var formEl = drawer.querySelector('.lc-solution-comments__form-wrap');
+                    renderSolutionCommentForm(solutionId, formEl, drawer, c);
+                    var ta = formEl.querySelector('textarea');
+                    if (ta) ta.focus();
+                });
+            }
+
+            // 删除
+            var delEl = div.querySelector('.lc-solution-comment__delete');
+            if (delEl) {
+                delEl.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    if (!confirm('删除这条评论？')) return;
+                    litecode.api.solutions.commentDelete(c.id)
+                        .then(function () {
+                            if (div.parentNode) div.parentNode.removeChild(div);
+                            // 💬 计数 -1（不能 < 0）
+                            var cnt = document.querySelector(
+                                '.lc-solution-item__comment-toggle[data-id="' + solutionId + '"] .lc-solution-item__comment-count');
+                            if (cnt) {
+                                var cur = parseInt(cnt.textContent, 10) || 0;
+                                cnt.textContent = Math.max(0, cur - 1);
+                            }
+                        })
+                        .catch(function () { /* toast 由 api.js 自动 */ });
+                });
+            }
             return div;
         }
 
@@ -2090,19 +2379,196 @@
         function makeDiscussionNode(d) {
             var div = document.createElement('div');
             div.className = 'lc-discussion-item';
+            div.setAttribute('data-discussion-id', String(d.id));
             var author = d.user ? escapeHtml(d.user.username) : '匿名';
+            var avatar = d.user && d.user.avatar
+                ? '<img src="' + escapeHtml(d.user.avatar) + '" class="lc-avatar--xs" alt="">'
+                : '<span class="lc-avatar--xs">' + author.charAt(0).toUpperCase() + '</span>';
             var time = formatRelativeTime(d.created_at);
-            var preview = escapeHtml(d.content || '').substring(0, 150);
+            var content = escapeHtml(d.content || '');
+            var isLogged = !!(litecode.auth && litecode.auth.isLoggedIn && litecode.auth.isLoggedIn());
+
             div.innerHTML =
-                '<div class="lc-discussion-item__header">' +
-                    '<span class="lc-discussion-item__author">' + author + '</span>' +
-                    '<span class="lc-discussion-item__time">' + time + '</span>' +
+                '<div class="lc-discussion-item__head">' +
+                    '<div class="lc-discussion-item__avatar">' + avatar + '</div>' +
+                    '<div class="lc-discussion-item__meta">' +
+                        '<span class="lc-discussion-item__author">' + author + '</span>' +
+                        '<span class="lc-discussion-item__time">' + time + '</span>' +
+                    '</div>' +
                 '</div>' +
-                '<div class="lc-discussion-item__content">' + preview + '</div>' +
-                '<div class="lc-discussion-item__stats">' +
-                    '<span>💬 ' + (d.reply_count || 0) + '</span>' +
-                    '<span>❤️ ' + (d.like_count || 0) + '</span>' +
+                '<div class="lc-discussion-item__content">' + content + '</div>' +
+                '<div class="lc-discussion-item__footer">' +
+                    '<button type="button" class="lc-discussion-item__like" data-id="' + d.id + '" title="点赞">' +
+                        '<span class="lc-discussion-item__heart">♡</span>' +
+                        '<span class="lc-discussion-item__like-label">点赞</span>' +
+                        '<span class="lc-discussion-item__like-count">' + (d.like_count || 0) + '</span>' +
+                    '</button>' +
+                    '<button type="button" class="lc-discussion-item__reply-toggle" data-id="' + d.id + '" title="查看回复">' +
+                        '<span class="lc-discussion-item__reply-icon">💬</span>' +
+                        '<span class="lc-discussion-item__reply-label">评论</span>' +
+                        '<span class="lc-discussion-item__reply-count">' + (d.reply_count || 0) + '</span>' +
+                    '</button>' +
+                '</div>' +
+                '<div class="lc-discussion-replies" data-id="' + d.id + '" hidden data-loaded="false">' +
+                    '<div class="lc-discussion-replies__list"></div>' +
+                    '<div class="lc-discussion-replies__form-wrap"></div>' +
                 '</div>';
+
+            // ❤️ 点赞(toggle)
+            var likeBtn = div.querySelector('.lc-discussion-item__like');
+            likeBtn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                if (likeBtn.disabled) return;
+                if (!litecode.auth || !litecode.auth.isLoggedIn || !litecode.auth.isLoggedIn()) {
+                    if (window.litecode && litecode.toast) {
+                        litecode.toast.show('请先登录后再点赞', 'warn');
+                    } else { alert('请先登录后再点赞'); }
+                    return;
+                }
+                likeBtn.disabled = true;
+                var heart = likeBtn.querySelector('.lc-discussion-item__heart');
+                var cnt = likeBtn.querySelector('.lc-discussion-item__like-count');
+                var prevActive = likeBtn.classList.contains('lc-discussion-item__like--active');
+                likeBtn.classList.toggle('lc-discussion-item__like--active');
+                heart.textContent = prevActive ? '♡' : '♥';
+                cnt.textContent = (parseInt(cnt.textContent, 10) || 0) + (prevActive ? -1 : 1);
+
+                litecode.api.discussions.like(d.id)
+                    .then(function (resp) {
+                        var dd = resp.data || {};
+                        likeBtn.classList.toggle('lc-discussion-item__like--active', !!dd.liked);
+                        heart.textContent = dd.liked ? '♥' : '♡';
+                        cnt.textContent = dd.like_count || 0;
+                    })
+                    .catch(function () {
+                        likeBtn.classList.toggle('lc-discussion-item__like--active', prevActive);
+                        heart.textContent = prevActive ? '♥' : '♡';
+                        cnt.textContent = (parseInt(cnt.textContent, 10) || 0) + (prevActive ? 1 : -1);
+                    })
+                    .then(function () { likeBtn.disabled = false; });
+            });
+
+            // 💬 抽屉 toggle
+            var drawer = div.querySelector('.lc-discussion-replies');
+            var toggleBtn = div.querySelector('.lc-discussion-item__reply-toggle');
+            toggleBtn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                var opened = !drawer.hidden;
+                drawer.hidden = opened;
+                toggleBtn.classList.toggle('lc-discussion-item__reply-toggle--active', !opened);
+                if (!opened && drawer.getAttribute('data-loaded') === 'false') {
+                    loadDiscussionReplies(d.id, drawer);
+                }
+            });
+            return div;
+        }
+
+        // V023 — 讨论回复抽屉 lazy load
+        // 后端 GET /discussions/:id 已包含 replies 数组,无需单独 list
+        function loadDiscussionReplies(discussionId, drawer) {
+            var listEl = drawer.querySelector('.lc-discussion-replies__list');
+            var formEl = drawer.querySelector('.lc-discussion-replies__form-wrap');
+            listEl.innerHTML = '<div class="lc-loading lc-loading--xs"><span>加载回复…</span></div>';
+
+            litecode.api.discussions.get(discussionId)
+                .then(function (resp) {
+                    drawer.setAttribute('data-loaded', 'true');
+                    var data = (resp && resp.data) || {};
+                    var replies = data.replies || [];
+                    listEl.innerHTML = '';
+                    if (replies.length === 0) {
+                        listEl.innerHTML =
+                            '<div class="lc-empty-state lc-empty-state--xs">还没有回复</div>';
+                    } else {
+                        replies.forEach(function (r) {
+                            listEl.appendChild(makeDiscussionReplyNode(r, discussionId, drawer));
+                        });
+                    }
+                    renderDiscussionReplyForm(discussionId, formEl, drawer, null);
+                })
+                .catch(function () {
+                    listEl.innerHTML =
+                        '<div class="lc-empty-state lc-empty-state--xs">加载失败</div>';
+                });
+        }
+
+        // V023 — 讨论回复表单(顶层 / 回复态两条线)
+        function renderDiscussionReplyForm(discussionId, formEl, drawer, parent) {
+            var isLogged = !!(litecode.auth && litecode.auth.isLoggedIn && litecode.auth.isLoggedIn());
+            if (!isLogged) {
+                formEl.innerHTML =
+                    '<div class="lc-solution-comment__login-hint">' +
+                        '<a href="/login.html?redirect=' +
+                            encodeURIComponent(window.location.pathname + window.location.search) +
+                        '">登录</a> 后回复' +
+                    '</div>';
+                return;
+            }
+            var banner = parent
+                ? '<div class="lc-solution-comment__reply-banner">' +
+                    '回复 @' + escapeHtml(parent.user ? parent.user.username : '匿名') +
+                    '<button type="button" class="lc-solution-comment__reply-cancel">取消回复</button>' +
+                  '</div>'
+                : '';
+            var label = parent ? '发布回复' : '发布';
+            formEl.innerHTML =
+                '<form class="lc-solution-comment__form" data-discussion-id="' + discussionId + '">' +
+                    banner +
+                    '<textarea class="lc-solution-comment__textarea" rows="2" ' +
+                        'placeholder="说点什么 (1-10000 字)" maxlength="10000" required></textarea>' +
+                    '<button type="submit" class="lc-btn lc-btn--primary lc-btn--sm">' + label + '</button>' +
+                '</form>';
+            var form = formEl.querySelector('form');
+            var cancelBtn = form.querySelector('.lc-solution-comment__reply-cancel');
+            if (cancelBtn) {
+                cancelBtn.addEventListener('click', function () {
+                    renderDiscussionReplyForm(discussionId, formEl, drawer, null);
+                });
+            }
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+                var ta = form.querySelector('textarea');
+                var content = (ta.value || '').trim();
+                if (!content) return;
+                var btn = form.querySelector('button[type=submit]');
+                btn.disabled = true;
+                litecode.api.discussions.reply(discussionId, content)
+                    .then(function () {
+                        ta.value = '';
+                        drawer.setAttribute('data-loaded', 'false');
+                        loadDiscussionReplies(discussionId, drawer);
+                        // 💬 计数 +1
+                        var cnt = document.querySelector(
+                            '.lc-discussion-item__reply-toggle[data-id="' + discussionId + '"] .lc-discussion-item__reply-count');
+                        if (cnt) cnt.textContent = (parseInt(cnt.textContent, 10) || 0) + 1;
+                    })
+                    .catch(function () { /* toast 由 api.js 自动 */ })
+                    .then(function () { btn.disabled = false; });
+            });
+        }
+
+        // V023 — 单条讨论回复 DOM 节点
+        function makeDiscussionReplyNode(r, discussionId, drawer) {
+            var div = document.createElement('div');
+            div.className = 'lc-discussion-reply__item';
+            div.setAttribute('data-reply-id', String(r.id));
+            var author = r.user ? escapeHtml(r.user.username) : '匿名';
+            var avatar = r.user && r.user.avatar
+                ? '<img src="' + escapeHtml(r.user.avatar) + '" class="lc-avatar--xs" alt="">'
+                : '<span class="lc-avatar--xs">' + author.charAt(0).toUpperCase() + '</span>';
+            var time = formatRelativeTime(r.created_at);
+            var isLogged = !!(litecode.auth && litecode.auth.isLoggedIn && litecode.auth.isLoggedIn());
+
+            div.innerHTML =
+                '<div class="lc-discussion-reply__avatar">' + avatar + '</div>' +
+                '<div class="lc-discussion-reply__body">' +
+                    '<div class="lc-discussion-reply__head">' +
+                        '<span class="lc-discussion-reply__author">' + author + '</span>' +
+                        '<span class="lc-discussion-reply__time">' + time + '</span>' +
+                    '</div>' +
+                    '<div class="lc-discussion-reply__content">' + escapeHtml(r.content || '') + '</div>' +
+                '</div>';
+
             return div;
         }
 

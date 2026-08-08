@@ -813,10 +813,12 @@ inline void handle_problem_navigation(
     // 上一题：created_at < current.created_at OR (created_at == current.created_at AND id < current.id)
     // 先获取当前题目的排序位置
     // 用 created_at DESC, id DESC 来找 prev 和 next
-    auto allPrev = litecode::problem_repo::list(pool, litecode::ProblemListFilter{
-        .limit = 1000,
-        .offset = 0,
-    });
+    // 注:ProblemListFilter 是 aggregate struct,所有字段都有默认值,
+    // 这里只覆写 limit,其余(difficulty/tag_id/include_deleted)留空。
+    litecode::ProblemListFilter prev_filter;
+    prev_filter.limit  = 1000;
+    prev_filter.offset = 0;
+    auto allPrev = litecode::problem_repo::list(pool, prev_filter);
 
     // 找当前题目在列表中的位置
     int currentIdx = -1;

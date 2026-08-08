@@ -7,6 +7,8 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <vector>
@@ -21,6 +23,7 @@
 #include "../routes/notification_routes.h"
 #include "../routes/error_handler.h"
 #include "../server.h"
+#include "../utils/uuid.h"
 
 namespace litecode {
 
@@ -247,12 +250,8 @@ inline void handle_get_discussion(
     httplib::Response& res, const httplib::Request& req, ConnectionPool& pool) {
 
     int discussion_id = 0;
-    {
-        const auto& path = req.path;
-        auto last_slash = path.rfind('/');
-        if (last_slash != std::string::npos) {
-            try { discussion_id = std::stoi(path.substr(last_slash + 1)); } catch (...) {}
-        }
+    if (req.matches.size() > 1) {
+        try { discussion_id = std::stoi(req.matches[1].str()); } catch (...) {}
     }
     if (discussion_id == 0) {
         send_error(res, 400, ErrorCode::INVALID_INPUT, "invalid discussion id");
@@ -312,13 +311,11 @@ inline void handle_reply_discussion(
 
     auto claims = require_authentication(req, jwt_cfg);
 
+    // 取 matches[1] = (\d+) 数字 id;req.path.rfind('/') 会拿到 "/replies"
+    // 或 "/like",不是数字,stoi 抛异常 → 兜底为 0 → "invalid id" 400。
     int discussion_id = 0;
-    {
-        const auto& path = req.path;
-        auto last_slash = path.rfind('/');
-        if (last_slash != std::string::npos) {
-            try { discussion_id = std::stoi(path.substr(last_slash + 1)); } catch (...) {}
-        }
+    if (req.matches.size() > 1) {
+        try { discussion_id = std::stoi(req.matches[1].str()); } catch (...) {}
     }
     if (discussion_id == 0) {
         send_error(res, 400, ErrorCode::INVALID_INPUT, "invalid discussion id");
@@ -362,7 +359,9 @@ inline void handle_reply_discussion(
     d.content    = content;
 
     int id = discussion_repo::create(pool, d);
-    discussion_repo::increment_reply_count(pool, discussion_id);
+    // v1.3.5 PR 13: 计数永远记在顶层讨论;嵌套回复时递增 root_id(不是 parent_id),
+    // 这样删除任意位置的回复都能正确回滚同一根讨论的 reply_count。
+    discussion_repo::increment_reply_count(pool, root_id);
 
     // Phase 7 ★ 通知被回复者
     // 注意：简化处理，通知发送给被回复的讨论/回复的作者
@@ -393,12 +392,8 @@ inline void handle_like_discussion(
     auto claims = require_authentication(req, jwt_cfg);
 
     int discussion_id = 0;
-    {
-        const auto& path = req.path;
-        auto last_slash = path.rfind('/');
-        if (last_slash != std::string::npos) {
-            try { discussion_id = std::stoi(path.substr(last_slash + 1)); } catch (...) {}
-        }
+    if (req.matches.size() > 1) {
+        try { discussion_id = std::stoi(req.matches[1].str()); } catch (...) {}
     }
     if (discussion_id == 0) {
         send_error(res, 400, ErrorCode::INVALID_INPUT, "invalid discussion id");
@@ -430,12 +425,8 @@ inline void handle_delete_discussion(
     auto claims = require_authentication(req, jwt_cfg);
 
     int discussion_id = 0;
-    {
-        const auto& path = req.path;
-        auto last_slash = path.rfind('/');
-        if (last_slash != std::string::npos) {
-            try { discussion_id = std::stoi(path.substr(last_slash + 1)); } catch (...) {}
-        }
+    if (req.matches.size() > 1) {
+        try { discussion_id = std::stoi(req.matches[1].str()); } catch (...) {}
     }
     if (discussion_id == 0) {
         send_error(res, 400, ErrorCode::INVALID_INPUT, "invalid discussion id");
@@ -459,6 +450,14 @@ inline void handle_delete_discussion(
     }
 
     discussion_repo::soft_delete(pool, discussion_id);
+    // v1.3.5 PR 13: 当被删除的是回复(parent_id 有值),需要回滚根讨论的 reply_count。
+    // 顶层讨论自身没有 root_id,不需要递减自己。
+    if (disc_opt->parent_id.has_value()) {
+        int root_id = disc_opt->root_id.has_value()
+            ? *disc_opt->root_id
+            : *disc_opt->parent_id;
+        discussion_repo::decrement_reply_count(pool, root_id);
+    }
     send_success(res, nlohmann::json{{"deleted", true}});
 }
 
@@ -481,6 +480,140 @@ inline void handle_count_problem_discussions(
 
     int count = discussion_repo::count_for_problem(pool, problem_id);
     send_success(res, nlohmann::json{{"count", count}});
+}
+
+// POST /api/v1/discussions/upload-image
+// v1.3.5 PR 13: 讨论/题解发布框需要上传图片。头像上传走 /auth/avatar(路径写死
+// {user_id},多人冲突),所以为讨论另起一个 endpoint,UUID 命名各图独立文件名。
+//
+// multipart/form-data,字段名:"image"
+// 限制:≤ 2 MB,只允许 JPEG / PNG / GIF(87a/89a) / WEBP(magic bytes)
+// 路径:/app/uploads/discussion_images/{uuid}.{ext}
+// 静态服务通过 main.cpp::server.mount("/uploads", "/app/uploads") 提供
+// 返回:{"url": "/uploads/discussion_images/{uuid}.jpg"}
+inline void handle_upload_discussion_image(
+    httplib::Response& res, const httplib::Request& req,
+    const JwtConfig& jwt_cfg) {
+
+    // 鉴权:JWT bearer / cookie 均可(同其他讨论端点)
+    auto claims = require_authentication(req, jwt_cfg);
+
+    int user_id = 0;
+    try {
+        user_id = std::stoi(std::string(claims.user_id));
+    } catch (const std::exception&) {
+        send_error(res, 401, ErrorCode::UNAUTHORIZED, "invalid sub claim");
+        return;
+    }
+    if (user_id <= 0) {
+        send_error(res, 401, ErrorCode::UNAUTHORIZED, "invalid sub claim");
+        return;
+    }
+
+    // 校验 multipart field
+    const auto it = req.files.find("image");
+    if (it == req.files.end()) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   "missing 'image' field in multipart body",
+                   {{"expected_field", "image"}});
+        return;
+    }
+
+    const auto& file = it->second;
+    const std::string& bytes = file.content;
+
+    constexpr std::size_t kMaxImageBytes = 2u * 1024u * 1024u;
+    if (bytes.empty()) {
+        send_error(res, 400, ErrorCode::INVALID_INPUT, "image file is empty");
+        return;
+    }
+    if (bytes.size() > kMaxImageBytes) {
+        send_error(res, 413, ErrorCode::INVALID_INPUT,
+                   "image too large (max 2 MB)",
+                   {{"max_bytes", static_cast<std::uint64_t>(kMaxImageBytes)},
+                    {"got_bytes", static_cast<std::uint64_t>(bytes.size())}});
+        return;
+    }
+
+    // magic bytes 校验:扩展名以 magic bytes 决定,不信任客户端 content_type / filename
+    const auto byte_at = [&bytes](std::size_t index) {
+        return static_cast<unsigned char>(bytes[index]);
+    };
+
+    std::string ext;
+    if (bytes.size() >= 3 &&
+        byte_at(0) == 0xFF && byte_at(1) == 0xD8 && byte_at(2) == 0xFF) {
+        ext = ".jpg";
+    } else if (bytes.size() >= 8 &&
+        byte_at(0) == 0x89 && bytes[1] == 'P' && bytes[2] == 'N' &&
+        bytes[3] == 'G' &&
+        byte_at(4) == 0x0D && byte_at(5) == 0x0A &&
+        byte_at(6) == 0x1A && byte_at(7) == 0x0A) {
+        ext = ".png";
+    } else if (bytes.size() >= 6 &&
+        bytes[0] == 'G' && bytes[1] == 'I' && bytes[2] == 'F' &&
+        bytes[3] == '8' && (bytes[4] == '7' || bytes[4] == '9') &&
+        bytes[5] == 'a') {
+        ext = ".gif";
+    } else if (bytes.size() >= 12 &&
+        bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' &&
+        bytes[3] == 'F' &&
+        bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' &&
+        bytes[11] == 'P') {
+        ext = ".webp";
+    } else {
+        send_error(res, 400, ErrorCode::INVALID_INPUT,
+                   "image must be JPEG, PNG, GIF, or WEBP "
+                   "(magic bytes mismatch)",
+                   {{"content_type", file.content_type}});
+        return;
+    }
+
+    const std::string id = generate_uuid_v4();
+    const std::string directory = "/app/uploads/discussion_images";
+    const std::string filename = id + ext;
+    const std::string path = directory + "/" + filename;
+    const std::string url  = "/uploads/discussion_images/" + filename;
+
+    try {
+        std::filesystem::create_directories(directory);
+
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        if (!output) {
+            send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                       "failed to open discussion image file");
+            return;
+        }
+
+        output.write(bytes.data(),
+                     static_cast<std::streamsize>(bytes.size()));
+        output.close();
+
+        if (!output) {
+            std::error_code ignored;
+            std::filesystem::remove(path, ignored);
+            send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                       "failed to write discussion image file");
+            return;
+        }
+    } catch (const std::exception& e) {
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+        LOG_ERROR("discussion image upload failed",
+                  {{"user_id", std::to_string(user_id)},
+                   {"reason", e.what()}});
+        send_error(res, 500, ErrorCode::INTERNAL_ERROR,
+                   "failed to store discussion image");
+        return;
+    }
+
+    LOG_INFO("discussion image uploaded",
+             {{"user_id", std::to_string(user_id)},
+              {"size", std::to_string(bytes.size())},
+              {"ext", ext},
+              {"file_id", id}});
+
+    send_success(res, nlohmann::json{{"url", url}});
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -538,6 +671,20 @@ inline HttpServer& register_discussion_routes(
             } catch (const ApiException&) { throw; }
             catch (const std::exception& e) {
                 LOG_ERROR("create_global_discussion: threw", {{"reason", e.what()}});
+                send_error(res, 500, ErrorCode::INTERNAL_ERROR, "internal error");
+            }
+        });
+
+    // v1.3.5 PR 13: 讨论图片上传端点。
+    // 必须注册在 /discussions/(\d+) 之前,虽然 "upload-image" 不会和数字 ID 冲突,
+    // 但保持语义上「动作类路由」前置的惯例,更易阅读。
+    server.post(R"(/api/v1/discussions/upload-image)",
+        [&jwt_cfg](const httplib::Request& req, httplib::Response& res) {
+            try {
+                handle_upload_discussion_image(res, req, jwt_cfg);
+            } catch (const ApiException&) { throw; }
+            catch (const std::exception& e) {
+                LOG_ERROR("upload_discussion_image: threw", {{"reason", e.what()}});
                 send_error(res, 500, ErrorCode::INTERNAL_ERROR, "internal error");
             }
         });

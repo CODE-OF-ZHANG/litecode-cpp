@@ -396,4 +396,106 @@ inline void notify_solution_like(
     bc.push(author_user_id, "notification", payload);
 }
 
+// notify_solution_comment — 通知题解作者：有人评论了你的题解 (V021)
+//
+// 与 notify_solution_like 的差异：
+//   - 多一个 comment_id 用于锚点 (#comment-N)，跳到 solution.html 直接定位
+//   - 消息正文里带评论摘要（30 字），点开看到「为什么收到通知」
+inline void notify_solution_comment(
+    ConnectionPool& pool,
+    int author_user_id,
+    int commenter_user_id,
+    int solution_id,
+    int comment_id,
+    const std::string& commenter_username,
+    const std::string& solution_title,
+    const std::string& comment_excerpt) {
+
+    if (author_user_id == commenter_user_id) return;
+
+    NotificationRow n;
+    n.user_id = author_user_id;
+    n.type = "solution_comment";
+
+    std::string title_clip = solution_title.size() > 50
+        ? solution_title.substr(0, 50) + "..."
+        : solution_title;
+    std::string preview = comment_excerpt;
+    // 去除首尾空白，避免消息里出现孤立的换行/空格
+    auto trim = [](std::string& s) {
+        size_t a = 0, b = s.size();
+        while (a < b && std::isspace(static_cast<unsigned char>(s[a]))) ++a;
+        while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1]))) --b;
+        s = s.substr(a, b - a);
+    };
+    trim(preview);
+    if (preview.size() > 30) preview = preview.substr(0, 30) + "...";
+
+    n.message = commenter_username + " 评论了你的题解：「" + title_clip + "」: " + preview;
+    n.link = "/solution.html?id=" + std::to_string(solution_id) +
+             "#comment-" + std::to_string(comment_id);
+    n.reference_id = solution_id;
+
+    try { notification_repo::create(pool, n); } catch (...) {}
+
+    auto& bc = NotificationBroadcaster::instance();
+    nlohmann::json payload = nlohmann::json{
+        {"type", n.type},
+        {"message", n.message},
+    };
+    if (n.link) payload["link"] = *n.link;
+    if (n.reference_id) payload["reference_id"] = *n.reference_id;
+    bc.push(author_user_id, "notification", payload);
+}
+
+// V022 — notify_solution_comment_reply
+// 通知被你回复的评论作者:V022 决策 = 嵌套回复不打扰题解作者,只通知被回复者。
+// 自己的评论自己回 → 不通知(type=solution_comment_reply)
+inline void notify_solution_comment_reply(
+    ConnectionPool& pool,
+    int target_user_id,
+    int replier_user_id,
+    int solution_id,
+    int reply_comment_id,
+    int parent_comment_id,
+    const std::string& replier_username,
+    const std::string& solution_title,
+    const std::string& reply_excerpt) {
+
+    if (target_user_id == replier_user_id) return;
+
+    NotificationRow n;
+    n.user_id = target_user_id;
+    n.type = "solution_comment_reply";
+
+    std::string title_clip = solution_title.size() > 50
+        ? solution_title.substr(0, 50) + "..."
+        : solution_title;
+    std::string preview = reply_excerpt;
+    auto trim = [](std::string& s) {
+        size_t a = 0, b = s.size();
+        while (a < b && std::isspace(static_cast<unsigned char>(s[a]))) ++a;
+        while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1]))) --b;
+        s = s.substr(a, b - a);
+    };
+    trim(preview);
+    if (preview.size() > 30) preview = preview.substr(0, 30) + "...";
+
+    n.message = replier_username + " 回复了你的评论：「" + title_clip + "」: " + preview;
+    n.link = "/solution.html?id=" + std::to_string(solution_id) +
+             "#comment-" + std::to_string(reply_comment_id);
+    n.reference_id = solution_id;
+
+    try { notification_repo::create(pool, n); } catch (...) {}
+
+    auto& bc = NotificationBroadcaster::instance();
+    nlohmann::json payload = nlohmann::json{
+        {"type", n.type},
+        {"message", n.message},
+    };
+    if (n.link) payload["link"] = *n.link;
+    if (n.reference_id) payload["reference_id"] = *n.reference_id;
+    bc.push(target_user_id, "notification", payload);
+}
+
 } // namespace litecode

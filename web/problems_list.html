@@ -526,6 +526,11 @@
 
             row.appendChild(main);
 
+            // v1.3.5: 计数 0 → "—" 占位(避免「通过率 —」旁边出现「0 / 0」)
+            var sub = Number(p.submission_count) || 0;
+            var ac  = Number(p.accepted_count)   || 0;
+            var fracText = (sub <= 0) ? '— / —' : (ac + ' / ' + sub);
+
             var meta = el('div', { class: 'lc-problem-row__meta' });
             meta.appendChild(el('span', {
                 class: 'lc-problem-row__metric',
@@ -533,7 +538,7 @@
             }));
             meta.appendChild(el('span', {
                 class: 'lc-problem-row__metric',
-                text: (p.accepted_count || 0) + ' / ' + (p.submission_count || 0),
+                text: fracText,
                 title: '通过数 / 提交数',
             }));
             row.appendChild(meta);
