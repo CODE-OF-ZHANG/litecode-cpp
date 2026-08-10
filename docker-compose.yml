@@ -38,7 +38,7 @@ services:
   # ───── 1. MySQL 8.0 ────────────────────────────────────────
   # SPEC §4.x / §10：UTF8MB4，支持 UNIQUE NULLS NOT DISTINCT（≥ 8.0.19）
   mysql:
-    image: mysql:8.0.40
+    image: mysql:26.7.0
     container_name: litecode-mysql
     restart: unless-stopped
     environment:
@@ -319,7 +319,7 @@ services:
 
   # ───── 6. Prometheus（可选，profile=monitoring 启用）───────
   prometheus:
-    image: prom/prometheus:v2.55.0
+    image: prom/prometheus:v3.13.2
     container_name: litecode-prometheus
     restart: unless-stopped
     profiles: ["monitoring"]
@@ -437,7 +437,7 @@ services:
 
   # ───── 7. Grafana（可选，profile=monitoring 启用）─────────
   grafana:
-    image: grafana/grafana:11.2.0
+    image: grafana/grafana:13.1.3
     container_name: litecode-grafana
     restart: unless-stopped
     profiles: ["monitoring"]
